@@ -12,7 +12,7 @@
 Source_f + Harness
         │
         ▼
-source-aware Codex Lift
+source-aware 作者（本实验由主代理直接承担，不调用 Lift agent）
         │
         ├── J       计算语义、logical domain/access/effect/control/output
         ├── C       匿名 implementation-selection 参数与 J attachment
@@ -56,7 +56,7 @@ Replay request、只读文件、query、prompt、continuation、cache identity �
 
 ## 3. π 与 normalizer
 
-fresh Lift 只作者化当前 profile 已有固定单臂 consumer 的 compact π。第一纵切采用：
+fresh artifact 作者化只记录当前 profile 已有固定单臂 consumer 的 compact π。第一纵切采用：
 
 ```json
 {
@@ -102,20 +102,21 @@ CUDA 没有可复用的高层 TIR，第一纵切选择 PTX semantic-effects obse
 TileLang/CUDA共享 J/C/π wire、TypeCheck、Replay visibility、Gate1数学与Gate2。它们不共享
 `Φ`、`H^(J,C)` 或 `N^π` 的实现；一个 profile 的 PASS 不能转移到另一个 profile。
 
-## 5. 自动 Lift，而非手写 artifact
+## 5. 实验执行：主代理直接作者化，而非调用 Lift agent
 
-正式实验只运行 source-aware Codex Lift：
+为隔离 Replay/Gate 的核心变量并避免 Lift agent 的多轮延迟，正式实验由主代理直接读取当前 Source 与编译观察，重新作者化 `(J,C,π)`：
 
 ```text
 anonymous Source + Harness/compiler view
-  -> Codex owner作者化完整 candidate.json
+  -> 主代理直接作者化完整 candidate.json
   -> Decode + CandidateCheck + SourceReconcile + TypeCheck
   -> fresh J-only Replay
 ```
 
-主代理不手写 J/C/π，不从历史 artifact复制，不把 Gate diff改写成答案。固定工具只维护 schema/reference
-机械合法性并拒绝；所有 operator、predicate、domain、access/effect、C ownership 与 π relation 选择由
-source-aware owner完成。
+主代理亲自作者化 J/C/π，不调用 Lift agent，不从历史 artifact复制为正式结果，也不把 Gate diff改写成
+答案。历史证据仅可用来理解 wire 结构；每一项 operator、predicate、domain、access/effect、C ownership
+与 compact π 都必须重新对照当前 Source/编译观察。固定工具只做 schema/reference、CandidateCheck、
+SourceReconcile 与 TypeCheck 的机械拒绝。
 
 ## 6. 第一对实验：add2d
 
@@ -129,7 +130,7 @@ source-aware owner完成。
 
 必须得到的证据：
 
-1. 两个 source-aware fresh Lift trajectory；
+1. 两份 source-aware 主代理作者化记录；
 2. 两份 current compact `(J,C,π)` 与 TypeCheck PASS；
 3. Replay context receipt机械证明 π 不可见；
 4. TileLang TIR profile 与 CUDA PTX profile各自 Gate1；
@@ -143,13 +144,13 @@ add2d 通过后，第二对使用 `tilelang:gather2d` / `cuda:tilelang_gather2d`
 ## 7. 论文只证明四件事
 
 1. **J-only sufficiency**：Replay没有π/Source/Gate仍能闭合，说明计算实现由J与匿名C接口驱动。
-2. **跨前端可复用因子化**：同一数学 kernel 的TileLang/CUDA Lift得到可对应的J/C核心，而工程差异限制在
+2. **跨前端可复用因子化**：同一数学 kernel 的TileLang/CUDA作者化结果具有可对应的J/C核心，而工程差异限制在
    frontend profile与Replay target code。
 3. **Gate1的提前结构价值**：正确Replay通过；wrong op/index/mask/effect mutation在Gate2前被对应profile
    拒绝。Gate1不替代Gate2。
 4. **保守性**：报告合法 realization false reject与`observer_unsupported`；π identity基线不伪造收益。
 
-最小表格字段：Lift wall time、candidate bytes、CandidateCheck次数、TypeCheck、Replay wall time/segments/
+最小表格字段：artifact作者化wall time、candidate bytes、人工修订次数、TypeCheck、Replay wall time/segments/
 compile-fix cycles、Gate1 verdict/primary category、Gate2三边、π bytes、Replay π-visible=false、observer
 profile、persistent kernel-specific LoC（目标0）。
 
@@ -163,5 +164,4 @@ profile、persistent kernel-specific LoC（目标0）。
 
 最终原则：
 
-> **Lift自动作者化J/C/π；Replay只从J与匿名C接口编译；π只供固定单臂Gate1 normalizer；每前端在自己的公开compiler boundary保守观察，最终由三边Gate2锚定行为。**
-
+> **source-aware作者直接给出J/C/π；Replay只从J与匿名C接口编译；π只供固定单臂Gate1 normalizer；每前端在自己的公开compiler boundary保守观察，最终由三边Gate2锚定行为。**

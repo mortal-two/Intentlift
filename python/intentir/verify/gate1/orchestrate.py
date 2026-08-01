@@ -18,12 +18,13 @@ from .model import (
     ScheduleSlotKind,
     opaque_replay_abi,
 )
+from .normalize import normalize_ttir_for_gate1
 from .replay import ReplayGeneration, ReplayWriter
 from .profile import ObserverProfile, TRITON_OBSERVER_PROFILE
 from .ttir import TTIRFingerprint, TTIRParseError, fingerprint_ttir
 
 
-GATE1_PROTOCOL = "llm_direct_pi_gate1_level2_v1"
+GATE1_PROTOCOL = "intentir.j-only-replay.jc-structural-gate1.v2"
 SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX = (
     "observer unsupported: source TTIR"
 )
@@ -71,6 +72,7 @@ class Gate1ArmEvidence:
     comparison: Gate1Comparison | None
     diagnostic: str | None = None
     physical_calls: int = 0
+    normalization: Mapping[str, Any] | None = None
 
     @property
     def hard_closed(self) -> bool:
@@ -92,6 +94,7 @@ class Gate1ExecutionResult:
     normal_candidates: tuple[Gate1ArmEvidence, ...] = ()
     selected_normal_index: int = 0
     masked_j_independent_writer: bool | None = None
+    source_normalization: Mapping[str, Any] | None = None
 
     @property
     def passed(self) -> bool:
@@ -145,6 +148,10 @@ class Gate1ExecutionResult:
                 ),
                 "diagnostic": value.diagnostic,
                 "physical_calls": value.physical_calls,
+                "normalization": (
+                    dict(value.normalization)
+                    if value.normalization is not None else None
+                ),
             }
 
         normal_fanout = None
@@ -166,6 +173,10 @@ class Gate1ExecutionResult:
             "source_fingerprint": (
                 self.source_fingerprint.to_dict()
                 if self.source_fingerprint is not None else None
+            ),
+            "source_normalization": (
+                dict(self.source_normalization)
+                if self.source_normalization is not None else None
             ),
             "normal": arm(self.normal),
             "masked_j": arm(self.masked_j),
@@ -501,8 +512,9 @@ class Gate1Runner:
                 physical_calls,
             )
         try:
+            normalized = normalize_ttir_for_gate1(compile_result.ttir, artifact)
             replay_fingerprint = fingerprint_ttir(
-                compile_result.ttir,
+                normalized.text,
                 python_interface=_opaque_python_interface(
                     artifact, compile_result.python_interface
                 ),
@@ -524,6 +536,7 @@ class Gate1Runner:
             replay_fingerprint,
             comparison,
             physical_calls=physical_calls,
+            normalization=normalized.evidence(),
         )
 
     def _normal_arms(
@@ -542,7 +555,7 @@ class Gate1Runner:
                     masked=False,
                 ),
             )
-        # Replay workers receive identical J/C/pi packets and no Source or
+        # Replay workers receive identical J/MaskC(C) packets and no Source, pi, or
         # Gate1 feedback.  Running them concurrently changes only completeness
         # and latency; the ordered result list remains deterministic.
         with ThreadPoolExecutor(max_workers=len(self.writers)) as executor:
@@ -605,9 +618,14 @@ class Gate1Runner:
                 0,
                 0,
             )
+        source_normalization: Mapping[str, Any] | None = None
         try:
+            normalized_source = normalize_ttir_for_gate1(
+                source_compile.ttir, artifact
+            )
+            source_normalization = normalized_source.evidence()
             source_fingerprint = fingerprint_ttir(
-                source_compile.ttir,
+                normalized_source.text,
                 python_interface=_opaque_python_interface(
                     artifact, source_compile.python_interface
                 ),
@@ -668,6 +686,7 @@ class Gate1Runner:
                 0,
                 normal_candidates=normal_candidates,
                 selected_normal_index=selected_normal_index,
+                source_normalization=source_normalization,
             )
 
         masked_evidence: Gate1ArmEvidence | None = None
@@ -697,6 +716,7 @@ class Gate1Runner:
             masked_j_independent_writer=(
                 True if self.config.run_masked_j else None
             ),
+            source_normalization=source_normalization,
         )
 
 

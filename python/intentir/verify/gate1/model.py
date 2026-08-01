@@ -24,7 +24,11 @@ from intentir.ir.intent_op_contract import (
     validate_intent_op_structure,
 )
 from intentir.ir.model import IntentFunction
-from intentir.verify.gate1.pi import RealizationWitness, RealizationWitnessError
+from intentir.verify.gate1.pi import (
+    NORMALIZATION_WITNESS_SCHEMA,
+    RealizationWitness,
+    RealizationWitnessError,
+)
 
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
@@ -4383,12 +4387,24 @@ class Gate1Artifact(StrictJSONMixin):
                 f"unsupported Gate1 artifact schema {data['schema']!r}; "
                 f"expected {cls.SCHEMA!r} or a supported legacy schema"
             )
-        if isinstance(data["pi"], dict) and "refinements" not in data["pi"]:
+        schema = data["schema"]
+        pi_value = data["pi"] if isinstance(data["pi"], dict) else None
+        compact_pi = (
+            pi_value is not None
+            and pi_value.get("schema") == NORMALIZATION_WITNESS_SCHEMA
+        )
+        if compact_pi and schema != cls.SCHEMA:
+            raise SchemaError(
+                "compact pi is supported only by the current artifact schema"
+            )
+        if (
+            pi_value is not None
+            and not compact_pi
+            and "refinements" not in pi_value
+        ):
             raise SchemaError(
                 "Gate1Artifact.pi is missing required field: refinements"
             )
-        schema = data["schema"]
-        pi_value = data["pi"] if isinstance(data["pi"], dict) else None
         boundary_value = (
             data["j"].get("boundary")
             if isinstance(data["j"], dict)
@@ -4408,7 +4424,7 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v11",
             "intentir.scrc.artifact.v12",
             cls.SCHEMA,
-        } and (
+        } and not compact_pi and (
             pi_value is not None and "iterations" not in pi_value
         ):
             raise SchemaError(
@@ -4443,7 +4459,11 @@ class Gate1Artifact(StrictJSONMixin):
                     "Gate1Artifact.j is missing required field: "
                     "value_dimension_relations"
                 )
-            if pi_value is not None and "loop_carriers" not in pi_value:
+            if (
+                pi_value is not None
+                and not compact_pi
+                and "loop_carriers" not in pi_value
+            ):
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: loop_carriers"
                 )
@@ -4498,11 +4518,19 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v12",
             cls.SCHEMA,
         }:
-            if pi_value is not None and "physical_iterations" not in pi_value:
+            if (
+                pi_value is not None
+                and not compact_pi
+                and "physical_iterations" not in pi_value
+            ):
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: physical_iterations"
                 )
-            if pi_value is not None and "physical_loop_carriers" not in pi_value:
+            if (
+                pi_value is not None
+                and not compact_pi
+                and "physical_loop_carriers" not in pi_value
+            ):
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: "
                     "physical_loop_carriers"
@@ -4521,7 +4549,11 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v12",
             cls.SCHEMA,
         }:
-            if pi_value is not None and "terminal_controls" not in pi_value:
+            if (
+                pi_value is not None
+                and not compact_pi
+                and "terminal_controls" not in pi_value
+            ):
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: terminal_controls"
                 )
@@ -4535,7 +4567,11 @@ class Gate1Artifact(StrictJSONMixin):
             "intentir.scrc.artifact.v12",
             cls.SCHEMA,
         }:
-            if pi_value is not None and "route_extent_transforms" not in pi_value:
+            if (
+                pi_value is not None
+                and not compact_pi
+                and "route_extent_transforms" not in pi_value
+            ):
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: "
                     "route_extent_transforms"
@@ -4554,7 +4590,11 @@ class Gate1Artifact(StrictJSONMixin):
                 "Gate1 artifact v1-v11 do not contain pi program_axes"
             )
         if schema == cls.SCHEMA:
-            if pi_value is not None and "participant_mappings" not in pi_value:
+            if (
+                pi_value is not None
+                and not compact_pi
+                and "participant_mappings" not in pi_value
+            ):
                 raise SchemaError(
                     "Gate1Artifact.pi is missing required field: participant_mappings"
                 )
@@ -5193,11 +5233,11 @@ def _opaque_pi_json(
         include_program_axes=include_program_axes,
         include_participant_mappings=include_participant_mappings,
     )
-    for instance in result["instances"]:
+    for instance in result.get("instances", []):
         instance["semantic_ref"] = _opaque_reference(
             instance["semantic_ref"], aliases
         )
-    for refinement in result["refinements"]:
+    for refinement in result.get("refinements", []):
         if refinement["auth_ref"] is not None:
             refinement["auth_ref"] = _opaque_reference(
                 refinement["auth_ref"], aliases

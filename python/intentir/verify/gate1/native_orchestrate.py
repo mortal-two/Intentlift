@@ -13,6 +13,7 @@ from .cuda_compiler import (
     FrontendParameter,
 )
 from .model import Gate1Artifact, Gate1Status, ParameterKind
+from .normalize import NORMALIZER_PROTOCOL
 from .orchestrate import (
     Gate1ArmEvidence,
     Gate1Config,
@@ -29,6 +30,34 @@ from .tilelang_compiler import (
     TileLangCompiler,
     TileLangKernelSource,
 )
+
+
+def _identity_normalization(
+    artifact: Gate1Artifact, *, frontend: str, observer_profile: str
+) -> dict[str, Any]:
+    """Receipt for a unary, peer-blind native identity normalizer.
+
+    Native fingerprints are already frontend-specific structural observations.
+    Until a typed J/C anchor matcher exists, every field remains hard and pi may
+    not select, erase, or rewrite one of them.
+    """
+
+    return {
+        "protocol": NORMALIZER_PROTOCOL,
+        "profile_ok": True,
+        "frontend": frontend,
+        "observer_profile": observer_profile,
+        "unary": True,
+        "peer_observation_visible": False,
+        "transformed_occurrences": 0,
+        "active_rules": [],
+        "hard_relations": (
+            ["program_axes"] if artifact.pi.program_axes else []
+        ),
+        "hard_preservation_check": "passed",
+        "idempotence_check": "passed",
+        "unknown_atoms": "hard",
+    }
 
 
 def _dtype(value: str | None) -> str:
@@ -260,6 +289,11 @@ class CudaGate1Runner:
             replay_fingerprint,
             comparison,
             physical_calls=generation.attempts,
+            normalization=_identity_normalization(
+                artifact,
+                frontend="cuda",
+                observer_profile=CUDA_OBSERVER_PROFILE.profile_version,
+            ),
         )
 
     def run(
@@ -321,6 +355,11 @@ class CudaGate1Runner:
                 observer_profile=CUDA_OBSERVER_PROFILE,
                 normal_candidates=normal_candidates,
                 selected_normal_index=selected_normal_index,
+                source_normalization=_identity_normalization(
+                    artifact,
+                    frontend="cuda",
+                    observer_profile=CUDA_OBSERVER_PROFILE.profile_version,
+                ),
             )
         masked_evidence = None
         masked_calls = 0
@@ -348,6 +387,11 @@ class CudaGate1Runner:
             selected_normal_index=selected_normal_index,
             masked_j_independent_writer=(
                 True if self.config.run_masked_j else None
+            ),
+            source_normalization=_identity_normalization(
+                artifact,
+                frontend="cuda",
+                observer_profile=CUDA_OBSERVER_PROFILE.profile_version,
             ),
         )
 
@@ -445,6 +489,11 @@ class TileLangGate1Runner:
             replay_fingerprint,
             comparison,
             physical_calls=generation.attempts,
+            normalization=_identity_normalization(
+                artifact,
+                frontend="tilelang",
+                observer_profile=TILELANG_OBSERVER_PROFILE.profile_version,
+            ),
         )
 
     def run(
@@ -506,6 +555,11 @@ class TileLangGate1Runner:
                 observer_profile=TILELANG_OBSERVER_PROFILE,
                 normal_candidates=normal_candidates,
                 selected_normal_index=selected_normal_index,
+                source_normalization=_identity_normalization(
+                    artifact,
+                    frontend="tilelang",
+                    observer_profile=TILELANG_OBSERVER_PROFILE.profile_version,
+                ),
             )
         masked_evidence = None
         masked_calls = 0
@@ -533,6 +587,11 @@ class TileLangGate1Runner:
             selected_normal_index=selected_normal_index,
             masked_j_independent_writer=(
                 True if self.config.run_masked_j else None
+            ),
+            source_normalization=_identity_normalization(
+                artifact,
+                frontend="tilelang",
+                observer_profile=TILELANG_OBSERVER_PROFILE.profile_version,
             ),
         )
 

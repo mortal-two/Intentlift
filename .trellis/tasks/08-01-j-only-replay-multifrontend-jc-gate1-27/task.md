@@ -8,24 +8,24 @@
 ## 0. 唯一目标
 
 ```text
-Codex Lift(Source_f) -> (J,C,π)
+source-aware 主代理直接作者化 Source_f -> (J,C,π)
 TypeCheck(J,C,π)
 fresh Replay_f(J,MaskC(C);U_f) -> R       # π不可见
 Gate1_f,p^π(Source,R,c0)                  # J/C structural
 Gate2(Source,R,RefEval(J))                # 三边
 ```
 
-完成一对真实 TileLang/CUDA add2d 的自动 Lift 与 current-version Gate1/Gate2；通过后再运行 gather2d。
+完成一对真实 TileLang/CUDA add2d 的人工可审计作者化与 current-version Gate1/Gate2；通过后再运行 gather2d。正式运行不调用 Lift agent。
 
 ## 1. 不变量
 
-1. 主代理不手写或复制 artifact；正式 candidate由source-aware Codex owner生成；
+1. 主代理直接读取 Source/编译观察并作者化 artifact；不调用慢速 Lift agent，也不把历史 artifact 当作正式输入；
 2. Replay request/workspace/query/cache/continuation不含π、Source、Harness valuation、Gate或历史Replay；
 3. `S_J`只由J确定，compiler index最多并置MaskC attachment；
 4. π只进入固定单臂normalizer，candidate不能选择allowed diff或擦除字段；
 5. TileLang hard=TIR structure，PTX diagnostic；CUDA hard=PTX semantic effects，raw PTX diagnostic；
 6. current `jc-normalizer.v2`保持identity/fail-closed，不声称π消融收益；
-7. 每个frontend独立fresh Lift/Replay/Gate，不转移另一frontend的PASS；
+7. 每个frontend独立作者化前端事实并执行 fresh Replay/Gate，不转移另一frontend的PASS；
 8. Gate1闭合后才进入三边Gate2；
 9. 不恢复`python/tests`，不用mock/smoke替代真实workflow；
 10. persistent kernel-specific semantic/normalization LoC必须为0。
@@ -55,11 +55,11 @@ Gate2(Source,R,RefEval(J))                # 三边
 - [ ] TileLang继续TIR hard/PTX diagnostic；CUDA继续semantic PTX hard/raw diagnostic；
 - [ ] 不实现kernel-specific matcher、pairwise exception或allowed diff。
 
-## 5. P3：自动Lift add2d pair
+## 5. P3：主代理直接作者化 add2d pair
 
-- [ ] `tilelang:add2d`：Codex Lift→TypeCheck→fresh J-only Replay→Gate1→Gate2；
+- [ ] `tilelang:add2d`：主代理作者化→TypeCheck→fresh J-only Replay→Gate1→Gate2；
 - [ ] `cuda:tilelang_add2d`：同一完整流程；
-- [ ] 保存Source、Harness、candidate、Lift/Replay trajectory、compiler observation、Gate1、Gate2；
+- [ ] 保存Source、Harness、candidate、作者化记录、Replay trajectory、compiler observation、Gate1、Gate2；
 - [ ] canonical比较两份accepted J/C：共同数学结构与真实frontend差异分别报告；
 - [ ] 确认两份Replay receipt均无π输入。
 
@@ -75,7 +75,7 @@ Gate2(Source,R,RefEval(J))                # 三边
 
 每个fresh正式case记录：
 
-- Lift wall time、candidate bytes、checker calls、TypeCheck；
+- J/C/π作者化wall time、candidate bytes、人工修订次数、TypeCheck；
 - J/C/π bytes与π relation count；
 - Replay wall time、segments、tokens、compile/fix cycles；
 - `pi_visible_to_replay=false`的机械receipt；
@@ -89,10 +89,9 @@ Gate2(Source,R,RefEval(J))                # 三边
 
 ## 8. 完成条件
 
-- 两个add2d case均由fresh Codex自动Lift，不使用历史artifact；
+- 两个add2d case均由主代理根据当前Source重新作者化，不调用Lift agent、不使用历史artifact作为正式输入；
 - 两个Replay输入中π物理缺席；
 - 两个profile各自Gate1闭合；
 - 两个case各自三边Gate2 PASS；
 - 若gather2d无法在预算内闭合，准确报告J/Replay/observer capability边界，不伪造数据；
 - 提交后工作区clean。
-

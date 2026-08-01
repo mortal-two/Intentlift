@@ -52,7 +52,6 @@ from intentir.verify.gate1.replay import (
     ResponsesReplayWriter,
 )
 from intentir.verify.gate1.codex_replay import CodexCLIReplayWriter
-from intentir.verify.gate1.replay_composer import REPLAY_COMPOSER_MODES
 from intentir.verify.gate2.model import Gate2Status
 from intentir.verify.gate2.compare import compare_outputs
 from intentir.verify.gate2.orchestrate import (
@@ -163,20 +162,17 @@ def _new_replay_writer(
     if replay_backend == "miniswe":
         return MiniSWEReplayWriter(**writer_kwargs)
     if replay_backend == "codex":
-        writer_kwargs["composer_mode"] = composer_mode
-        writer_kwargs["semantic_program_mode"] = _resolved_semantic_program_mode(
-            replay_backend, semantic_program_mode
-        )
+        # J-only Codex always receives the fixed S_J/compiler-index mount. The
+        # retired pi-fed composer and selectable semantic-program arms are not
+        # part of the Replay contract.
         return CodexCLIReplayWriter(**writer_kwargs)
     raise ValueError(f"unknown Replay backend: {replay_backend!r}")
 
 
 def _resolved_composer_mode(replay_backend: str, requested: str | None) -> str:
     mode = requested or "off"
-    if mode not in REPLAY_COMPOSER_MODES:
-        raise ValueError("Replay composer mode must be off/available/preferred")
-    if replay_backend != "codex" and mode != "off":
-        raise ValueError("Replay composer is available only with the Codex backend")
+    if mode != "off":
+        raise ValueError("Replay composer is retired; J-only Replay requires mode=off")
     return mode
 
 

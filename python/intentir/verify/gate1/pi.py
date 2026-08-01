@@ -19,6 +19,8 @@ class RealizationWitnessError(ValueError):
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
+NORMALIZATION_WITNESS_SCHEMA = "intentir.pi.normalization-witness.v1"
+
 REALIZATION_MECHANISMS: tuple[str, ...] = (
     "realize",
     "address_base",
@@ -303,8 +305,14 @@ def _require_acyclic(
 
 @dataclass
 class RealizationWitness:
-    """Minimal direct-pi schema for source-realization relations."""
+    """Certification-only normalization witness with legacy compatibility.
 
+    Fresh artifacts use the compact ``normalization-witness.v1`` subwire. The
+    former realization graph remains readable only for historical evidence and
+    is never exposed to a fresh Replay episode.
+    """
+
+    wire_schema: str | None = None
     regions: list[dict[str, JsonValue]] = field(default_factory=list)
     instances: list[dict[str, JsonValue]] = field(default_factory=list)
     routes: list[dict[str, JsonValue]] = field(default_factory=list)
@@ -333,6 +341,66 @@ class RealizationWitness:
     )
 
     def __post_init__(self) -> None:
+        if self.wire_schema not in {None, NORMALIZATION_WITNESS_SCHEMA}:
+            raise RealizationWitnessError(
+                f"unsupported pi subwire schema {self.wire_schema!r}"
+            )
+        if self.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
+            legacy_fields = {
+                "regions": self.regions,
+                "instances": self.instances,
+                "routes": self.routes,
+                "participant_mappings": self.participant_mappings,
+                "route_extent_transforms": self.route_extent_transforms,
+                "order": self.order,
+                "sharing": self.sharing,
+                "refinements": self.refinements,
+                "iterations": self.iterations,
+                "loop_carriers": self.loop_carriers,
+                "physical_iterations": self.physical_iterations,
+                "physical_loop_carriers": self.physical_loop_carriers,
+                "terminal_controls": self.terminal_controls,
+            }
+            present = sorted(name for name, rows in legacy_fields.items() if rows)
+            if present:
+                raise RealizationWitnessError(
+                    "normalization-witness pi may not contain the legacy "
+                    f"realization graph; found unsupported fields {present}"
+                )
+            checked_program_axes: list[dict[str, JsonValue]] = []
+            bound_domains: set[str] = set()
+            for index, raw in enumerate(self.program_axes):
+                path = f"pi.program_axes[{index}]"
+                item = _record(
+                    raw,
+                    path=path,
+                    required=frozenset({"domain_ref", "axis"}),
+                )
+                domain_ref = _name(item["domain_ref"], f"{path}.domain_ref")
+                if re.fullmatch(r"d[0-9]+", domain_ref) is None:
+                    raise RealizationWitnessError(
+                        f"{path}.domain_ref must be a J boundary domain handle d*"
+                    )
+                axis = item["axis"]
+                if (
+                    isinstance(axis, bool)
+                    or not isinstance(axis, int)
+                    or not 0 <= axis <= 2
+                ):
+                    raise RealizationWitnessError(
+                        f"{path}.axis must be an integer launch axis in [0, 2]"
+                    )
+                if domain_ref in bound_domains:
+                    raise RealizationWitnessError(
+                        "pi program-axis domain bindings must be unique"
+                    )
+                bound_domains.add(domain_ref)
+                checked_program_axes.append(
+                    {"domain_ref": domain_ref, "axis": axis}
+                )
+            self.program_axes = checked_program_axes
+            return
+
         checked_regions: list[dict[str, JsonValue]] = []
         for index, raw in enumerate(self.regions):
             item = _record(
@@ -957,6 +1025,23 @@ class RealizationWitness:
 
     @classmethod
     def from_json(cls, value: Any) -> "RealizationWitness":
+        if isinstance(value, dict) and "schema" in value:
+            data = _record(
+                value,
+                path="pi",
+                required=frozenset({"schema", "program_axes"}),
+            )
+            schema = _name(data["schema"], "pi.schema")
+            if schema != NORMALIZATION_WITNESS_SCHEMA:
+                raise RealizationWitnessError(
+                    f"unsupported pi subwire schema {schema!r}"
+                )
+            if not isinstance(data["program_axes"], list):
+                raise RealizationWitnessError("pi.program_axes must be an array")
+            return cls(
+                wire_schema=schema,
+                program_axes=copy.deepcopy(data["program_axes"]),
+            )
         data = _record(
             value,
             path="pi",
@@ -1041,6 +1126,11 @@ class RealizationWitness:
         include_program_axes: bool = True,
         include_participant_mappings: bool = True,
     ) -> dict[str, Any]:
+        if self.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
+            return {
+                "schema": NORMALIZATION_WITNESS_SCHEMA,
+                "program_axes": copy.deepcopy(self.program_axes),
+            }
         result = {
             "regions": copy.deepcopy(self.regions),
             "instances": copy.deepcopy(self.instances),
@@ -1074,6 +1164,7 @@ class RealizationWitness:
 
 
 __all__ = [
+    "NORMALIZATION_WITNESS_SCHEMA",
     "RealizationWitness",
     "RealizationWitnessError",
     "REALIZATION_MECHANISMS",

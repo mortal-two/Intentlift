@@ -52,7 +52,10 @@ from intentir.verify.gate1.model import (
     ScheduleSlotKind,
     SemanticArchive,
 )
-from intentir.verify.gate1.pi import RealizationWitness
+from intentir.verify.gate1.pi import (
+    NORMALIZATION_WITNESS_SCHEMA,
+    RealizationWitness,
+)
 
 
 TYPECHECK_PROTOCOL = "intentir.scrc.typecheck.v31"
@@ -4595,6 +4598,21 @@ def _check_program_axes(
     """Check the closed pi domain-to-launch-axis realization identity."""
 
     domains = set(j.boundary.domains)
+    if pi.wire_schema == NORMALIZATION_WITNESS_SCHEMA:
+        for index, item in enumerate(pi.program_axes):
+            domain_ref = str(item["domain_ref"])
+            if domain_ref not in domains:
+                diagnostics.append(
+                    TypeCheckDiagnostic(
+                        TypeCheckErrorCode.PROGRAM_AXIS_BINDING_INVALID,
+                        f"pi.program_axes[{index}].domain_ref",
+                        "compact program-axis binding must name a declared J boundary domain",
+                        domain_ref,
+                    )
+                )
+        # Compact pi is not a realization graph. Missing rows remain hard in
+        # Gate1; TypeCheck neither invents them nor asks for legacy route proof.
+        return
     regions = {
         str(item["id"]): item for item in pi.regions
     }

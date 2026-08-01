@@ -24,6 +24,7 @@ from intentir.verify.gate1.model import (
 )
 from intentir.verify.gate1.pi import (
     ITERATION_BASES,
+    NORMALIZATION_WITNESS_SCHEMA,
     PHYSICAL_ITERATION_DIRECTIONS,
     REALIZATION_MECHANISMS,
     REPRESENTATION_REFINEMENTS,
@@ -622,7 +623,7 @@ def _c_schema() -> dict[str, Any]:
     )
 
 
-def _pi_schema() -> dict[str, Any]:
+def _legacy_pi_schema() -> dict[str, Any]:
     opaque_ref = {
         "type": "string",
         "pattern": "^(t|n|a|d|e|q|b|s|v|p|c|x)[0-9]+$",
@@ -994,6 +995,54 @@ def _pi_schema() -> dict[str, Any]:
             "predicate, dtype, frontend API, rule identity or source text."
         ),
     )
+
+
+def _pi_schema() -> dict[str, Any]:
+    """Active compact certification-only pi offered to fresh authoring.
+
+    The legacy realization graph stays parseable by the artifact model for old
+    evidence, but fresh candidates can author only the fixed schema tag and
+    directly observed J-domain/program-axis bindings. The current normalizer
+    keeps those bindings hard until a sound unary anchor matcher exists.
+    """
+
+    program_axis = _closed_object(
+        {
+            "domain_ref": {
+                "type": "string",
+                "pattern": "^d[0-9]+$",
+                "description": (
+                    "Declared J boundary domain directly observed on this physical "
+                    "launch axis; the current profile keeps the binding hard."
+                ),
+            },
+            "axis": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Observed physical launch-axis identity.",
+            },
+        },
+        ("domain_ref", "axis"),
+    )
+    return _closed_object(
+        {
+            "schema": {
+                "type": "string",
+                "enum": [NORMALIZATION_WITNESS_SCHEMA],
+            },
+            "program_axes": _array(program_axis),
+        },
+        ("schema", "program_axes"),
+        description=(
+            "Compact Gate1-only normalization witness. It never enters Replay. "
+            "Author only directly observed, unambiguous program-axis labels "
+            "anchored in J; use an empty array otherwise. A row does not itself "
+            "authorize normalization, and the current profile keeps it hard."
+        ),
+    )
+
+
 def _portable_scope_schema() -> dict[str, Any]:
     return _closed_object(
         {

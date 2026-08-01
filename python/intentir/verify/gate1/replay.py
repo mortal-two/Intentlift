@@ -14,11 +14,6 @@ from intentir.extraction.providers.client import (
 )
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
-from intentir.replay_compiler.packet import (
-    SemanticProgramMount,
-    build_semantic_program_mount,
-)
-
 from .codegen import extract_python_module
 from .compiler import (
     CompileCase,
@@ -40,6 +35,10 @@ from .prompt import (
     assert_source_isolated_payload,
     build_rewriter_prompt,
     build_rewriter_payload,
+)
+from .replay_semantic_core import (
+    materialize_replay_compiler_index,
+    materialize_replay_semantics,
 )
 from .tilelang_codegen import (
     UnsafeTileLangReplayCodeError,
@@ -1754,9 +1753,9 @@ def replay_source_ingress(
                     ),
                 )
             _check_triton_program_id_axes(code, function_name)
-            _check_triton_typed_control_contract(code, packet, function_name)
-            _check_triton_rounded_iteration_contract(code, packet, function_name)
-            _check_triton_route_extent_contract(code, packet, function_name)
+            # Replay preflight owns syntax and the exact J/C ABI only. Pi is
+            # certification-only and is deliberately absent from this packet;
+            # realization differences are handled by Gate1 normalization.
         elif selected_frontend is Frontend.TILELANG:
             _check_tilelang_exact_abi(code, packet, function_name)
             _check_tilelang_schedule_roles(code, packet, function_name)
@@ -2932,13 +2931,7 @@ def source_blind_replay_compile_check(
                 ),
             )
         try:
-            fingerprint = parse_ttir(ttir)
-            obligation_diagnostics = compiled_packet_obligation_diagnostics(
-                selected_packet,
-                ttir,
-                fingerprint=fingerprint,
-                path_prefix="<synthetic-frontend-compile>",
-            )
+            parse_ttir(ttir)
         except TTIRParseError:
             return ReplayIngressResult(
                 "fail",
@@ -2950,11 +2943,6 @@ def source_blind_replay_compile_check(
                         "line": None,
                     },
                 ),
-            )
-        if obligation_diagnostics:
-            return ReplayIngressResult(
-                "fail",
-                diagnostics=obligation_diagnostics,
             )
     return ReplayIngressResult(
         "pass",
@@ -3073,228 +3061,147 @@ def _replay_input_files(
     *,
     frontend: Frontend,
     masked: bool,
-    include_semantic_program: bool = True,
-) -> tuple[
-    dict[str, str],
-    dict[str, Any],
-    str,
-    SemanticProgramMount | None,
-]:
+) -> tuple[dict[str, str], dict[str, Any], str]:
     """Build the complete, closed allowlist mounted for one agent episode."""
 
-    instructions, user = build_rewriter_prompt(
+    packet = build_rewriter_payload(
         artifact, frontend=frontend, masked=masked
     )
-    packet = json.loads(user)
     assert_source_isolated_payload(packet)
     packet_text = json.dumps(
         packet,
         sort_keys=True,
         ensure_ascii=False,
         allow_nan=False,
+        separators=(",", ":"),
     ) + "\n"
-    semantic_mount = (
-        build_semantic_program_mount(packet["j"], masked=masked)
-        if include_semantic_program
-        else None
+    semantic_program = materialize_replay_semantics(packet["j"])
+    semantic_program_text = json.dumps(
+        semantic_program.to_json(),
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ) + "\n"
+    compiler_index = materialize_replay_compiler_index(
+        semantic_program.to_json(), packet["c"]
     )
-    semantic_input_clause = (
-        """
-- `semantic_program.txt`: parameterized, declaration-order typed `S_J`; read this
-  first to understand the complete J semantic program.
-- `semantic_program.json`: the same immutable `S_J` as an exact structured view.
-- `SEMANTIC_RECEIPT.json`: proof-irrelevant evidence that this episode freshly
-  derived `S_J` from its own exact J only. It is not a fourth artifact or Gate input.
+    compiler_index_text = json.dumps(
+        compiler_index.to_json(),
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ) + "\n"
+    mask_c_text = json.dumps(
+        packet["c"],
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        indent=2,
+    ) + "\n"
+    frontend_text = json.dumps(
+        packet["u_f"],
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        indent=2,
+    ) + "\n"
+    instructions = """# Replay ownership contract
+
+J is the sole semantic authority: operators, operands, constants, predicates,
+domains, effects, result relations, and boundary index expressions come only from J.
+C is masked and supplies only its declared anonymous slot.
+`semantic-program.intent` and `semantic-program.json` are deterministic, read-only,
+parameterized materializations of this episode's J. They are compiler input IR, not a
+target-source skeleton or a fourth artifact. Compile the complete semantic program;
+do not edit it. Source code, source
+compiler IR, Harness values, Gate evidence, previous Replay, and kernel templates do
+not exist in this episode.
+
+You own the complete target program: instruction selection, address expressions,
+program mapping, control, layout, memory, loops/carriers, synchronization, target API
+and whole-program restructuring. Those choices may reorganize the program but may not
+add, remove, or alter J-owned values, predicates, domains, accesses, effects, results,
+or relations. Physical realization is not an extra semantic input. It will be compared
+outside this episode after fixed normalization; no Gate observation is available here.
+
+`compiler-index.intent` merely puts existing J domain-dependency sets beside anonymous
+MaskC attachments. A dependency subset is syntactic, not a schedule or proof of domain
+containment. Use it to avoid reconstructing cross-references, then compile the complete
+`boundary_ownership` contract. Preserve every authored access/effect and keep logical
+domain guards distinct from access-local predicates; choose all target realization
+yourself from S_J and public frontend capabilities. If an anonymous constexpr controls
+optional guard elision, keep the guarded and unguarded memory operations lexically
+inside their respective alternatives. An always-true comparison or mask is not an
+unguarded access: do not hoist one masked operation out of those alternatives.
 """
-        if semantic_mount is not None
-        else """
-- This controlled baseline episode intentionally omits `S_J`; consume exact J
-  from `packet.json` directly.
-"""
-    )
     readme = """# IntentIR source-blind Replay input
 
-This is the complete immutable input allowlist for one fresh Replay episode.
+This immutable directory is the complete input allowlist for one fresh episode.
 
-- `packet.json`: exactly source-isolated J + pi + MaskC(C) + U_f.
-""" + semantic_input_clause + """
-- `REPLAY_CONTRACT.md`: fixed public Replay construction contract.
-- `TOOL.md`: fixed bounded check and submission interface.
-- `intentir_packet_query`: bounded read-only packet inventory, exact authored
-  requirements checklist, path lookup, and anonymous-handle search plus paged
-  graph/realization/resolved-edge and local instance-obligation views. It exposes only packet.json and never writes
-  Replay or infers relations.
-- `intentir_replay_inspect`: bounded syntax-only inventory of the writer's own
-  current replay.source. It reads no packet or external evidence, performs no
-  comparison, and never edits or generates source.
+- `packet.json`: exact J + MaskC(C) + public U_f.
+- `semantic-program.intent`: compact, typed, parameterized read-only S_J.
+- `semantic-program.json`: exact structured form of the same S_J.
+- `compiler-index.intent` / `.json`: compact exact S_J+MaskC cross-reference;
+  syntactic dependency index only, never a schedule.
+- `mask-c.json`: exact anonymous MaskC(C), with no valuation.
+- `frontend.json`: public source-neutral U_f and required callable entry.
+- `REPLAY_CONTRACT.md`: ownership and no-leak boundary.
+- `TOOL.md`: coding, query, compile, own-IR, checkpoint, and submit commands.
 
-`S_J` is only a deterministic read-only organization of this episode's exact J.
-It does not replace J, contain pi, choose a target instruction, or assemble source.
-For the masked arm it is freshly materialized from MaskJ(J); a normal `S_J` is
-never reused or mounted.
-
-No Source or source slice, Harness/compiler view, actual C values, real
-CompileCase/grid, Gate diff/TTIR, previous Replay, sibling trajectory, or
-network is available. Generate the entire source yourself. Fixed code only
-checks and rejects; it never generates, patches, or certifies source.
-
-The startup message gives only local paths. Read `packet.json` with ordinary
-coding-agent file tools and inspect only the sections needed for the current
-construction step. The complete exact packet remains available throughout the
-fresh episode; no host summary, planner, or hidden lowering decision replaces it.
-
-After writing a complete first source, use `intentir_replay_inspect` only when a
-focused own-source inventory would resolve uncertainty. The tool reports only
-your syntax and never declares a semantic mismatch or recommends a repair.
-
-After writing a meaningful complete source, run
-`intentir_replay_check /output/replay.source`, then
-`intentir_replay_compile_check /output/replay.source` for a construction compile
-against one public synthetic profile: every pointer has one element,
-dtype-declared scalar and constexpr representatives are bool=true, integer=16,
-float=1.0, and the grid is (1,1,1). C values are never read; constexpr C slots
-use the same public type representatives. Compiler C slots are external compiler
-invocation options, never callable parameters or kernel-body values. This probe must pass before the exact
-Replay bytes leave the authoring episode, but it is not a semantic membership
-oracle and has no Gate or certification authority. Formal Gate1 recompiles the
-exact submitted bytes at c0.
-
-Before ReplayCheck, inspect packet control mechanically: every J `effect_if`
-must remain one runtime `if` with explicit polarity-preserving arms (including
-an explicit empty arm), except that a matching pi `terminal_controls` relation
-requires the named terminal arm to end in a bare return and the named
-continuation arm to follow without an else; every J `value_if` must remain a distinct runtime `if`
-whose explicit arms finally assign their yielded values to one common merge
-local; and every pi `rounded_extent_step` must use its declared J trip extent
-and matching C tile as `range(0, ceil_div(extent,tile)*tile, tile)`. `effect_if`,
-`value_if`, and select are hard-distinct. Never substitute select/predicated
-unconditional execution, current-shape guesses, or a second rounding formula.
-
-Every `pi.route_extent_transforms` item qualifies exactly one already-authored
-route slot from a required positive-integer C extent. Apply its literal divisor
-and floor/ceil rounding only at that target-local realization use. It is not a J
-shape/domain/predicate relation and does not authorize transforming sibling C uses.
-
-Every `pi.participant_mappings` item qualifies one existing lane-domain realize
-instance. For projection=`cyclic`, obtain the logical period only from the exact
-one-axis zero-based J domain reached through domain_instance (its positive literal
-or declared x* upper extent) and project the public physical participant
-coordinate cyclically into it. axis selects the participant coordinate;
-extent_slot binds only its anonymous external launch extent. Never copy a Source
-formula, guess the hidden C value, substitute blockDim for the J extent, or infer
-this relation from reduction shape or frontend convention.
-
-An `identity_materialization` refined instance whose sole outgoing route enters a
-`synchronize` instance that resolves through exact J to a reduce denotes one
-explicit pre-collective identity combine. Obtain the
-reducer, typed identity, and carrier type only from J, combine that identity with
-the incoming value once, and preserve the result as the input to the downstream
-`synchronize` stage. Pi does not carry the operator or identity value. Do not
-replace this compiler-visible stage with a cast, barrier, allocation, or inferred
-target recipe. Other identity_materializations retain their routed representation
-stage meaning and do not authorize a reducer combine.
-
-Every `pi.physical_iterations` item is an authored physical loop around an
-already-logical non-loop J reduce/contraction or boundary access/domain. Resolve
-its extent only through the same-subject C-attached closed axis, preserve its
-induction basis and forward or reverse order, and preserve any
-`pi.physical_loop_carriers` temporal stages.
-These relations never create a J loop or authorize a guessed bound/update.
-Every pi instance's declared region is exact lexical realization scope. Emit a
-loop-region instance inside that exact loop even when all of its operands are
-available outside and ordinary code motion would be semantically safe. Never
-hoist, sink, clone, or fold an authored instance across a region boundary; Gate1
-observes compiler-visible region membership.
-A J.signature p* is one already-existing callable ABI carrier. Any number of pi
-instances anchored to that same p* scope or route uses of that one carrier; they
-never create another external value or a program coordinate. In particular,
-placement=`program` does not turn p* into `tl.program_id`, and duplicate p*
-instances do not authorize duplicate reads or coordinates. Only the distinct
-typed J-domain realization authorized by the public frontend contract can create
-a program coordinate.
-The source-blind construction compile rejects a compiled `scf.for` multiplicity
-different from the number of structured J loops plus authored
-`pi.physical_iterations`; `pi.iterations` realizes its existing J loop and is
-not an additional loop. It also requires each loop's compiled block-argument
-arity to match its induction variable plus only the corresponding authored
-`pi.loop_carriers` or `pi.physical_loop_carriers`. This check never supplies a
-loop, bound, carrier, or update.
-
-A logical J axis ordinal is not automatically a Triton tensor-rank index. Build
-the active physical tile from the C slot attached to that J node and logical
-axis. If that tile is represented by one local Triton lane dimension, emit the
-tile-local reduction/contraction axis (normally 0), not the original logical
-tensor axis number. Never copy a J axis ordinal into `tl.sum`, `tl.max`,
-`tl.min`, or `tl.dot` without first deriving the physical tile rank from the
-authored J+C+pi packet. This is realization consumption, not a new semantic
-relation or permission.
-
-A J.signature constexpr p* with no logical_ref is only the callable carrier for
-the fixed Harness JIT specialization. Keep it in the exact constexpr ABI, but
-never read it or create a dummy use, Python branch, runtime conditional, or
-inactive graph. The packet deliberately omits its concrete value; emit the
-complete active J graph already authored by Lift. A null-ref runtime scalar is
-different and may be used only through its packet-declared pi realization.
-
-A J.signature constexpr p* with logical_ref=x* is the callable carrier of that
-exact semantic dimension. Use it directly wherever the authored pi lane or
-physical-iteration realization requires x*. Never replace it with a literal
-current shape or an arbitrary unit extent. A J const string `"-inf"`, `"inf"`,
-or `"nan"` is an exact typed IEEE special; materialize it at the declared dtype
-without a finite approximation or an undeclared wider-float round trip.
-
-A J.signature `opaque` parameter with dtype `none` is a true absent runtime
-carrier. Preserve its exact ABI position but never load, index, branch on,
-assemble, route, or otherwise read it. It has no J logical value and no pi
-instance. Public-dtype opaque carriers are different and remain governed by
-their authored pi topology.
-
-Distinct pi `transfer_direct` instances are distinct compiler-visible transfer
-occurrences, including repeated instances anchored to the same boundary access.
-The source-blind construction compile compares the compiled load/store
-multiplicity with those authored instances. If ordinary CSE would collapse a
-required occurrence, retain the LLM-authored transfer with a public closed
-eviction-policy spelling; the observer erases that spelling but not the event.
+Read files by path and only page sections needed for the current construction. No
+Source, real C value, CompileCase/grid, Gate result, history, repository, or network
+is available. S_J is derived only from this episode's J and contains no pi, C value,
+target operator, API, source statement, instruction selection, or repair.
 """
-    tool = """# Replay tool contract
+    tool = """# Replay agent tools
 
-Write exactly `/output/replay.source`. Run
-`intentir_replay_check /output/replay.source` for diagnostic ingress, then
-`intentir_replay_compile_check /output/replay.source` for the public synthetic
-construction-compile profile. Calls are audited telemetry and governed by the
-Replay episode's active wall time; submission independently rechecks changed
-exact bytes with both checks. Results contain only a closed
-protocol/status/rule/path plus anonymous handles or line number. No Source,
-Harness value, actual C value, Gate1 observer, or execution oracle is run. The
-compile profile is the public fixed synthetic profile in README.md. Neither
-check has Gate, semantic-membership, or certification authority. After exact
-bytes pass both construction checks, preserve the LLM owner's fallback choice with
-`intentir_replay_commit /output/replay.source`; restore only those bytes with
-`intentir_replay_rollback /output/replay.source`. Submit directly with
-`intentir_replay_submit /output/replay.source` or
-`intentir_replay_submit --committed`; no stdout marker is used. The writer
-independently reruns the same
-compiler-free ingress callable after submission, and formal Gate1 compiles c0.
+Act like a compiler coding agent. Read `compiler-index.intent`,
+`semantic-program.intent`, `frontend.json`, and `mask-c.json` completely before
+drafting. Query exact J/S_J only for a named
+cross-reference, and write one complete `/output/replay.source`.
 
-In the isolated Codex workspace, invoke the equivalent closed callbacks as
-`python .agents/intentir_agent_tool.py replay_check` or
-`replay_compile_check`. After a successful public synthetic compile,
-`replay_ttir_inspect summary|raw|find|observer` exposes only the current Replay's
-own TTIR/fingerprint for focused debugging. These callbacks take no host path and
-never expose Source, Source TTIR, Harness values, or Gate evidence. Read this file
-for usage instead of probing the fixed client with an unrecognized tool name.
+```text
+python .agents/intentir_agent_tool.py semantic_query overview
+python .agents/intentir_agent_tool.py semantic_query ownership
+python .agents/intentir_agent_tool.py semantic_query node REF
+python .agents/intentir_agent_tool.py packet_query abi 0 48
+python .agents/intentir_agent_tool.py packet_query graph 0 12
+python .agents/intentir_agent_tool.py replay_compile_check
+python .agents/intentir_agent_tool.py replay_ttir_inspect jc
+python .agents/intentir_agent_tool.py submit_replay
+```
 
+Use ordinary file edits and your own helper files under `/work`. You may compile,
+inspect only your current Replay IR, checkpoint and patch repeatedly within this one
+episode. After construction PASS, use the bounded `jc` view; revisit your own IR when
+a concrete J obligation remains, and use targeted raw/find/observer queries rather than
+dumping the full fingerprint.
+Remove work not authorized by S_J, and keep inactive constexpr alternatives lexically
+inside their branch so the specialized compiler never materializes them.
+`submit_replay` checks the exact complete
+bytes but neither generates nor repairs them. Formal Gate1 runs outside this episode
+and is never visible here. Merely writing source that compiles creates at most a
+recoverable checkpoint; it does not submit or terminate the episode. Review your own
+TTIR and explicitly call `submit_replay`.
 """
-    files = {
-        "README.md": readme,
-        "packet.json": packet_text,
-        "REPLAY_CONTRACT.md": instructions + "\n",
-        "TOOL.md": tool,
-    }
-    if semantic_mount is not None:
-        files.update(semantic_mount.files())
-    return files, packet, instructions, semantic_mount
-
+    return (
+        {
+            "README.md": readme,
+            "packet.json": packet_text,
+            "semantic-program.json": semantic_program_text,
+            "semantic-program.intent": semantic_program.text,
+            "compiler-index.json": compiler_index_text,
+            "compiler-index.intent": compiler_index.text,
+            "mask-c.json": mask_c_text,
+            "frontend.json": frontend_text,
+            "REPLAY_CONTRACT.md": instructions + "\n",
+            "TOOL.md": tool,
+        },
+        packet,
+        instructions,
+    )
 
 @dataclass
 class ResponsesReplayWriter:
@@ -3442,7 +3349,7 @@ class MiniSWEReplayWriter:
                 else MINISWE_REPLAY_TURN_TIMEOUT_SECONDS
             )
             timeout = min(provider_timeout, turn_timeout)
-        files, packet, instructions, _semantic_mount = _replay_input_files(
+        files, packet, instructions = _replay_input_files(
             artifact,
             frontend=self.frontend,
             masked=masked,

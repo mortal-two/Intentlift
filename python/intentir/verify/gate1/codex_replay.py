@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-from pathlib import Path
 import tempfile
+import threading
+import time
+from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from intentir.extraction.providers.codex_cli import (
     CODEX_CLI_AGENT_RUNTIME,
     CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
     CodexCLICancelled,
+    CodexCLIDiagnosticReady,
     CodexCLIError,
+    CodexCLISubmissionAccepted,
     CodexCLISession,
     CodexCLIToolBridge,
     CodexCLITurn,
@@ -24,26 +28,13 @@ from intentir.extraction.providers.client import (
     XHIGH_RESPONSES_TIMEOUT_SECONDS,
 )
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
-from intentir.replay_compiler.packet import SemanticProgramMount
-from intentir.replay_compiler.semantic_query import query_semantic_program
 from intentir.verify.gate1.compiler import KernelSource, TritonCompiler
-from intentir.verify.gate1.ttir import fingerprint_ttir
+from intentir.verify.gate1.ttir import fingerprint_ttir, runtime_argument_names
 
 from .model import Frontend, Gate1Artifact
-from .replay_composer import (
-    REPLAY_COMPOSER_BUILDER,
-    REPLAY_COMPOSER_MODES,
-    REPLAY_COMPOSER_PLAN,
-    REPLAY_COMPOSER_NODE_DRAFT,
-    REPLAY_COMPOSER_PROTOCOL,
-    REPLAY_COMPOSER_SOURCE_MAP,
-    REPLAY_COMPOSER_STATE,
-    REPLAY_COMPOSER_TOOL,
-    checkpoint_episode_composer,
-    composer_diagnostic_map,
-    install_episode_composer,
-    load_episode_composer_evidence,
-    restore_episode_composer_checkpoint,
+from .replay_semantic_core import (
+    materialize_replay_semantics,
+    query_replay_semantics,
 )
 from .replay import (
     REPLAY_CHECK_PROTOCOL,
@@ -59,141 +50,63 @@ from .replay import (
 )
 
 
-CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v40"
-PI_MIN_OWNERSHIP_RECEIPT_PROTOCOL = "intentir.pi-min.ownership-receipt.v1"
+CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v67"
 
 _INITIAL_PROMPT = """You are the sole writer for one fresh source-blind IntentIR Replay episode.
 Work only under the isolated /workspace. input/ is immutable; output/, work/, and
 tmp/ are writable. There is no Source, Harness/compiler view, actual C value, Gate
 result, earlier Replay, sibling state, repository, or network.
 
-Act like a compiler engineer using a read-only semantic IR. The exact source-blind
-packet is J + pi + MaskC(C) + public U_f in input/packet.json. When present,
-input/semantic_program.txt and input/semantic_program.json are the parameterized
-declaration-order `S_J = SemanticMaterialize(J)` derived only from this episode's
-exact J. Read semantic_program.txt first, then read/query exact J only for a detail
-that needs the authoritative representation. `S_J` is not a target skeleton,
-binding table, recipe, or fourth input; never modify it and never infer pi from it.
-Each operation's `operand_types`, `result_types`, and `semantic_contract` are exact
-J-only joins: use its axis roles, boundary relations, and access-to-effect chains
-instead of reconstructing those links from unrelated packet sections. Unscoped
-domain/result/authorization facts remain once under `global_contracts`. These joins
-make no target choice and do not weaken exact J as authority.
+J is the only semantic authority. Read input/compiler-index.intent and the complete
+read-only input/semantic-program.intent before drafting, then read input/frontend.json
+and input/mask-c.json for the callable ABI. S_J is a deterministic parameterized compiler
+IR derived only from this J, not a target-source skeleton. Use `semantic_query` or
+`packet_query` only to cross-reference one named J/C handle after reading those complete
+small views. Pi, Source realization, Gate observations, and prior Replay are absent.
 
-J operations and values are a logical dataflow, not a demand for one target
-statement or local per node. Fuse, inline, duplicate, or explicitly materialize
-logical expressions only as permitted or required by pi occurrence, sharing,
-refinement, ordering, and region constraints. In particular, an S_J result name
-alone never authorizes an extra typed local, buffer, cast, or representation stage;
-pi is the sole physical-materialization authority.
-An `identity_materialization` refinement requires an explicit value or
-representation stage at its authored route, but does not by itself authorize a
-new buffer, fragment allocation, shared/local storage object, or copy. Prefer a
-typed scalar/value let when that exactly preserves the stage. Allocate target
-storage only when J.storage or an explicit pi storage/transfer mechanism requires
-that storage topology; otherwise an allocation invents realization not owned by
-the artifact.
+Act as the complete Replay compiler. Write one full target program to
+output/replay.source yourself. You own instruction selection, addressing, program
+mapping, control, loops/carriers, layout, memory, synchronization, target APIs and
+whole-program restructuring while preserving all J-owned value semantics. Do not edit
+S_J or infer a Source recipe. input/REPLAY_CONTRACT.md defines
+the ownership boundary and input/TOOL.md defines the tools.
 
-You are the complete target compiler, not a hole filler. Form one coherent global
-implementation and write a complete output/replay.source early. You may freely
-restructure that complete source, choose target instructions and maintain your own
-episode-local helpers under work/. Do not walk the packet one leaf at a time. The
-packet_query and semantic_query tools are fallbacks for one precise path or handle
-that remains unclear. input/REPLAY_CONTRACT.md is a public reference to inspect only
-when one exact rule is unclear. Every semantic operation, operand edge, predicate,
-effect and ABI carrier must come from J/S_J; every region, route, order, sharing and
-time/control obligation must come from pi. Do not guess a Source recipe or invent
-missing facts.
+`compiler-index.intent` is only a compact cross-reference of facts already present in
+S_J and MaskC. Its dependency subsets are syntactic and neither select nor authorize a
+program axis, loop, lane, guard, or target API. Use it to avoid repeated JSON joins,
+then compile `boundary_ownership` as one whole-program contract. Preserve every
+authored access/effect and keep logical domain guards distinct from access-local
+predicates; you still own every target realization choice.
 
-Before writing, reconcile every declared J op occurrence (including fma), every
-boundary access/effect, every pi instance mechanism (including transfer_direct
-versus atomic realization), and every authored route/order/time/control relation.
-Use `critical_facts.lexical_regions` as the exact region-by-region construction
-ledger and `critical_facts.cross_region_order` as the exact ordering checklist;
-use `critical_facts.broadcast_obligations` as the exact operand/access/consumer
-rank-projection checklist; use `critical_facts.identity_materializations` as the
-exact representation-stage/adjacent-transfer checklist; consume every
-`critical_facts.route_extent_transforms` item at its exact existing route slot.
-Consume every `critical_facts.participant_mappings` item by resolving its
-domain_instance to exact J before selecting the public participant spelling.
-These views only reindex the same J/pi and add no
-realization decision. For each authored J.boundary.broadcasts item, preserve the
-operand's closed type at its producer and boundary access, then materialize the
-declared axes at that named consumer. Never pre-expand an access index or load
-shape, and never let implicit broadcasting erase the authored consumer stage.
-Every J.signature p* is one already-existing callable ABI carrier. Repeated pi
-instances anchored to that same p* only scope or route uses of that one carrier;
-they never create another value or program coordinate. Placement=`program` does
-not turn p* into `tl.program_id`, and duplicate p* instances never authorize
-duplicate carrier reads or coordinates. Only a distinct typed J-domain
-realization authorized by the public frontend contract may create a program
-coordinate.
-This is a consumption checklist, not permission to add a missing operator or
-edge. Use `section PATH`, `obligation HANDLE`, or `find HANDLE` only for one
-named omitted fact. Preserve every authored effect and realization ordering
-relation; never replace pi topology with a guessed source recipe. Use
-REPLAY_CONTRACT.md only for a focused unclear rule.
-Author the entire Replay as
-exactly output/replay.source and no other output file. You may keep
-proof-irrelevant notes or helper scripts under work/. You own the source
-spelling and low-level realization of facts already authored by J and pi; you
-do not invent semantic operators, dataflow edges, predicates, effects, result
-relations, or physical routes. If a required fact is absent from the packet,
-keep the replay fail-closed rather than guessing it. Run
-`python .agents/intentir_agent_tool.py replay_obligation_audit` after writing a
-complete source whenever the critical ledger contains broadcast obligations,
-identity materializations, lexical regions, cross-region order, or route extent
-transforms. Compare the
-returned exact ledger with the numbered current
-bytes yourself; after any edit, audit those new bytes again. The audit neither
-maps instances nor diagnoses or repairs source. After the required audit, run
-`python .agents/intentir_agent_tool.py submit_replay`. It transactionally runs the
-source-blind ingress and synthetic compile checks on your exact bytes. Repair your
-own source until it passes. If compilation is unclear, use `replay_ttir_inspect`
-only on a current Triton Replay; TileLang uses TIR and CUDA uses its native compile
-path. Fixed code only projects packet facts, checks, and rejects; it never writes
-or repairs Replay. The compile check preserves the exact pointer-address operation
-count already determined by J.signature carrier kinds and authored pi address
-routes; it derives no address formula. Finish only with the transaction passing.
-Neither check has Gate or certification authority. Do not claim Gate1, Gate2, or
-certification.
+Compile, inspect only your own Replay IR, and patch the complete program in this same
+episode. First run `replay_compile_check`; once construction passes, call
+`replay_ttir_inspect jc` for the bounded J/C structural summary. Compare its exact
+typed J obligations against your own dot/reduction/loop/cast signatures before submit;
+matching only operation counts is insufficient. Inspect your own IR
+again when a concrete J obligation remains unclear; use targeted `find`, `raw`, or
+`observer` queries instead of dumping the whole fingerprint. Keep computations for inactive constexpr
+alternatives inside their branch and do not add unmentioned `volatile`, cache,
+eviction, or other target attributes. In particular, when an anonymous constexpr
+selects whether an already-authored logical-domain guard is elided, put the unguarded
+and guarded memory operations in their respective lexical branches. Never encode the
+unguarded arm as an always-true comparison or mask and then issue one masked operation
+outside the branch: target IR may retain that predicate and turn an unconditional J
+access/effect into a masked one. Then run
+`submit_replay` on the reviewed exact bytes and repair until it
+passes. Submit also rejects an unambiguous read/write-mode contradiction between an
+explicit J boundary effect and your own compiled TTIR. Fixed code materializes S_J,
+projects exact packet facts, checks and rejects;
+it never constructs or repairs target source. Finish only with the transaction passing
+and do not claim Gate1, Gate2, or certification. A passive host watcher may checkpoint
+stable compilable bytes, but it never submits them and never ends this coding turn;
+only your explicit `submit_replay` can finish early.
 """
 
 _REPAIR_PROMPT = """The same fresh source-blind Replay episode continues in the same thread and workspace.
-Read work/host_replay_check.json and the current output/replay.source, repair the
-complete source yourself, and rerun submit_replay. The
-diagnostic is rejection-only. Finish only when both pass.
-"""
-
-_COMPOSER_AVAILABLE_PROMPT = """
-
-This fresh episode also provides a tiny syntax-only composer. It never reads
-input/packet.json and contains no J/pi-to-target mapping. The lowest-friction path
-is to author work/build_replay.py with its generic line/block/raw_block constructors
-and run it; this atomically renders output/replay.source and records stable
-node-to-line spans. You may instead edit work/replay.composer.json and run
-`python work/replay_composer.py render`. For local edits, put one node in
-work/replay.composer.node.json and use insert-before, insert-after, append-child, or
-replace; delete/move commands need no node draft.
-Use `checkpoint`, `rollback`, or `status` on the same helper when useful. Directly
-authoring output/replay.source remains a valid raw escape. Do not spend a turn
-reimplementing the composer or treating it as a semantic planner: you still choose
-every target API, expression, control structure, and realization from exact J/pi.
-See input/TOOL.md for the compact plan grammar.
-"""
-
-_COMPOSER_PREFERRED_PROMPT = """
-
-This episode is the composer-preferred efficiency arm. Start the first complete
-Replay by editing work/build_replay.py with the provided generic
-line/block/raw_block constructors and run it. Keep stable IDs for regions you may
-repair, then use the local edit commands when diagnostics identify a node. This is
-only an authoring treatment: it receives no extra semantic information and changes
-no ingress, compile, Gate1, or Gate2 rule. Unknown target syntax belongs in
-raw_block. Direct output/replay.source authoring remains a last-resort raw escape;
-use it when the syntax helper would genuinely add friction, not merely by default.
-You still derive every API, expression, control structure, and realization from
-exact J/pi yourself.
+Read work/host_replay_check.json and the current output/replay.source. Repair the
+complete program using the same read-only S_J, then rerun submit_replay.
+Diagnostics reject only; they do not supply a semantic mapping or repair. Finish only
+when ingress and compile both pass.
 """
 
 
@@ -221,45 +134,10 @@ def _aggregate_usage(turns: list[CodexCLITurn]) -> dict[str, int]:
     return usage
 
 
-def _pi_min_ownership_receipt(
-    packet: Mapping[str, Any], *, artifact_schema: str, masked: bool
-) -> dict[str, Any]:
-    """Summarize already-validated ownership without becoming another validator."""
-
-    pi = packet.get("pi")
-    relation_counts = {
-        key: len(value)
-        for key, value in (pi.items() if isinstance(pi, Mapping) else ())
-        if isinstance(value, list)
-    }
-    return {
-        "protocol": PI_MIN_OWNERSHIP_RECEIPT_PROTOCOL,
-        "status": "pass",
-        "artifact_schema": artifact_schema,
-        "masked_j": masked,
-        "semantic_authority": "J only",
-        "pi_authority": "J/C-dependent realization constraints only",
-        "pi_closed_fields": sorted(pi) if isinstance(pi, Mapping) else [],
-        "relation_counts": relation_counts,
-        "validation_basis": [
-            "canonical Gate1Artifact closed-schema decode",
-            "TypeCheck(J,C,pi)=PASS before Replay packet construction",
-            "closed source-isolated Replay payload grammar",
-        ],
-        "claim_scope": (
-            "proof-irrelevant ownership receipt; it neither proves zero statistical "
-            "information nor changes TypeCheck, Replay, Gate1, or Gate2 acceptance"
-        ),
-    }
 def _replay_startup_context(
-    packet: Mapping[str, Any],
-    *,
-    composer_mode: str,
-    semantic_mount: SemanticProgramMount | None,
+    packet: Mapping[str, Any], files: Mapping[str, str]
 ) -> dict[str, Any]:
-    """Return paths plus a proof-irrelevant index of the exact local packet."""
-
-    from minisweagent.environments.intentir_replay import _packet_critical_facts
+    """Return a path-only receipt; Codex reads the exact packet as a local file."""
 
     encoded = json.dumps(
         packet,
@@ -269,75 +147,312 @@ def _replay_startup_context(
         separators=(",", ":"),
     ).encode("utf-8")
     return {
-        "protocol": "intentir.scrc.replay-startup-view.v2",
+        "protocol": "intentir.scrc.replay-startup-view.v6",
         "packet_bytes": len(encoded),
+        "semantic_program_text_bytes": len(
+            files["semantic-program.intent"].encode("utf-8")
+        ),
+        "semantic_program_json_bytes": len(
+            files["semantic-program.json"].encode("utf-8")
+        ),
+        "compiler_index_text_bytes": len(
+            files["compiler-index.intent"].encode("utf-8")
+        ),
+        "compiler_index_json_bytes": len(
+            files["compiler-index.json"].encode("utf-8")
+        ),
         "paths": {
             "packet": "input/packet.json",
+            "semantic_program": "input/semantic-program.intent",
+            "semantic_program_json": "input/semantic-program.json",
+            "compiler_index": "input/compiler-index.intent",
+            "compiler_index_json": "input/compiler-index.json",
+            "mask_c": "input/mask-c.json",
+            "frontend": "input/frontend.json",
             "public_contract": "input/REPLAY_CONTRACT.md",
             "tool_contract": "input/TOOL.md",
             "replay": "output/replay.source",
             "host_check": "work/host_replay_check.json",
-            **(
-                {
-                    "semantic_program_text": "input/semantic_program.txt",
-                    "semantic_program_json": "input/semantic_program.json",
-                    "semantic_receipt": "input/SEMANTIC_RECEIPT.json",
-                }
-                if semantic_mount is not None
-                else {}
-            ),
-            **(
-                {
-                    "composer_tool": f"work/{REPLAY_COMPOSER_TOOL}",
-                    "composer_builder": f"work/{REPLAY_COMPOSER_BUILDER}",
-                    "composer_plan": f"work/{REPLAY_COMPOSER_PLAN}",
-                    "composer_node_draft": f"work/{REPLAY_COMPOSER_NODE_DRAFT}",
-                    "composer_state": f"work/{REPLAY_COMPOSER_STATE}",
-                    "composer_source_map": f"work/{REPLAY_COMPOSER_SOURCE_MAP}",
-                }
-                if composer_mode != "off"
-                else {}
-            ),
         },
-        "syntax_composer": {
-            "available": composer_mode != "off",
-            "offer_mode": composer_mode,
-            "protocol": REPLAY_COMPOSER_PROTOCOL if composer_mode != "off" else None,
-            "authority": (
-                "episode-local syntax rendering of agent-authored nodes only; "
-                "no packet read, semantic mapping, target recipe, or Gate authority"
-            ),
-        },
-        "semantic_program": (
-            {
-                "status": "mounted",
-                "mode": semantic_mount.program.mode,
-                "schema": semantic_mount.program.schema,
-                "parameterized": True,
-                "read_only": True,
-                "counts": dict(semantic_mount.program.counts),
-                "bytes": {
-                    "json": semantic_mount.program.json_bytes,
-                    "text": semantic_mount.program.text_bytes,
-                },
-                "authority": (
-                    "fresh deterministic organization of this episode's exact J "
-                    "only; no pi, target recipe, Source, Gate, or generation authority"
-                ),
-            }
-            if semantic_mount is not None
-            else {
-                "status": "disabled_controlled_baseline",
-                "authority": "exact J remains available in packet.json",
-            }
-        ),
-        "critical_facts": _packet_critical_facts(packet),
         "authority": (
-            "path, byte-count, and exact packet projection only; source-isolated "
-            "packet bytes remain in input/packet.json and no code or schedule is "
-            "generated"
+            "path and byte-count receipt only; exact source-isolated packet bytes "
+            "remain in input/packet.json and no code or schedule is generated"
         ),
+        "visible_packet_components": sorted(packet),
+        "pi_visible_to_replay": False,
+        "excluded_dependencies": [
+            "pi",
+            "Source",
+            "Harness valuation",
+            "Gate observation",
+            "prior Replay",
+        ],
     }
+
+
+def _jc_fingerprint_summary(fingerprint: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one bounded, source-blind structural view of Replay's own TTIR."""
+
+    result: dict[str, Any] = {}
+    for key in (
+        "interface",
+        "op_multiset",
+        "effect_multiset",
+        "reductions",
+        "dots",
+        "structured_ifs",
+        "terminal_forks",
+    ):
+        if key in fingerprint:
+            result[key] = fingerprint[key]
+
+    loops = fingerprint.get("loops")
+    if isinstance(loops, list):
+        kept = {
+            "block_argument_count",
+            "body_effects",
+            "body_op_multiset",
+            "carried_operand_count",
+            "result_count",
+        }
+        result["loops"] = [
+            {key: row[key] for key in kept if key in row}
+            for row in loops
+            if isinstance(row, Mapping)
+        ]
+
+    for key in ("dataflow_edges", "memory_effects", "mask_predicates"):
+        value = fingerprint.get(key)
+        if isinstance(value, (list, tuple, dict)):
+            result[f"{key}_count"] = len(value)
+    return result
+
+
+def _j_contract_summary(semantic_program: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a compact J-only checklist beside Replay's own TTIR summary.
+
+    Counts here are logical authored facts, not required raw TTIR multiplicities:
+    target lowering may fuse or split representation.  The view gives the coding
+    agent a bounded omission checklist without reading Source, pi, or Gate state.
+    """
+
+    nodes = semantic_program.get("nodes", [])
+    node_ops = Counter(
+        str(item.get("op"))
+        for item in nodes
+        if isinstance(item, Mapping) and isinstance(item.get("op"), str)
+    ) if isinstance(nodes, list) else Counter()
+    value_types_value = semantic_program.get("value_types", [])
+    value_types = {
+        str(item["value"]): {
+            "dtype": item.get("dtype"),
+            "shape": item.get("shape"),
+        }
+        for item in value_types_value
+        if isinstance(item, Mapping) and isinstance(item.get("value"), str)
+    } if isinstance(value_types_value, list) else {}
+
+    # These operations are exactly the places where a superficially plausible
+    # target program most often changes a J-owned type, axis, temporal state, or
+    # representation boundary.  The list is a read-only projection of S_J; it is
+    # not a target recipe and it neither accepts nor rejects Replay.
+    typed_kinds = {
+        "cast",
+        "contraction",
+        "gather",
+        "loop",
+        "reduce",
+        "scan",
+        "transpose",
+    }
+    typed_obligations: list[dict[str, Any]] = []
+    for item in nodes if isinstance(nodes, list) else []:
+        if not isinstance(item, Mapping) or item.get("op") not in typed_kinds:
+            continue
+        raw_operands = item.get("operands", [])
+        operands = raw_operands if isinstance(raw_operands, list) else []
+        raw_result = item.get("result")
+        results = raw_result if isinstance(raw_result, list) else [raw_result]
+        record = {
+            "id": item.get("id"),
+            "op": item.get("op"),
+            "operands": [
+                {"value": value, **value_types.get(str(value), {})}
+                for value in operands
+            ],
+            "results": [
+                {"value": value, **value_types.get(str(value), {})}
+                for value in results
+                if value is not None
+            ],
+        }
+        for key in ("attrs", "trip", "carry", "scan", "yield"):
+            if key in item:
+                record[key] = item[key]
+        typed_obligations.append(record)
+
+    ownership = semantic_program.get("boundary_ownership", {})
+    accesses = (
+        ownership.get("access_effects", [])
+        if isinstance(ownership, Mapping)
+        else []
+    )
+    access_kinds: Counter[str] = Counter()
+    effect_kinds: Counter[str] = Counter()
+    accesses_by_tensor: Counter[str] = Counter()
+    guarded_access_kinds: Counter[str] = Counter()
+    unguarded_access_kinds: Counter[str] = Counter()
+    for item in accesses if isinstance(accesses, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        if isinstance(item.get("kind"), str):
+            kind = str(item["kind"])
+            access_kinds[kind] += 1
+            if item.get("predicate") is None:
+                unguarded_access_kinds[kind] += 1
+            else:
+                guarded_access_kinds[kind] += 1
+        if isinstance(item.get("tensor"), str):
+            accesses_by_tensor[str(item["tensor"])] += 1
+        effects = item.get("effects", [])
+        for effect in effects if isinstance(effects, list) else []:
+            if isinstance(effect, Mapping) and isinstance(effect.get("kind"), str):
+                effect_kinds[str(effect["kind"])] += 1
+    return {
+        "authority": (
+            "J-only authored-fact checklist; logical counts are not raw TTIR "
+            "occurrence requirements and do not accept or reject Replay"
+        ),
+        "node_ops": dict(sorted(node_ops.items())),
+        "typed_obligations": typed_obligations[:96],
+        "typed_obligations_omitted": max(0, len(typed_obligations) - 96),
+        "access_kinds": dict(sorted(access_kinds.items())),
+        "guarded_access_kinds": dict(sorted(guarded_access_kinds.items())),
+        "unguarded_access_kinds": dict(sorted(unguarded_access_kinds.items())),
+        "effect_kinds": dict(sorted(effect_kinds.items())),
+        "accesses_by_tensor": dict(sorted(accesses_by_tensor.items())),
+        "shared_write_axis_refs": (
+            ownership.get("shared_write_axis_refs", [])
+            if isinstance(ownership, Mapping)
+            else []
+        ),
+        "shared_write_domain_axis_refs": (
+            ownership.get("shared_write_domain_axis_refs", [])
+            if isinstance(ownership, Mapping)
+            else []
+        ),
+        "domain_axis_refs": (
+            ownership.get("domain_axis_refs", {})
+            if isinstance(ownership, Mapping)
+            else {}
+        ),
+        "outputs": semantic_program.get("output_bindings", []),
+    }
+
+
+def _j_boundary_effect_diagnostics(
+    semantic_program: Mapping[str, Any],
+    fingerprint: Mapping[str, Any],
+    runtime_names: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Reject only unambiguous J-boundary read/write contradictions.
+
+    The check consumes this episode's J-only ``S_J`` and Replay's own compiled
+    interface.  It does not inspect Source, pi, Gate state, address formulas, or
+    peer observations, and it cannot accept Replay.  Alias groups and incomplete
+    boundary effect sets remain outside this narrow necessary condition.
+    """
+
+    signature = semantic_program.get("signature", {})
+    raw_parameters = (
+        signature.get("parameters", [])
+        if isinstance(signature, Mapping)
+        else []
+    )
+    parameters = {
+        str(item["name"]): item
+        for item in raw_parameters
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    refs: Counter[str] = Counter(
+        str(item.get("logical_ref"))
+        for item in parameters.values()
+        if isinstance(item.get("logical_ref"), str)
+    )
+    boundary = semantic_program.get("boundary", {})
+    raw_effects = (
+        boundary.get("effects", []) if isinstance(boundary, Mapping) else []
+    )
+    effect_modes: dict[str, set[str]] = {}
+    for effect in raw_effects if isinstance(raw_effects, list) else []:
+        if not isinstance(effect, Mapping) or not isinstance(effect.get("target"), str):
+            continue
+        kind = effect.get("kind")
+        modes = effect_modes.setdefault(str(effect["target"]), set())
+        if kind in {"read", "read_write"}:
+            modes.add("read")
+        if kind in {"write", "read_write"}:
+            modes.add("write")
+
+    interface = fingerprint.get("interface", {})
+    raw_arguments = (
+        interface.get("arguments", [])
+        if isinstance(interface, Mapping)
+        else []
+    )
+    arguments = raw_arguments if isinstance(raw_arguments, list) else []
+    if len(runtime_names) != len(arguments):
+        return [
+            {
+                "rule_code": "compiled_j_boundary_interface_unavailable",
+                "path": (
+                    "<synthetic-own-ttir> runtime-name/interface arity differs: "
+                    f"names={len(runtime_names)}, arguments={len(arguments)}"
+                ),
+                "anonymous_handles": [],
+                "line": None,
+            }
+        ]
+
+    diagnostics: list[dict[str, Any]] = []
+    for name, argument in zip(runtime_names, arguments, strict=True):
+        parameter = parameters.get(name)
+        if parameter is None or not isinstance(argument, Mapping):
+            continue
+        logical_ref = parameter.get("logical_ref")
+        if (
+            not isinstance(logical_ref, str)
+            or refs[logical_ref] != 1
+            or parameter.get("alias_of") is not None
+        ):
+            continue
+        modes = effect_modes.get(logical_ref, set())
+        expected = (
+            "inout"
+            if modes == {"read", "write"}
+            else "input"
+            if modes == {"read"}
+            else "output"
+            if modes == {"write"}
+            else None
+        )
+        actual = argument.get("access")
+        if expected is None or actual == expected:
+            continue
+        diagnostics.append(
+            {
+                "rule_code": "compiled_j_boundary_effect_mode",
+                "path": (
+                    f"<synthetic-own-ttir> {name}/{logical_ref}: "
+                    f"expected={expected}, actual={actual}"
+                ),
+                "anonymous_handles": [name, logical_ref],
+                "line": None,
+            }
+        )
+    return diagnostics[:20]
+
+
 @dataclass
 class CodexCLIReplayWriter:
     """Time-governed Codex writer; every ``generate`` is a fresh episode."""
@@ -347,7 +462,7 @@ class CodexCLIReplayWriter:
     frontend: Frontend = Frontend.TRITON
     model_timeout_seconds: float | None = None
     # Time, not a semantic-attempt count, bounds one fresh Replay episode.  High
-    # gets two full provider windows; xhigh retains its full transport window.
+    # gets three full provider windows; xhigh gets two of its longer windows.
     # This prevents a bad direction from cycling for an hour while leaving every
     # useful coding-agent tool action inside those turns unrestricted.
     session_wall_time_limit_seconds: float | None = None
@@ -356,8 +471,6 @@ class CodexCLIReplayWriter:
     context_rollover_input_tokens: int = 0
     repair_effort: str | None = None
     compile_checker: Callable[[str, Gate1Artifact, str], Any] | None = None
-    composer_mode: str = "off"
-    semantic_program_mode: str = "required"
     stop_requested: Callable[[], int | None] | None = field(
         default=None, repr=False
     )
@@ -380,26 +493,14 @@ class CodexCLIReplayWriter:
     ) -> ReplayGeneration:
         if self.context_rollover_input_tokens < 0:
             raise ValueError("Replay context rollover token threshold cannot be negative")
-        if self.composer_mode not in REPLAY_COMPOSER_MODES:
-            raise ValueError("composer_mode must be off/available/preferred")
-        if self.semantic_program_mode not in {"off", "required"}:
-            raise ValueError("semantic_program_mode must be off or required")
-        if self.frontend not in {
-            Frontend.TRITON,
-            Frontend.CUDA,
-            Frontend.TILELANG,
-        }:
-            raise ValueError(
-                f"Codex CLI Replay has no audited ingress for {self.frontend.value}"
-            )
         provider = self.provider or get_provider()
         effective_effort = self.effort or provider.reasoning_effort
         episode_limit = self.session_wall_time_limit_seconds
         if episode_limit is None:
             episode_limit = (
-                XHIGH_RESPONSES_TIMEOUT_SECONDS
+                2.0 * XHIGH_RESPONSES_TIMEOUT_SECONDS
                 if effective_effort.casefold() == "xhigh"
-                else 2.0 * DEFAULT_RESPONSES_TIMEOUT_SECONDS
+                else 3.0 * DEFAULT_RESPONSES_TIMEOUT_SECONDS
             )
         if episode_limit <= 0:
             raise ValueError("Replay episode wall-time limit must be positive")
@@ -410,24 +511,27 @@ class CodexCLIReplayWriter:
                 if effective_effort.casefold() == "xhigh"
                 else DEFAULT_RESPONSES_TIMEOUT_SECONDS
             )
-        files, packet, instructions, semantic_mount = _replay_input_files(
+        files, packet, _instructions = _replay_input_files(
             artifact,
             frontend=self.frontend,
             masked=masked,
-            include_semantic_program=self.semantic_program_mode == "required",
         )
-        if self.semantic_program_mode == "required" and semantic_mount is None:
-            raise RuntimeError("required S_J materialization was not mounted")
+        agent_packet = dict(packet)
+        semantic_program = materialize_replay_semantics(packet["j"]).to_json()
+        files["packet.json"] = json.dumps(
+            agent_packet,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=2,
+        ) + "\n"
         function_name = str(packet["u_f"]["replay_function"])
 
         try:
             from minisweagent.environments.intentir_replay import (
                 INTENTIR_PACKET_QUERY,
                 IntentIRReplayWorkspace,
-                _packet_critical_facts,
                 _query_packet,
-                _replay_obligation_audit_required,
-                _replay_obligation_audit_view,
             )
         except ImportError as exc:
             raise RuntimeError(
@@ -435,51 +539,25 @@ class CodexCLIReplayWriter:
             ) from exc
 
         workspace = IntentIRReplayWorkspace.create(files)
-        composer_installation: Mapping[str, Any] | None = None
-        if self.composer_mode != "off":
-            try:
-                composer_installation = install_episode_composer(
-                    workspace.scratch_dir,
-                    self.frontend.value,
-                    offer_mode=self.composer_mode,
-                )
-            except Exception:
-                workspace.cleanup()
-                raise
         turns: list[CodexCLITurn] = []
         checks: list[dict[str, Any]] = []
         compile_checks: list[dict[str, Any]] = []
-        obligation_audits: list[dict[str, Any]] = []
         ttir_inspections: list[dict[str, Any]] = []
         packet_queries: list[dict[str, Any]] = []
         semantic_queries: list[dict[str, Any]] = []
         timeout_events: list[dict[str, Any]] = []
-        composer_host_events: list[dict[str, Any]] = []
+        accepted_submission_interrupts: list[dict[str, Any]] = []
+        diagnostic_ready_interrupts: list[dict[str, Any]] = []
+        live_checkpoint_events: list[dict[str, Any]] = []
+        accepted_submission_event = threading.Event()
+        diagnostic_ready_event = threading.Event()
+        live_checkpoint_stop = threading.Event()
+        evaluation_lock = threading.RLock()
         source_text = ""
         formal_ingress = None
         formal_compile = None
         last_checked_good: str | None = None
-        startup_context = _replay_startup_context(
-            packet,
-            composer_mode=self.composer_mode,
-            semantic_mount=semantic_mount,
-        )
-        pi_min_ownership = _pi_min_ownership_receipt(
-            packet,
-            artifact_schema=artifact.wire_schema,
-            masked=masked,
-        )
-        semantic_receipt: Mapping[str, Any] = (
-            semantic_mount.receipt()
-            if semantic_mount is not None
-            else {
-                "protocol": "intentir.replay.semantic-receipt.v1",
-                "status": "disabled_controlled_baseline",
-                "mode": "masked" if masked else "normal",
-                "fresh_materialization": False,
-                "proof_relevant": False,
-            }
-        )
+        startup_context = _replay_startup_context(agent_packet, files)
         synthetic_compiler = (
             None
             if self.compile_checker is not None or self.frontend is not Frontend.TRITON
@@ -488,19 +566,17 @@ class CodexCLIReplayWriter:
                 cache_dir=workspace.tmp_dir / "synthetic-replay-compile-cache",
             )
         )
-        critical_facts = _packet_critical_facts(packet)
-        obligation_audit_required = _replay_obligation_audit_required(
-            critical_facts
-        )
-        obligation_audited_source_digests: set[str] = set()
         ttir_observations: dict[str, dict[str, Any]] = {}
+        reviewed_jc_sources: set[str] = set()
         prompt = (
             _INITIAL_PROMPT
             + (
-                _COMPOSER_PREFERRED_PROMPT
-                if self.composer_mode == "preferred"
-                else _COMPOSER_AVAILABLE_PROMPT
-                if composer_installation is not None
+                "\nFor this native frontend, replay_ttir_inspect is unavailable: "
+                "the construction check compiles your exact source through the "
+                "public native compiler, while formal TIR/PTX observation remains "
+                "outside this episode. Submit after ingress and native construction "
+                "compile pass; do not wait for a TTIR review.\n"
+                if self.frontend is not Frontend.TRITON
                 else ""
             )
             + "\n\n<source-blind-startup>\n"
@@ -522,82 +598,7 @@ class CodexCLIReplayWriter:
         last_replay_check_source: str | None = None
         last_replay_check_signature: tuple[tuple[str, str], ...] | None = None
         repeated_replay_diagnostic = 0
-
-        def current_composer_evidence() -> Mapping[str, Any]:
-            if composer_installation is None:
-                return {
-                    "protocol": REPLAY_COMPOSER_PROTOCOL,
-                    "status": "disabled",
-                    "installed": False,
-                    "builder_installed": False,
-                    "offer_mode": "off",
-                    "used": False,
-                    "selected_path": "raw_escape",
-                }
-            evidence = dict(
-                load_episode_composer_evidence(
-                    workspace.scratch_dir, workspace.replay_path
-                )
-            )
-            evidence["host_events"] = list(composer_host_events)
-            return evidence
-
-        def checkpoint_current_composer(expected_source: str) -> bool:
-            if composer_installation is None:
-                return False
-            try:
-                return checkpoint_episode_composer(
-                    workspace.scratch_dir,
-                    workspace.replay_path,
-                    expected_source=expected_source,
-                )
-            except Exception as exc:
-                composer_host_events.append(
-                    {
-                        "action": "checkpoint",
-                        "status": "unavailable",
-                        "diagnostic_class": type(exc).__name__,
-                    }
-                )
-                return False
-
-        def restore_current_composer(expected_source: str) -> bool:
-            if composer_installation is None:
-                return False
-            try:
-                return restore_episode_composer_checkpoint(
-                    workspace.scratch_dir,
-                    workspace.replay_path,
-                    expected_source=expected_source,
-                )
-            except Exception as exc:
-                composer_host_events.append(
-                    {
-                        "action": "rollback",
-                        "status": "unavailable",
-                        "diagnostic_class": type(exc).__name__,
-                    }
-                )
-                return False
-
-        def attach_composer_map(
-            response: Mapping[str, Any], current: str | None
-        ) -> dict[str, Any]:
-            result = dict(response)
-            diagnostics = result.get("diagnostics")
-            if (
-                composer_installation is not None
-                and current is not None
-                and isinstance(diagnostics, list)
-            ):
-                mapped = composer_diagnostic_map(
-                    workspace.scratch_dir,
-                    current,
-                    [item for item in diagnostics if isinstance(item, Mapping)],
-                )
-                if mapped:
-                    result["composer_diagnostic_map"] = mapped
-            return result
+        explicit_submission_accepted = False
 
         def write_host_check(check: Mapping[str, Any]) -> None:
             _atomic_write_text(
@@ -694,28 +695,11 @@ class CodexCLIReplayWriter:
             }
             last_replay_check_source = current
             last_replay_check_signature = signature
-            return attach_composer_map(response, current)
+            return response
 
         def replay_compile_tool() -> Mapping[str, Any]:
             nonlocal last_checked_good
             current = workspace.read_replay()
-            current_digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
-            if (
-                obligation_audit_required
-                and current_digest not in obligation_audited_source_digests
-            ):
-                return {
-                    "protocol": REPLAY_CHECK_PROTOCOL,
-                    "status": "fail",
-                    "diagnostics": [
-                        {
-                            "rule_code": "replay_obligation_audit_required",
-                            "path": "<current-replay-bytes>",
-                            "anonymous_handles": [],
-                            "line": None,
-                        }
-                    ],
-                }
             ingress = replay_source_ingress(
                 current,
                 artifact=artifact,
@@ -737,49 +721,23 @@ class CodexCLIReplayWriter:
                     packet=packet,
                 )
             )
-            response = attach_composer_map(checked.to_check_response(), current)
+            response = checked.to_check_response()
             if checked.status == "pass":
                 # The checkpoint is the exact Replay-LLM-authored text that
                 # passed both source-blind construction checks in this fresh
                 # episode.  Fixed code may restore only these bytes.
                 last_checked_good = current
-                checkpoint_current_composer(current)
             return response
-
-        def replay_obligation_audit_tool() -> Mapping[str, Any]:
-            current = workspace.read_replay()
-            view = _replay_obligation_audit_view(packet, current)
-            source_digest = str(view["source_sha256"])
-            obligation_audited_source_digests.add(source_digest)
-            obligation_audits.append(
-                {
-                    "source_sha256": source_digest,
-                    "broadcast_obligation_count": len(
-                        view["broadcast_obligations"]
-                    ),
-                    "identity_materialization_count": len(
-                        view["identity_materializations"]
-                    ),
-                    "lexical_region_count": len(view["lexical_regions"]),
-                    "cross_region_order_count": len(view["cross_region_order"]),
-                    "program_axis_count": len(view["program_axes"]),
-                    "route_extent_transform_count": len(
-                        view["route_extent_transforms"]
-                    ),
-                    "participant_mapping_count": len(
-                        view["participant_mappings"]
-                    ),
-                }
-            )
-            return view
 
         def submit_replay_tool() -> Mapping[str, Any]:
             """Run both construction checks as one exact-source transaction."""
 
+            nonlocal explicit_submission_accepted
+
             ingress = dict(replay_check_tool())
             if ingress.get("status") != "pass":
                 return {
-                    "protocol": "intentir.codex-cli.replay-submit.v1",
+                    "protocol": "intentir.codex-cli.replay-submit.v2",
                     "status": "fail",
                     "phase": "ingress",
                     "ingress": ingress,
@@ -787,8 +745,44 @@ class CodexCLIReplayWriter:
                     "authority": "diagnostic-only; no Replay source is generated or repaired",
                 }
             compiled = dict(replay_compile_tool())
+            necessary: Mapping[str, Any] | None = None
+            if compiled.get("status") == "pass" and synthetic_compiler is not None:
+                current_source = workspace.read_replay()
+                reviewed_before_submit = current_source in reviewed_jc_sources
+                necessary = replay_ttir_inspect_tool(("jc",))
+                if not reviewed_before_submit:
+                    return {
+                        "protocol": "intentir.codex-cli.replay-submit.v2",
+                        "status": "fail",
+                        "phase": "j_owned_review_required",
+                        "ingress": ingress,
+                        "compile": compiled,
+                        "j_owned_review": necessary,
+                        "authority": (
+                            "source-blind own-TTIR review checkpoint only; inspect the "
+                            "returned J/C facts and current Replay TTIR, then explicitly "
+                            "submit the same or revised exact bytes"
+                        ),
+                    }
+                diagnostics = necessary.get("j_owned_necessary_diagnostics")
+                if isinstance(diagnostics, list) and diagnostics:
+                    return {
+                        "protocol": "intentir.codex-cli.replay-submit.v2",
+                        "status": "fail",
+                        "phase": "j_owned_necessary",
+                        "ingress": ingress,
+                        "compile": compiled,
+                        "j_owned_necessary": necessary,
+                        "authority": (
+                            "J-only necessary-condition diagnostic; no Replay source "
+                            "is generated or repaired and formal Gate1 remains external"
+                        ),
+                    }
+            if compiled.get("status") == "pass":
+                explicit_submission_accepted = True
+                accepted_submission_event.set()
             return {
-                "protocol": "intentir.codex-cli.replay-submit.v1",
+                "protocol": "intentir.codex-cli.replay-submit.v2",
                 "status": compiled.get("status", "fail"),
                 "phase": "compile",
                 "ingress": ingress,
@@ -813,25 +807,12 @@ class CodexCLIReplayWriter:
             }
 
         def semantic_query_tool(arguments: tuple[str, ...]) -> Mapping[str, Any]:
-            """Project one bounded exact view from the immutable episode S_J."""
-
-            if semantic_mount is None:
-                return {
-                    "protocol": "intentir.codex-cli.replay-semantic-query.v1",
-                    "status": "unavailable",
-                    "query": list(arguments),
-                    "authority": "controlled exact-J baseline has no S_J mount",
-                }
-            value = query_semantic_program(semantic_mount.program, arguments)
+            value = query_replay_semantics(semantic_program, arguments)
             semantic_queries.append({"query": list(arguments)})
             return {
-                "protocol": "intentir.codex-cli.replay-semantic-query.v1",
-                "status": "pass",
-                "query": list(arguments),
-                "value": value,
-                "authority": (
-                    "bounded exact projection of this episode's immutable J-only "
-                    "S_J; no pi, Source, Gate, target lowering, generation, or repair"
+                **value,
+                "authority": value.get(
+                    "authority", semantic_program.get("authority")
                 ),
             }
 
@@ -884,16 +865,36 @@ class CodexCLIReplayWriter:
                 ttir_observations[current] = observation
 
             mode = arguments[0] if arguments else "summary"
-            if mode not in {"summary", "raw", "find", "observer"}:
+            if mode not in {"jc", "summary", "raw", "find", "observer"}:
                 raise ValueError(
-                    "replay_ttir_inspect mode must be summary/raw/find/observer"
+                    "replay_ttir_inspect mode must be jc/summary/raw/find/observer"
                 )
             if observation.get("status") != "pass":
                 result_view = dict(observation)
             else:
                 ttir = str(observation["ttir"])
                 lines = ttir.splitlines()
-                if mode == "summary":
+                if mode == "jc":
+                    if len(arguments) != 1:
+                        raise ValueError("jc accepts no additional arguments")
+                    fingerprint = observation.get("fingerprint")
+                    if not isinstance(fingerprint, Mapping):
+                        raise ValueError("compiled Replay exposes no fingerprint")
+                    result_view = {
+                        "protocol": observation["protocol"],
+                        "status": "pass",
+                        "ttir_lines": len(lines),
+                        "j_contract": _j_contract_summary(semantic_program),
+                        "jc": _jc_fingerprint_summary(fingerprint),
+                        "j_owned_necessary_diagnostics": (
+                            _j_boundary_effect_diagnostics(
+                                semantic_program,
+                                fingerprint,
+                                runtime_argument_names(ttir),
+                            )
+                        ),
+                    }
+                elif mode == "summary":
                     fingerprint = observation.get("fingerprint")
                     result_view = {
                         key: value
@@ -973,6 +974,8 @@ class CodexCLIReplayWriter:
                         "path": arguments[1],
                         "value": value,
                     }
+            if mode == "jc" and result_view.get("status") == "pass":
+                reviewed_jc_sources.add(current)
             ttir_inspections.append(
                 {
                     "query": list(arguments) if arguments else ["summary"],
@@ -988,22 +991,34 @@ class CodexCLIReplayWriter:
                 ),
             }
 
+        def _locked_tool_call(
+            callback: Callable[..., Mapping[str, Any]],
+            *arguments: Any,
+        ) -> Mapping[str, Any]:
+            with evaluation_lock:
+                return callback(*arguments)
+
         bridge = CodexCLIToolBridge(
             workspace.scratch_dir / CODEX_CLI_TOOL_BRIDGE_ROOT_NAME,
             {
-                "replay_check": replay_check_tool,
-                "replay_compile_check": replay_compile_tool,
-                "replay_obligation_audit": replay_obligation_audit_tool,
-                "submit_replay": submit_replay_tool,
+                "replay_check": lambda: _locked_tool_call(replay_check_tool),
+                "replay_compile_check": lambda: _locked_tool_call(
+                    replay_compile_tool
+                ),
+                "submit_replay": lambda: _locked_tool_call(submit_replay_tool),
             },
             argument_handlers={
                 "packet_query": packet_query_tool,
                 "semantic_query": semantic_query_tool,
-                "replay_ttir_inspect": replay_ttir_inspect_tool,
+                "replay_ttir_inspect": lambda arguments: _locked_tool_call(
+                    replay_ttir_inspect_tool, arguments
+                ),
             },
         )
 
-        def evaluate_current(*, trigger: str) -> tuple[bool, Mapping[str, Any]]:
+        def _evaluate_current_unlocked(
+            *, trigger: str
+        ) -> tuple[bool, Mapping[str, Any]]:
             nonlocal source_text, formal_ingress, formal_compile
             try:
                 source_text = workspace.read_replay()
@@ -1031,19 +1046,12 @@ class CodexCLIReplayWriter:
                     function_name=function_name,
                     packet=packet,
                 )
-                check = attach_composer_map(
-                    formal_ingress.to_check_response(), source_text
-                )
+                check = formal_ingress.to_check_response()
             checks.append(
                 {
                     "trigger": trigger,
                     "status": check["status"],
                     "diagnostics": [dict(item) for item in check["diagnostics"]],
-                    "source_sha256": (
-                        hashlib.sha256(source_text.encode("utf-8")).hexdigest()
-                        if source_text
-                        else None
-                    ),
                 }
             )
             if (
@@ -1052,34 +1060,6 @@ class CodexCLIReplayWriter:
                 or formal_ingress.code is None
             ):
                 return False, check
-            source_digest = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
-            if (
-                obligation_audit_required
-                and source_digest not in obligation_audited_source_digests
-            ):
-                audit_check: Mapping[str, Any] = {
-                    "protocol": REPLAY_CHECK_PROTOCOL,
-                    "status": "fail",
-                    "diagnostics": [
-                        {
-                            "rule_code": "replay_obligation_audit_required",
-                            "path": "<current-replay-bytes>",
-                            "anonymous_handles": [],
-                            "line": None,
-                        }
-                    ],
-                }
-                compile_checks.append(
-                    {
-                        "trigger": trigger,
-                        "status": "fail",
-                        "diagnostics": [
-                            dict(item) for item in audit_check["diagnostics"]
-                        ],
-                        "source_sha256": source_digest,
-                    }
-                )
-                return False, audit_check
             formal_compile = (
                 self.compile_checker(
                     formal_ingress.code,
@@ -1096,9 +1076,7 @@ class CodexCLIReplayWriter:
                     packet=packet,
                 )
             )
-            compile_check = attach_composer_map(
-                formal_compile.to_check_response(), source_text
-            )
+            compile_check = formal_compile.to_check_response()
             compile_checks.append(
                 {
                     "trigger": trigger,
@@ -1106,15 +1084,89 @@ class CodexCLIReplayWriter:
                     "diagnostics": [
                         dict(item) for item in compile_check["diagnostics"]
                     ],
-                    "source_sha256": source_digest,
                 }
             )
-            if formal_compile.status == "pass":
-                checkpoint_current_composer(source_text)
             return formal_compile.status == "pass", compile_check
 
+        def evaluate_current(*, trigger: str) -> tuple[bool, Mapping[str, Any]]:
+            with evaluation_lock:
+                return _evaluate_current_unlocked(trigger=trigger)
+
+        try:
+            initial_replay = workspace.read_replay()
+        except Exception:
+            initial_replay = None
+        live_checkpoint_attempted = (
+            {initial_replay} if initial_replay is not None else set()
+        )
+
+        def live_checkpoint_watch() -> None:
+            """Checkpoint stable exact Replay bytes without ending the agent turn.
+
+            The watcher is deliberately not a submission path. It preserves a
+            last-known-good exact source for timeout recovery, while the Replay
+            owner remains free to inspect its own TTIR, patch, and explicitly call
+            ``submit_replay`` in the same Codex turn.
+            """
+
+            nonlocal last_checked_good
+            observed_replay: str | None = None
+            stable_since = 0.0
+            while not live_checkpoint_stop.wait(0.25):
+                try:
+                    observed_text = workspace.read_replay()
+                except Exception:
+                    observed_replay = None
+                    stable_since = 0.0
+                    continue
+                if observed_text in live_checkpoint_attempted:
+                    continue
+                if observed_text != observed_replay:
+                    observed_replay = observed_text
+                    stable_since = time.monotonic()
+                    continue
+                if time.monotonic() - stable_since < 3.0:
+                    continue
+                live_checkpoint_attempted.add(observed_text)
+                passed, check = evaluate_current(trigger="live_checkpoint")
+                with evaluation_lock:
+                    checked_text = source_text
+                    accepted = passed and checked_text == observed_text
+                    if accepted:
+                        last_checked_good = checked_text
+                live_checkpoint_events.append(
+                    {
+                        "replay_bytes": len(checked_text.encode()) if checked_text else 0,
+                        "status": check.get("status", "fail"),
+                        "accepted": accepted,
+                        "checkpoint_only": True,
+                    }
+                )
+                if checked_text != observed_text:
+                    live_checkpoint_attempted.discard(observed_text)
+                if accepted:
+                    # A compilable checkpoint is not a reviewed submission. Do
+                    # not interrupt Codex before it can run its J/C own-IR review.
+                    observed_replay = None
+                    stable_since = 0.0
+                    continue
+                if checked_text == observed_text:
+                    write_host_check(check)
+                    # The same closed diagnostic is available through the explicit
+                    # tools. A passive failed draft must not split one native
+                    # write-check-patch loop into another provider turn.
+                    observed_replay = None
+                    stable_since = 0.0
+
+        live_checkpoint_thread: threading.Thread | None = None
         try:
             bridge.start()
+            live_checkpoint_thread = threading.Thread(
+                target=live_checkpoint_watch,
+                name="intentir-codex-replay-live-checkpoint",
+                daemon=True,
+            )
+            live_checkpoint_thread.start()
             session = new_session()
             while True:
                 remaining = (
@@ -1130,7 +1182,64 @@ class CodexCLIReplayWriter:
                         timeout_seconds=turn_timeout,
                         effort=selected_effort,
                         stop_requested=self.stop_requested,
+                        submission_accepted=accepted_submission_event.is_set,
+                        diagnostic_ready=diagnostic_ready_event.is_set,
                     )
+                    accepted_submission_event.clear()
+                    diagnostic_ready_event.clear()
+                except CodexCLISubmissionAccepted as exc:
+                    active_elapsed_ms += exc.elapsed_ms
+                    accepted_submission_event.clear()
+                    diagnostic_ready_event.clear()
+                    thread_id = exc.thread_id
+                    if thread_id not in thread_ids:
+                        thread_ids.append(thread_id)
+                    accepted_submission_interrupts.append(
+                        {
+                            "elapsed_ms": exc.elapsed_ms,
+                            "thread_id": exc.thread_id,
+                            "recovery": "pending_exact_checkpoint_recheck",
+                        }
+                    )
+                    if last_checked_good is None:
+                        raise CodexCLIError(
+                            "accepted Replay submission has no exact checked checkpoint"
+                        ) from exc
+                    _atomic_write_text(workspace.replay_path, last_checked_good)
+                    passed, _ = evaluate_current(
+                        trigger="host_accepted_submission_restore"
+                    )
+                    if not passed:
+                        raise CodexCLIError(
+                            "accepted Replay failed independent host recheck"
+                        ) from exc
+                    accepted_submission_interrupts[-1]["recovery"] = (
+                        "exact_checkpoint_restored"
+                    )
+                    break
+                except CodexCLIDiagnosticReady as exc:
+                    active_elapsed_ms += exc.elapsed_ms
+                    diagnostic_ready_event.clear()
+                    accepted_submission_event.clear()
+                    thread_id = exc.thread_id
+                    if thread_id not in thread_ids:
+                        thread_ids.append(thread_id)
+                    diagnostic_ready_interrupts.append(
+                        {
+                            "elapsed_ms": exc.elapsed_ms,
+                            "thread_id": exc.thread_id,
+                            "recovery": "same_thread_closed_diagnostic",
+                        }
+                    )
+                    passed, check = evaluate_current(
+                        trigger="host_live_diagnostic_recheck"
+                    )
+                    if passed:
+                        break
+                    write_host_check(check)
+                    prompt = _REPAIR_PROMPT
+                    selected_effort = self.repair_effort or effective_effort
+                    continue
                 except CodexCLIError as exc:
                     if "wall-time limit" not in str(exc):
                         raise
@@ -1147,29 +1256,31 @@ class CodexCLIReplayWriter:
                     passed, check = evaluate_current(
                         trigger="host_timeout_recheck"
                     )
+                    remaining_after_timeout = (
+                        episode_limit
+                        - active_elapsed_ms / 1000.0
+                    )
                     if passed:
-                        timeout_event["recovery"] = "current_exact_replay"
+                        timeout_event["recovery"] = (
+                            "current_exact_replay"
+                            if explicit_submission_accepted
+                            else "turn_deadline_host_validated_current_exact_replay"
+                        )
                         break
                     if last_checked_good is not None:
-                        restored_composer = restore_current_composer(
-                            last_checked_good
+                        _atomic_write_text(
+                            workspace.replay_path, last_checked_good
                         )
-                        if not restored_composer:
-                            _atomic_write_text(
-                                workspace.replay_path, last_checked_good
-                            )
                         passed, check = evaluate_current(
                             trigger="host_timeout_checkpoint_restore"
                         )
                         if passed:
                             timeout_event["recovery"] = (
                                 "same_episode_checked_checkpoint"
+                                if explicit_submission_accepted
+                                else "turn_deadline_host_validated_checked_checkpoint"
                             )
                             break
-                    remaining_after_timeout = (
-                        episode_limit
-                        - active_elapsed_ms / 1000.0
-                    )
                     if remaining_after_timeout <= 0:
                         timeout_event["recovery"] = "episode_time_exhausted"
                         raise RuntimeError(
@@ -1192,8 +1303,31 @@ class CodexCLIReplayWriter:
                     thread_ids.append(thread_id)
                 active_elapsed_ms += turn.elapsed_ms
                 passed, check = evaluate_current(trigger="host_post_turn")
-                if passed:
+                if passed and explicit_submission_accepted:
                     break
+                if passed:
+                    last_checked_good = source_text
+                    write_host_check(
+                        {
+                            "protocol": REPLAY_CHECK_PROTOCOL,
+                            "status": "fail",
+                            "diagnostics": [
+                                {
+                                    "rule_code": "explicit_replay_submission_required",
+                                    "path": "<replay>",
+                                    "anonymous_handles": [],
+                                    "line": None,
+                                }
+                            ],
+                            "authority": (
+                                "protocol-only continuation; exact compilable bytes are "
+                                "checkpointed but not submitted or certified"
+                            ),
+                        }
+                    )
+                    prompt = _REPAIR_PROMPT
+                    selected_effort = self.repair_effort or effective_effort
+                    continue
                 write_host_check(check)
                 prompt = _REPAIR_PROMPT
                 selected_effort = self.repair_effort or effective_effort
@@ -1204,20 +1338,21 @@ class CodexCLIReplayWriter:
             trajectory = {
                 "protocol": CODEX_CLI_AGENT_RUNTIME,
                 "backend": CODEX_CLI_REPLAY_BACKEND,
+                "replay_input": startup_context,
                 "fresh_session": True,
                 "thread_id": thread_id,
                 "thread_ids": list(thread_ids),
                 "turns": [turn.to_evidence() for turn in turns],
                 "replay_check": checks,
                 "replay_compile_check": compile_checks,
-                "replay_obligation_audits": obligation_audits,
                 "replay_ttir_inspections": ttir_inspections,
                 "packet_queries": packet_queries,
                 "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
-                "syntax_composer": current_composer_evidence(),
-                "pi_min_ownership": pi_min_ownership,
-                "semantic_program": dict(semantic_receipt),
+                "accepted_submission_interrupts": accepted_submission_interrupts,
+                "diagnostic_ready_interrupts": diagnostic_ready_interrupts,
+                "live_checkpoint": live_checkpoint_events,
+                "explicit_submission_accepted": explicit_submission_accepted,
                 "tool_bridge": bridge.evidence,
                 "formal_ingress_recheck": True,
                 "isolation": {
@@ -1226,11 +1361,6 @@ class CodexCLIReplayWriter:
                     "output_work_tmp": "write-only-scope",
                     "tool_network": "disabled",
                     "provider_secret_in_tool_env": False,
-                    "semantic_program_read_only": semantic_mount is not None,
-                    "semantic_program_fresh": semantic_mount is not None,
-                    "semantic_program_j_only": semantic_mount is not None,
-                    "composer_reads_packet": False,
-                    "composer_episode_local": True,
                 },
             }
             raw_trajectory = _trajectory_bytes(trajectory)
@@ -1247,16 +1377,26 @@ class CodexCLIReplayWriter:
                     "episode_wall_time_limit_seconds": (
                         episode_limit
                     ),
-                    "cli_turns": len(turns) + timed_out_calls,
-                    "model_segments_lower_bound": sum(
-                        turn.model_segments for turn in turns
-                    ) + timed_out_calls,
+                    "cli_turns": (
+                        len(turns)
+                        + timed_out_calls
+                        + len(accepted_submission_interrupts)
+                        + len(diagnostic_ready_interrupts)
+                    ),
+                    "model_segments_lower_bound": (
+                        sum(turn.model_segments for turn in turns)
+                        + timed_out_calls
+                        + len(accepted_submission_interrupts)
+                        + len(diagnostic_ready_interrupts)
+                    ),
                     "tool_actions": sum(turn.tool_actions for turn in turns),
                     "formal_ingress_protocol": REPLAY_CHECK_PROTOCOL,
                     "formal_compile_recheck": True,
-                    "syntax_composer": current_composer_evidence(),
-                    "pi_min_ownership": pi_min_ownership,
-                    "semantic_program": dict(semantic_receipt),
+                    "visible_packet_components": sorted(packet),
+                    "pi_visible_to_replay": False,
+                    "excluded_dependencies": list(
+                        startup_context["excluded_dependencies"]
+                    ),
                 }
             )
             generation = ReplayGeneration(
@@ -1270,9 +1410,17 @@ class CodexCLIReplayWriter:
                 entry_function_name=formal_ingress.entry_function_name,
                 response_text=source_text,
                 raw_response=raw_trajectory,
-                attempts=len(turns) + timed_out_calls,
+                attempts=(
+                    len(turns)
+                    + timed_out_calls
+                    + len(accepted_submission_interrupts)
+                    + len(diagnostic_ready_interrupts)
+                ),
                 physical_provider_calls=(
-                    sum(turn.model_segments for turn in turns) + timed_out_calls
+                    sum(turn.model_segments for turn in turns)
+                    + timed_out_calls
+                    + len(accepted_submission_interrupts)
+                    + len(diagnostic_ready_interrupts)
                 ),
                 transport_retries=0,
                 elapsed_ms=active_elapsed_ms,
@@ -1295,14 +1443,13 @@ class CodexCLIReplayWriter:
                 "turns": [turn.to_evidence() for turn in turns],
                 "replay_check": checks,
                 "replay_compile_check": compile_checks,
-                "replay_obligation_audits": obligation_audits,
                 "replay_ttir_inspections": ttir_inspections,
                 "packet_queries": packet_queries,
                 "semantic_queries": semantic_queries,
                 "timeout_events": timeout_events,
-                "syntax_composer": current_composer_evidence(),
-                "pi_min_ownership": pi_min_ownership,
-                "semantic_program": dict(semantic_receipt),
+                "accepted_submission_interrupts": accepted_submission_interrupts,
+                "diagnostic_ready_interrupts": diagnostic_ready_interrupts,
+                "live_checkpoint": live_checkpoint_events,
                 "tool_bridge": bridge.evidence,
                 "failure_class": type(exc).__name__,
                 **(
@@ -1323,18 +1470,28 @@ class CodexCLIReplayWriter:
                 response_model=provider.model,
                 usage=_aggregate_usage(turns),
                 raw_response=raw_trajectory,
-                attempts=len(turns) + timed_out_calls,
+                attempts=(
+                    len(turns)
+                    + timed_out_calls
+                    + len(accepted_submission_interrupts)
+                    + len(diagnostic_ready_interrupts)
+                ),
                 elapsed_ms=active_elapsed_ms,
                 trajectory=trajectory,
                 backend_protocol=CODEX_CLI_REPLAY_BACKEND,
                 physical_provider_calls=sum(
                     turn.model_segments for turn in turns
-                ) + cancelled_calls + timed_out_calls,
+                ) + cancelled_calls + timed_out_calls + len(
+                    accepted_submission_interrupts
+                ) + len(diagnostic_ready_interrupts),
                 transport_retries=0,
             )
             self._records.append(attempt)
             raise ReplayGenerationError(attempt) from exc
         finally:
+            live_checkpoint_stop.set()
+            if live_checkpoint_thread is not None:
+                live_checkpoint_thread.join()
             bridge.close()
             if session is not None:
                 session.close()

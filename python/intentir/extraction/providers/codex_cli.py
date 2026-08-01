@@ -24,7 +24,7 @@ from typing import Any, Callable, Mapping
 from .provider import ProviderConfig
 
 
-CODEX_CLI_AGENT_RUNTIME = "intentir.codex-cli.agent-runtime.v3"
+CODEX_CLI_AGENT_RUNTIME = "intentir.codex-cli.agent-runtime.v5"
 CODEX_CLI_TOOL_BRIDGE_PROTOCOL = "intentir.codex-cli.tool-bridge.v3"
 CODEX_CLI_TOOL_BRIDGE_ROOT_NAME = "intentir-agent-tools"
 MAX_CODEX_STDOUT_BYTES = 32 * 1024 * 1024
@@ -62,6 +62,36 @@ class CodexCLICancelled(CodexCLIError):
         super().__init__(
             f"candidate superseded by Gate1 winner branch {winner_branch_id}"
         )
+
+
+class CodexCLISubmissionAccepted(CodexCLIError):
+    """A closed host tool accepted exact bytes, so final model prose was skipped."""
+
+    def __init__(
+        self,
+        *,
+        elapsed_ms: float,
+        thread_id: str,
+    ) -> None:
+        self.elapsed_ms = elapsed_ms
+        self.thread_id = thread_id
+        self.physical_calls = 1
+        super().__init__("exact-byte submission accepted by the closed host tool")
+
+
+class CodexCLIDiagnosticReady(CodexCLIError):
+    """Stable exact bytes were rejected and a same-thread repair can start now."""
+
+    def __init__(
+        self,
+        *,
+        elapsed_ms: float,
+        thread_id: str,
+    ) -> None:
+        self.elapsed_ms = elapsed_ms
+        self.thread_id = thread_id
+        self.physical_calls = 1
+        super().__init__("exact-byte diagnostic is ready for same-thread repair")
 
 
 def _codex_tool_client_source() -> str:
@@ -386,8 +416,9 @@ class CodexCLIToolBridge:
             "calls": len(receipts),
             "receipts": receipts,
             "authority": (
-                "diagnostic-only callbacks over exact host-read output bytes; "
-                "no artifact or Replay field is generated or edited"
+                "closed allowlisted workspace callbacks; each handler response "
+                "declares its own authority, and the mailbox transport performs no "
+                "semantic inference, lowering, repair, Gate, or certification"
             ),
         }
 
@@ -757,11 +788,19 @@ class CodexCLISession:
         effort: str | None = None,
         resume: bool | None = None,
         stop_requested: Callable[[], int | None] | None = None,
+        submission_accepted: Callable[[], bool] | None = None,
+        diagnostic_ready: Callable[[], bool] | None = None,
+        submission_grace_seconds: float = 2.0,
+        diagnostic_grace_seconds: float = 2.0,
     ) -> CodexCLITurn:
         if self._closed:
             raise CodexCLIError("Codex session is closed")
         if timeout_seconds <= 0:
             raise ValueError("Codex turn timeout must be positive")
+        if submission_grace_seconds < 0:
+            raise ValueError("submission grace must be non-negative")
+        if diagnostic_grace_seconds < 0:
+            raise ValueError("diagnostic grace must be non-negative")
         selected_effort = effort or self.effort
         resumed = self._thread_id is not None if resume is None else bool(resume)
         command = self._command(prompt, effort=selected_effort, resumed=resumed)
@@ -784,6 +823,10 @@ class CodexCLISession:
             )
             limit_error: str | None = None
             cancelled_by: int | None = None
+            accepted_submission = False
+            accepted_at: float | None = None
+            ready_diagnostic = False
+            diagnostic_at: float | None = None
             while process.poll() is None:
                 elapsed = time.monotonic() - started
                 observed_winner = (
@@ -797,13 +840,56 @@ class CodexCLISession:
                         limit_error = "candidate stop callback returned an invalid winner"
                     else:
                         cancelled_by = observed_winner
-                elif elapsed >= timeout_seconds:
-                    limit_error = "Codex turn exceeded its wall-time limit"
-                elif stdout.tell() > MAX_CODEX_STDOUT_BYTES:
-                    limit_error = "Codex stdout exceeded its byte limit"
-                elif stderr.tell() > MAX_CODEX_STDERR_BYTES:
-                    limit_error = "Codex stderr exceeded its byte limit"
-                if limit_error is not None or cancelled_by is not None:
+                else:
+                    if submission_accepted is not None:
+                        observed_acceptance = submission_accepted()
+                        if not isinstance(observed_acceptance, bool):
+                            limit_error = (
+                                "submission callback returned a non-boolean value"
+                            )
+                        elif observed_acceptance:
+                            if accepted_at is None:
+                                accepted_at = time.monotonic()
+                            if (
+                                time.monotonic() - accepted_at
+                                >= submission_grace_seconds
+                            ):
+                                accepted_submission = True
+                    if (
+                        limit_error is None
+                        and not accepted_submission
+                        and diagnostic_ready is not None
+                    ):
+                        observed_diagnostic = diagnostic_ready()
+                        if not isinstance(observed_diagnostic, bool):
+                            limit_error = (
+                                "diagnostic callback returned a non-boolean value"
+                            )
+                        elif observed_diagnostic:
+                            if diagnostic_at is None:
+                                diagnostic_at = time.monotonic()
+                            if (
+                                time.monotonic() - diagnostic_at
+                                >= diagnostic_grace_seconds
+                            ):
+                                ready_diagnostic = True
+                    if (
+                        limit_error is None
+                        and not accepted_submission
+                        and not ready_diagnostic
+                    ):
+                        if elapsed >= timeout_seconds:
+                            limit_error = "Codex turn exceeded its wall-time limit"
+                        elif stdout.tell() > MAX_CODEX_STDOUT_BYTES:
+                            limit_error = "Codex stdout exceeded its byte limit"
+                        elif stderr.tell() > MAX_CODEX_STDERR_BYTES:
+                            limit_error = "Codex stderr exceeded its byte limit"
+                if (
+                    limit_error is not None
+                    or cancelled_by is not None
+                    or accepted_submission
+                    or ready_diagnostic
+                ):
                     process.kill()
                     break
                 time.sleep(0.05)
@@ -824,6 +910,26 @@ class CodexCLISession:
                 elapsed_ms=elapsed_ms,
                 stdout_sha256=hashlib.sha256(raw_stdout).hexdigest(),
                 stderr_sha256=hashlib.sha256(raw_stderr).hexdigest(),
+            )
+        if accepted_submission:
+            thread_id = self._recover_partial_thread_identity(raw_stdout)
+            if thread_id is None:
+                raise CodexCLIError(
+                    "accepted Codex submission lacks a resumable thread identity"
+                )
+            raise CodexCLISubmissionAccepted(
+                elapsed_ms=elapsed_ms,
+                thread_id=thread_id,
+            )
+        if ready_diagnostic:
+            thread_id = self._recover_partial_thread_identity(raw_stdout)
+            if thread_id is None:
+                raise CodexCLIError(
+                    "diagnostic-ready Codex turn lacks a resumable thread identity"
+                )
+            raise CodexCLIDiagnosticReady(
+                elapsed_ms=elapsed_ms,
+                thread_id=thread_id,
             )
         if limit_error is not None:
             if limit_error == "Codex turn exceeded its wall-time limit":
@@ -920,6 +1026,8 @@ __all__ = [
     "MAX_CODEX_STDOUT_BYTES",
     "CodexCLIError",
     "CodexCLICancelled",
+    "CodexCLIDiagnosticReady",
+    "CodexCLISubmissionAccepted",
     "CodexCLISession",
     "CodexCLIToolBridge",
     "CodexCLITurn",

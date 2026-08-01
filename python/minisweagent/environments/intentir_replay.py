@@ -6,6 +6,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import shlex
 import stat
 import struct
@@ -20,6 +21,7 @@ from typing import Any, Callable, Mapping
 from pydantic import BaseModel, ConfigDict
 
 from minisweagent.exceptions import Submitted
+from intentir.verify.gate1.replay_semantic_core import query_replay_semantics
 
 
 INTENTIR_REPLAY_SUBMIT = "INTENTIR_REPLAY_SUBMIT"
@@ -28,23 +30,27 @@ INTENTIR_REPLAY_COMMIT = "intentir_replay_commit"
 INTENTIR_REPLAY_ROLLBACK = "intentir_replay_rollback"
 INTENTIR_REPLAY_CHECK = "intentir_replay_check"
 INTENTIR_REPLAY_COMPILE_CHECK = "intentir_replay_compile_check"
-INTENTIR_REPLAY_OBLIGATION_AUDIT = "intentir_replay_obligation_audit"
 INTENTIR_PACKET_QUERY = "intentir_packet_query"
-REPLAY_STARTUP_PACKET_EMBED_LIMIT_BYTES = 64 * 1024
+INTENTIR_SEMANTIC_QUERY = "intentir_semantic_query"
 INTENTIR_REPLAY_INSPECT = "intentir_replay_inspect"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v16"
 REPLAY_TRANSACTION_PROTOCOL = "intentir.replay-transaction.v1"
 REPLAY_APPLY_PATCH_PROTOCOL = "intentir.replay-exact-text-patch.v1"
 REPLAY_DIRECT_SUBMIT_PROTOCOL = "intentir.replay-direct-submit.v1"
 MULTI_ACTION_PROTOCOL = "intentir.agent-multi-action.v1"
-REPLAY_BASE_INPUT_FILES = frozenset(
-    {"README.md", "packet.json", "REPLAY_CONTRACT.md", "TOOL.md"}
-)
-REPLAY_INPUT_FILES = REPLAY_BASE_INPUT_FILES | frozenset(
-    {"semantic_program.json", "semantic_program.txt", "SEMANTIC_RECEIPT.json"}
-)
-REPLAY_INPUT_FILE_SETS = frozenset(
-    {REPLAY_BASE_INPUT_FILES, REPLAY_INPUT_FILES}
+REPLAY_INPUT_FILES = frozenset(
+    {
+        "README.md",
+        "packet.json",
+        "semantic-program.json",
+        "semantic-program.intent",
+        "compiler-index.json",
+        "compiler-index.intent",
+        "mask-c.json",
+        "frontend.json",
+        "REPLAY_CONTRACT.md",
+        "TOOL.md",
+    }
 )
 REPLAY_SANDBOX_PROTOCOL = "intentir.replay-busybox-empty-root.v1"
 REPLAY_SANDBOX_HOSTNAME = "intentir-replay"
@@ -253,7 +259,6 @@ def _packet_overview(packet: Mapping[str, Any]) -> dict[str, Any]:
         else {}
     )
     boundary = j.get("boundary", {}) if isinstance(j, Mapping) else {}
-    pi = packet.get("pi", {})
     c = packet.get("c", {})
     u_f = packet.get("u_f", {})
     signature = j.get("signature", {}) if isinstance(j, Mapping) else {}
@@ -293,32 +298,14 @@ def _packet_overview(packet: Mapping[str, Any]) -> dict[str, Any]:
         }
         if isinstance(boundary, Mapping)
         else {},
-        "pi_counts": {
-            key: len(value)
-            for key, value in pi.items()
-            if isinstance(value, list)
-        }
-        if isinstance(pi, Mapping)
-        else {},
         "c_slots": c.get("slots", []) if isinstance(c, Mapping) else [],
         "next": [
             "This overview contains the compact ABI/op inventory and exact "
-            "root section sizes; do not query whole j/pi/u_f sections.",
+            "root section sizes; do not query whole j/u_f sections.",
             f"Query `{INTENTIR_PACKET_QUERY} abi 0 48` for full parameter "
             "fields, Intent I/O, U_f entry metadata, and MaskC slots.",
             f"Query `{INTENTIR_PACKET_QUERY} graph 0 12` for full op fields; "
             "page only if `next_start` is non-null.",
-            f"Query `{INTENTIR_PACKET_QUERY} realization` once, then page "
-            f"`{INTENTIR_PACKET_QUERY} obligations 0 12` across every instance. "
-            "It is the primary per-instance join of authored routes, order, "
-            "sharing, temporal roles, and refinements. Use "
-            f"`{INTENTIR_PACKET_QUERY} obligation HANDLE` to inspect one i* "
-            "instance or all instances anchored to one anonymous J/C handle.",
-            f"Use `{INTENTIR_PACKET_QUERY} routes 0 16`, "
-            f"`{INTENTIR_PACKET_QUERY} order 0 12`, or "
-            f"`{INTENTIR_PACKET_QUERY} edges 0 24` only to cross-check a named "
-            "relation; do not redundantly page all three after the obligation "
-            "ledger.",
             "Use `section PATH` only for a named field omitted by these views.",
             f"Use `{INTENTIR_PACKET_QUERY} find HANDLE` to follow references.",
         ],
@@ -433,1466 +420,6 @@ def _packet_graph(packet: Mapping[str, Any], start: int, count: int) -> Any:
     }
 
 
-def _packet_realization(packet: Mapping[str, Any]) -> Any:
-    pi = packet.get("pi", {})
-    if not isinstance(pi, Mapping):
-        raise TypeError("packet pi must be an object")
-    edge_keys = {"routes", "order"}
-    return {
-        "counts": {
-            key: len(value)
-            for key, value in pi.items()
-            if isinstance(value, list)
-        },
-        "topology": {
-            key: value
-            for key, value in pi.items()
-            if key not in edge_keys
-        },
-        "edge_query": (
-            f"{INTENTIR_PACKET_QUERY} edges 0 24"
-            if any(pi.get(key) for key in edge_keys)
-            else None
-        ),
-    }
-
-
-def _packet_requirements(packet: Mapping[str, Any]) -> dict[str, Any]:
-    """Return a bounded exact checklist over authored Replay obligations.
-
-    This view deliberately does not translate an Intent op or pi relation into
-    frontend source.  It only makes compiler-visible occurrences hard to lose in
-    a long packet: every op remains visible in declaration order, while the
-    already-authored control/time relations are colocated with their exact
-    instance and region records.
-    """
-
-    j = packet.get("j", {})
-    pi = packet.get("pi", {})
-    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
-        raise TypeError("packet J/pi must be objects")
-    intent = j.get("intent", {})
-    function = (
-        intent.get("intent_function", {})
-        if isinstance(intent, Mapping)
-        else {}
-    )
-    boundary = j.get("boundary", {})
-    if not isinstance(function, Mapping) or not isinstance(boundary, Mapping):
-        raise TypeError("packet J intent/boundary must be objects")
-    operations = _packet_graph_ops(
-        function.get("body", []), "j.intent.intent_function.body"
-    )
-    operation_counts = Counter(
-        str(item.get("op"))
-        for item in operations
-        if isinstance(item.get("op"), str)
-    )
-    sequence_limit = 64
-    sequence = [
-        [item.get("path"), item.get("id"), item.get("op")]
-        for item in operations[:sequence_limit]
-    ]
-    topology_ops = {
-        "contraction",
-        "effect_if",
-        "fma",
-        "loop",
-        "reduce",
-        "value_if",
-    }
-    topology_rows = [
-        item for item in operations if item.get("op") in topology_ops
-    ]
-    topology_limit = 24
-
-    relation_names = (
-        "program_axes",
-        "participant_mappings",
-        "route_extent_transforms",
-        "iterations",
-        "loop_carriers",
-        "physical_iterations",
-        "physical_loop_carriers",
-        "terminal_controls",
-    )
-    relation_views: dict[str, Any] = {}
-    referenced_instances: set[str] = set()
-    relation_instance_fields = {
-        "program_axes": (),
-        "participant_mappings": ("domain_instance",),
-        "route_extent_transforms": ("source", "target"),
-        "iterations": ("loop_instance", "tile_instance"),
-        "loop_carriers": ("loop_instance", "init", "state", "next", "result"),
-        "physical_iterations": ("body_instance", "tile_instance"),
-        "physical_loop_carriers": ("init", "state", "next", "result"),
-        "terminal_controls": ("terminal_instance", "continuation_instance"),
-    }
-    relation_limit = 12
-    for name in relation_names:
-        rows = pi.get(name, [])
-        if not isinstance(rows, list):
-            raise TypeError(f"packet pi {name} must be an array")
-        relation_views[name] = {
-            "total": len(rows),
-            "items": rows[:relation_limit],
-            "omitted": max(0, len(rows) - relation_limit),
-            "omitted_query": (
-                f"{INTENTIR_PACKET_QUERY} section pi.{name}"
-                if len(rows) > relation_limit
-                else None
-            ),
-        }
-        for row in rows:
-            if not isinstance(row, Mapping):
-                continue
-            for field_name in relation_instance_fields[name]:
-                value = row.get(field_name)
-                if isinstance(value, str):
-                    referenced_instances.add(value)
-
-    instances = pi.get("instances", [])
-    regions = pi.get("regions", [])
-    if not isinstance(instances, list) or not isinstance(regions, list):
-        raise TypeError("packet pi instances/regions must be arrays")
-    mechanism_counts = Counter(
-        str(item.get("mechanism"))
-        for item in instances
-        if isinstance(item, Mapping) and isinstance(item.get("mechanism"), str)
-    )
-    instance_limit = 48
-    instance_mechanisms = [
-        [
-            item.get("id"),
-            item.get("semantic_ref"),
-            item.get("mechanism"),
-            item.get("region"),
-        ]
-        for item in instances[:instance_limit]
-        if isinstance(item, Mapping)
-    ]
-    selected_instances = [
-        dict(item)
-        for item in instances
-        if isinstance(item, Mapping) and item.get("id") in referenced_instances
-    ]
-    referenced_regions = {
-        str(item.get("region"))
-        for item in selected_instances
-        if isinstance(item.get("region"), str)
-    }
-    for name in (
-        "physical_iterations",
-        "physical_loop_carriers",
-    ):
-        rows = pi.get(name, [])
-        for row in rows if isinstance(rows, list) else []:
-            if isinstance(row, Mapping) and isinstance(row.get("region"), str):
-                referenced_regions.add(str(row["region"]))
-    region_index = {
-        str(item.get("id")): item
-        for item in regions
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    pending_regions = list(referenced_regions)
-    while pending_regions:
-        region_id = pending_regions.pop()
-        region = region_index.get(region_id)
-        parent = region.get("parent") if isinstance(region, Mapping) else None
-        if isinstance(parent, str) and parent not in referenced_regions:
-            referenced_regions.add(parent)
-            pending_regions.append(parent)
-    selected_regions = [
-        dict(item)
-        for item in regions
-        if isinstance(item, Mapping) and item.get("id") in referenced_regions
-    ]
-
-    effects = boundary.get("effects", [])
-    if not isinstance(effects, list):
-        raise TypeError("packet J boundary effects must be an array")
-    effect_limit = 16
-    broadcast_obligations = _packet_broadcast_obligations(j, operations)
-    return {
-        "protocol": "intentir.replay-authored-requirements.v1",
-        "meaning": (
-            "A bounded declaration-order reindex of exact packet facts. It does "
-            "not infer an operator, edge, schedule, frontend spelling, source "
-            "statement, or repair. Every omitted row remains available through "
-            "the named graph/section/obligation query."
-        ),
-        "operations": {
-            "total": len(operations),
-            "counts": dict(sorted(operation_counts.items())),
-            "sequence_columns": ["path", "id", "op"],
-            "sequence": sequence,
-            "sequence_omitted": max(0, len(operations) - sequence_limit),
-            "sequence_next": (
-                f"{INTENTIR_PACKET_QUERY} graph {sequence_limit} 48"
-                if len(operations) > sequence_limit
-                else None
-            ),
-            "topology_rows": topology_rows[:topology_limit],
-            "topology_rows_omitted": max(0, len(topology_rows) - topology_limit),
-            "topology_rows_omitted_queries": [
-                f"{INTENTIR_PACKET_QUERY} section {item['path']}"
-                for item in topology_rows[topology_limit : topology_limit + 8]
-                if isinstance(item.get("path"), str)
-            ],
-        },
-        "boundary_effects": {
-            "total": len(effects),
-            "items": effects[:effect_limit],
-            "omitted": max(0, len(effects) - effect_limit),
-            "omitted_query": (
-                f"{INTENTIR_PACKET_QUERY} section j.boundary.effects"
-                if len(effects) > effect_limit
-                else None
-            ),
-        },
-        "boundary_broadcasts": {
-            "total": len(broadcast_obligations),
-            "items": broadcast_obligations,
-        },
-        "pi_time_and_control": relation_views,
-        "pi_instance_mechanisms": {
-            "columns": ["id", "semantic_ref", "mechanism", "region"],
-            "total": len(instances),
-            "counts": dict(sorted(mechanism_counts.items())),
-            "items": instance_mechanisms,
-            "omitted": max(0, len(instances) - instance_limit),
-            "omitted_query": (
-                f"{INTENTIR_PACKET_QUERY} obligations {instance_limit} 48"
-                if len(instances) > instance_limit
-                else None
-            ),
-        },
-        "referenced_instances": selected_instances,
-        "referenced_regions": selected_regions,
-        "authority": (
-            "exact source-isolated packet projection only; no Source, Harness "
-            "value, Gate evidence, inference, generation, repair, or schedule"
-        ),
-    }
-
-
-def _packet_broadcast_obligations(
-    j: Mapping[str, Any],
-    operations: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Colocate exact authored broadcast, operand-type, access and consumer facts."""
-
-    intent = j.get("intent", {})
-    function = (
-        intent.get("intent_function", {})
-        if isinstance(intent, Mapping)
-        else {}
-    )
-    boundary = j.get("boundary", {})
-    if not isinstance(function, Mapping) or not isinstance(boundary, Mapping):
-        raise TypeError("packet J intent/boundary must be objects")
-    broadcasts = boundary.get("broadcasts", [])
-    accesses = boundary.get("accesses", [])
-    if not isinstance(broadcasts, list) or not isinstance(accesses, list):
-        raise TypeError("packet J boundary broadcasts/accesses must be arrays")
-
-    node_ids = j.get("node_ids", {})
-    path_to_node = (
-        {str(path): str(node) for node, path in node_ids.items()}
-        if isinstance(node_ids, Mapping)
-        else {}
-    )
-    consumers: dict[str, dict[str, Any]] = {}
-    value_types: dict[str, Any] = {}
-    for collection in ("inputs", "outputs"):
-        tensors = function.get(collection, [])
-        if not isinstance(tensors, list):
-            raise TypeError(f"packet J intent {collection} must be an array")
-        for tensor in tensors:
-            if isinstance(tensor, Mapping) and isinstance(tensor.get("name"), str):
-                value_types[str(tensor["name"])] = {
-                    key: tensor.get(key) for key in ("dtype", "shape")
-                }
-
-    for operation in operations:
-        path = operation.get("path")
-        node_ref = operation.get("id")
-        if not isinstance(node_ref, str) and isinstance(path, str):
-            node_ref = path_to_node.get(path)
-        if isinstance(node_ref, str):
-            consumers[node_ref] = {
-                "path": path,
-                "node_ref": node_ref,
-                "op": operation.get("op"),
-                "operands": operation.get("operands"),
-                "type": operation.get("type"),
-            }
-        produced = operation.get("result")
-        produced_type = operation.get("type")
-        if isinstance(produced, str):
-            value_types[produced] = produced_type
-        elif isinstance(produced, list):
-            if isinstance(produced_type, list) and len(produced_type) == len(produced):
-                for name, item_type in zip(produced, produced_type, strict=True):
-                    if isinstance(name, str):
-                        value_types[name] = item_type
-            else:
-                for name in produced:
-                    if isinstance(name, str):
-                        value_types[name] = produced_type
-
-    result: list[dict[str, Any]] = []
-    for relation in broadcasts:
-        if not isinstance(relation, Mapping):
-            continue
-        node_ref = relation.get("node_ref")
-        operand = relation.get("operand")
-        consumer = consumers.get(str(node_ref)) if isinstance(node_ref, str) else None
-        consumer_operands = (
-            consumer.get("operands") if isinstance(consumer, Mapping) else []
-        )
-        operand_indices = [
-            index
-            for index, item in enumerate(
-                consumer_operands if isinstance(consumer_operands, list) else []
-            )
-            if item == operand
-        ]
-        result.append(
-            {
-                "node_ref": node_ref,
-                "operand": operand,
-                "axes": relation.get("axes"),
-                "operand_type": value_types.get(str(operand)),
-                "operand_accesses": [
-                    dict(access)
-                    for access in accesses
-                    if isinstance(access, Mapping)
-                    and access.get("tensor") == operand
-                ],
-                "consumer": consumer,
-                "operand_indices": operand_indices,
-            }
-        )
-    return result
-
-
-def _packet_critical_facts(packet: Mapping[str, Any]) -> dict[str, Any]:
-    """Return a tiny exact index of easy-to-miss authored packet facts.
-
-    The normal startup already transports the whole packet.  This index does not
-    summarize its graph or recommend a lowering; it merely colocates the
-    closed fact classes whose distant cross-references are otherwise easy to
-    overlook in a large ABI: semantic dimension carriers, typed IEEE-special
-    constants, explicit broadcast and sharing obligations, physical-iteration
-    relations, transfer occurrences, identity materializations,
-    explicit program-axis bindings, participant mappings and route-extent transforms, reduction
-    linearizations, exact lexical-region membership, and cross-region order.
-    """
-
-    j = packet.get("j", {})
-    pi = packet.get("pi", {})
-    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
-        raise TypeError("packet J/pi must be objects")
-    signature = j.get("signature", {})
-    parameters = (
-        signature.get("parameters", [])
-        if isinstance(signature, Mapping)
-        else []
-    )
-    if not isinstance(parameters, list):
-        raise TypeError("packet J signature parameters must be an array")
-    dimension_carriers = [
-        {
-            key: parameter.get(key)
-            for key in ("name", "kind", "dtype", "logical_ref")
-        }
-        for parameter in parameters
-        if isinstance(parameter, Mapping)
-        and isinstance(parameter.get("logical_ref"), str)
-        and str(parameter["logical_ref"]).startswith("x")
-    ]
-
-    intent = j.get("intent", {})
-    function = (
-        intent.get("intent_function", {})
-        if isinstance(intent, Mapping)
-        else {}
-    )
-    operations = _packet_graph_ops(
-        function.get("body", []) if isinstance(function, Mapping) else [],
-        "j.intent.intent_function.body",
-    )
-    special_constants = []
-    for operation in operations:
-        attrs = operation.get("attrs")
-        if operation.get("op") != "const" or not isinstance(attrs, Mapping):
-            continue
-        if attrs.get("value") not in {"-inf", "inf", "nan"}:
-            continue
-        special_constants.append(
-            {
-                "path": operation.get("path"),
-                "id": operation.get("id"),
-                "value": attrs.get("value"),
-                "dtype": attrs.get("dtype"),
-                "shape": attrs.get("shape", []),
-            }
-        )
-
-    broadcast_obligations = _packet_broadcast_obligations(j, operations)
-
-    physical_iterations = pi.get("physical_iterations", [])
-    if not isinstance(physical_iterations, list):
-        raise TypeError("packet pi physical_iterations must be an array")
-    route_extent_transforms = pi.get("route_extent_transforms", [])
-    if not isinstance(route_extent_transforms, list):
-        raise TypeError("packet pi route_extent_transforms must be an array")
-    program_axes = pi.get("program_axes", [])
-    if not isinstance(program_axes, list):
-        raise TypeError("packet pi program_axes must be an array")
-    participant_mappings = pi.get("participant_mappings", [])
-    if not isinstance(participant_mappings, list):
-        raise TypeError("packet pi participant_mappings must be an array")
-    instances_value = pi.get("instances", [])
-    regions_value = pi.get("regions", [])
-    order_value = pi.get("order", [])
-    if not isinstance(instances_value, list) or not isinstance(regions_value, list):
-        raise TypeError("packet pi instances/regions must be arrays")
-    if not isinstance(order_value, list):
-        raise TypeError("packet pi order must be an array")
-    instances = {
-        str(item.get("id")): item
-        for item in instances_value
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    regions = {
-        str(item.get("id")): item
-        for item in regions_value
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-
-    def instance_scope(instance_id: str) -> dict[str, Any]:
-        instance = instances[instance_id]
-        region_id = str(instance.get("region"))
-        region = regions.get(region_id, {})
-        return {
-            "id": instance_id,
-            "semantic_ref": instance.get("semantic_ref"),
-            "mechanism": instance.get("mechanism"),
-            "region": region_id,
-            "placement": region.get("placement"),
-        }
-
-    lexical_regions = []
-    lexical_region_ids: set[str] = set()
-    for raw_region in regions_value:
-        if not isinstance(raw_region, Mapping) or raw_region.get("placement") not in {
-            "loop",
-            "branch",
-        }:
-            continue
-        region_id = str(raw_region.get("id"))
-        lexical_region_ids.add(region_id)
-        lexical_regions.append(
-            {
-                "id": region_id,
-                "parent": raw_region.get("parent"),
-                "placement": raw_region.get("placement"),
-                "instances": [
-                    instance_scope(str(item.get("id")))
-                    for item in instances_value
-                    if isinstance(item, Mapping)
-                    and isinstance(item.get("id"), str)
-                    and str(item.get("region")) == region_id
-                ],
-            }
-        )
-
-    cross_region_order = []
-    for item in order_value:
-        if not isinstance(item, Mapping):
-            continue
-        before_id = item.get("before")
-        after_id = item.get("after")
-        if not isinstance(before_id, str) or not isinstance(after_id, str):
-            continue
-        if before_id not in instances or after_id not in instances:
-            continue
-        before_region = str(instances[before_id].get("region"))
-        after_region = str(instances[after_id].get("region"))
-        if before_region == after_region or not (
-            {before_region, after_region} & lexical_region_ids
-        ):
-            continue
-        cross_region_order.append(
-            {
-                "before": instance_scope(before_id),
-                "after": instance_scope(after_id),
-            }
-        )
-    routes = pi.get("routes", [])
-    refinements = pi.get("refinements", [])
-    sharing_value = pi.get("sharing", [])
-    if (
-        not isinstance(routes, list)
-        or not isinstance(refinements, list)
-        or not isinstance(sharing_value, list)
-    ):
-        raise TypeError("packet pi routes/refinements/sharing must be arrays")
-    sharing_obligations = []
-    for relation in sharing_value:
-        if not isinstance(relation, Mapping):
-            continue
-        source = relation.get("source")
-        consumers = relation.get("consumers")
-        if not isinstance(source, str) or source not in instances:
-            continue
-        if not isinstance(consumers, list) or not all(
-            isinstance(item, str) and item in instances for item in consumers
-        ):
-            continue
-        sharing_obligations.append(
-            {
-                "source": instance_scope(source),
-                "consumers": [instance_scope(item) for item in consumers],
-            }
-        )
-    reduction_linearizations = []
-    for refinement in refinements:
-        if not isinstance(refinement, Mapping) or refinement.get(
-            "kind"
-        ) != "reduction_linearization":
-            continue
-        instance_id = str(refinement.get("instance"))
-        instance = instances.get(instance_id, {})
-        reduction_linearizations.append(
-            {
-                "instance": instance_id,
-                "semantic_ref": instance.get("semantic_ref"),
-                "mechanism": instance.get("mechanism"),
-                "region": instance.get("region"),
-                "consumer_routes": [
-                    dict(route)
-                    for route in routes
-                    if isinstance(route, Mapping)
-                    and route.get("source") == instance_id
-                ],
-            }
-        )
-    transfer_occurrences = []
-    order = pi.get("order", [])
-    if not isinstance(order, list):
-        raise TypeError("packet pi order must be an array")
-    for instance_id, instance in instances.items():
-        mechanism = instance.get("mechanism")
-        if mechanism not in {"transfer_direct", "transfer_async"}:
-            continue
-        transfer_occurrences.append(
-            {
-                "instance": instance_id,
-                "semantic_ref": instance.get("semantic_ref"),
-                "mechanism": mechanism,
-                "region": instance.get("region"),
-                "incoming_routes": [
-                    dict(route)
-                    for route in routes
-                    if isinstance(route, Mapping)
-                    and route.get("target") == instance_id
-                ],
-                "outgoing_routes": [
-                    dict(route)
-                    for route in routes
-                    if isinstance(route, Mapping)
-                    and route.get("source") == instance_id
-                ],
-                "predecessor_order": [
-                    dict(edge)
-                    for edge in order
-                    if isinstance(edge, Mapping) and edge.get("after") == instance_id
-                ],
-                "successor_order": [
-                    dict(edge)
-                    for edge in order
-                    if isinstance(edge, Mapping) and edge.get("before") == instance_id
-                ],
-            }
-        )
-    transfer_ids = {
-        str(item["instance"])
-        for item in transfer_occurrences
-    }
-    tensor_types = {
-        str(item.get("name")): {
-            "dtype": item.get("dtype"),
-            "shape": item.get("shape"),
-        }
-        for collection in ("inputs", "outputs")
-        for item in (
-            function.get(collection, [])
-            if isinstance(function.get(collection, []), list)
-            else []
-        )
-        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
-    }
-    boundary = j.get("boundary", {})
-    boundary_accesses = (
-        boundary.get("accesses", []) if isinstance(boundary, Mapping) else []
-    )
-    access_by_id = {
-        str(item.get("access_id")): item
-        for item in boundary_accesses
-        if isinstance(item, Mapping) and isinstance(item.get("access_id"), str)
-    }
-
-    def adjacent_transfer_fact(
-        transfer_id: str,
-        *,
-        direction: str,
-        route: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        transfer = instances.get(transfer_id, {})
-        semantic_ref = str(transfer.get("semantic_ref"))
-        access = access_by_id.get(semantic_ref)
-        tensor_ref = access.get("tensor") if isinstance(access, Mapping) else None
-        return {
-            "instance": transfer_id,
-            "direction": direction,
-            "semantic_ref": transfer.get("semantic_ref"),
-            "mechanism": transfer.get("mechanism"),
-            "route": dict(route),
-            "boundary_access": dict(access) if isinstance(access, Mapping) else None,
-            "tensor_type": tensor_types.get(str(tensor_ref)),
-        }
-
-    identity_materializations = []
-    for refinement in refinements:
-        if not isinstance(refinement, Mapping) or refinement.get(
-            "kind"
-        ) != "identity_materialization":
-            continue
-        instance_id = str(refinement.get("instance"))
-        instance = instances.get(instance_id, {})
-        adjacent_transfer_facts = [
-            adjacent_transfer_fact(
-                str(route.get("source")),
-                direction="into_materialization",
-                route=route,
-            )
-            for route in routes
-            if isinstance(route, Mapping)
-            and route.get("target") == instance_id
-            and str(route.get("source")) in transfer_ids
-        ] + [
-            adjacent_transfer_fact(
-                str(route.get("target")),
-                direction="from_materialization",
-                route=route,
-            )
-            for route in routes
-            if isinstance(route, Mapping)
-            and route.get("source") == instance_id
-            and str(route.get("target")) in transfer_ids
-        ]
-        adjacent_transfers = sorted(
-            {
-                str(route.get("source"))
-                for route in routes
-                if isinstance(route, Mapping)
-                and route.get("target") == instance_id
-                and str(route.get("source")) in transfer_ids
-            }
-            | {
-                str(route.get("target"))
-                for route in routes
-                if isinstance(route, Mapping)
-                and route.get("source") == instance_id
-                and str(route.get("target")) in transfer_ids
-            }
-        )
-        identity_materializations.append(
-            {
-                "instance": instance_id,
-                "semantic_ref": instance.get("semantic_ref"),
-                "mechanism": instance.get("mechanism"),
-                "region": instance.get("region"),
-                "incoming_routes": [
-                    dict(route)
-                    for route in routes
-                    if isinstance(route, Mapping)
-                    and route.get("target") == instance_id
-                ],
-                "outgoing_routes": [
-                    dict(route)
-                    for route in routes
-                    if isinstance(route, Mapping)
-                    and route.get("source") == instance_id
-                ],
-                "adjacent_transfer_instances": adjacent_transfers,
-                "adjacent_transfers": adjacent_transfer_facts,
-            }
-        )
-    return {
-        "protocol": "intentir.replay-critical-facts.v6",
-        "semantic_dimension_carriers": dimension_carriers,
-        "typed_ieee_special_constants": special_constants,
-        "broadcast_obligations": broadcast_obligations,
-        "sharing_obligations": sharing_obligations,
-        "physical_iterations": physical_iterations,
-        "transfer_occurrences": transfer_occurrences,
-        "identity_materializations": identity_materializations,
-        "program_axes": program_axes,
-        "participant_mappings": participant_mappings,
-        "route_extent_transforms": route_extent_transforms,
-        "reduction_linearizations": reduction_linearizations,
-        "lexical_regions": lexical_regions,
-        "cross_region_order": cross_region_order,
-        "authority": (
-            "exact source-isolated packet projection only; no Source, Harness "
-            "value, Gate evidence, inference, generation, repair, or schedule"
-        ),
-    }
-
-
-def _replay_obligation_audit_view(
-    packet: Mapping[str, Any], source_text: str
-) -> dict[str, Any]:
-    """Colocate exact authored scope/order obligations with the owner's bytes.
-
-    This is a proof-irrelevant attention aid.  It neither maps a source statement
-    to a pi instance nor judges whether Replay satisfies an obligation.
-    """
-
-    facts = _packet_critical_facts(packet)
-    broadcast_obligations = facts["broadcast_obligations"]
-    identity_materializations = facts["identity_materializations"]
-    lexical_regions = facts["lexical_regions"]
-    cross_region_order = facts["cross_region_order"]
-    program_axes = facts["program_axes"]
-    participant_mappings = facts["participant_mappings"]
-    route_extent_transforms = facts["route_extent_transforms"]
-    return {
-        "protocol": "intentir.replay-obligation-audit.v5",
-        "status": "pass",
-        "source_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
-        "audit_required": _replay_obligation_audit_required(facts),
-        "broadcast_obligations": broadcast_obligations,
-        "identity_materializations": identity_materializations,
-        "lexical_regions": lexical_regions,
-        "cross_region_order": cross_region_order,
-        "program_axes": program_axes,
-        "participant_mappings": participant_mappings,
-        "route_extent_transforms": route_extent_transforms,
-        "source_nonempty_lines": [
-            {
-                "line": line_number,
-                "indent": len(line) - len(line.lstrip()),
-                "text": line.strip(),
-            }
-            for line_number, line in enumerate(source_text.splitlines(), start=1)
-            if line.strip()
-        ],
-        "authority": (
-            "exact current Replay bytes plus exact source-isolated pi projection; "
-            "no Source, Gate evidence, inference, mapping, diagnosis, repair, or "
-            "acceptance decision"
-        ),
-    }
-
-
-def _replay_obligation_audit_required(
-    critical_facts: Mapping[str, Any],
-) -> bool:
-    """Return whether exact Replay bytes need the proof-irrelevant ledger audit."""
-
-    return any(
-        bool(critical_facts[name])
-        for name in (
-            "broadcast_obligations",
-            "identity_materializations",
-            "lexical_regions",
-            "cross_region_order",
-            "program_axes",
-            "participant_mappings",
-            "route_extent_transforms",
-        )
-    )
-
-
-def _packet_edges(
-    packet: Mapping[str, Any], start: int, count: int
-) -> Any:
-    pi = packet.get("pi", {})
-    if not isinstance(pi, Mapping):
-        raise TypeError("packet pi must be an object")
-    routes = pi.get("routes", [])
-    order = pi.get("order", [])
-    if not isinstance(routes, list) or not isinstance(order, list):
-        raise TypeError("packet pi routes/order must be arrays")
-    route_items, route_next = _bounded_page(routes, start=start, count=count)
-    order_items, order_next = _bounded_page(order, start=start, count=count)
-    next_values = [item for item in (route_next, order_next) if item is not None]
-    next_start = min(next_values) if next_values else None
-    return {
-        "start": start,
-        "routes_total": len(routes),
-        "routes": route_items,
-        "order_total": len(order),
-        "order": order_items,
-        "next_start": next_start,
-        "next": (
-            f"{INTENTIR_PACKET_QUERY} edges {next_start} {count}"
-            if next_start is not None
-            else None
-        ),
-    }
-
-
-def _packet_semantic_index(packet: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    """Resolve anonymous J handles to compact source-blind descriptions."""
-
-    result: dict[str, dict[str, Any]] = {}
-    j = packet.get("j", {})
-    if not isinstance(j, Mapping):
-        return result
-    intent = j.get("intent", {})
-    function = (
-        intent.get("intent_function", {})
-        if isinstance(intent, Mapping)
-        else {}
-    )
-    for operation in _packet_graph_ops(
-        function.get("body", []) if isinstance(function, Mapping) else [],
-        "j.intent.intent_function.body",
-    ):
-        node_id = operation.get("id")
-        if isinstance(node_id, str):
-            result[node_id] = {
-                "semantic_kind": "intent_op",
-                "op": operation.get("op"),
-                "scope_id": operation.get("scope_id"),
-                "path": operation.get("path"),
-            }
-    boundary = j.get("boundary", {})
-    if isinstance(boundary, Mapping):
-        accesses = boundary.get("accesses", [])
-        if isinstance(accesses, list):
-            for access in accesses:
-                if not isinstance(access, Mapping):
-                    continue
-                access_id = access.get("access_id")
-                if isinstance(access_id, str):
-                    result[access_id] = {
-                        "semantic_kind": "boundary_access",
-                        "access_kind": access.get("kind"),
-                        "tensor": access.get("tensor"),
-                        "node_ref": access.get("node_ref"),
-                    }
-        effects = boundary.get("effects", [])
-        if isinstance(effects, list):
-            for effect in effects:
-                if not isinstance(effect, Mapping):
-                    continue
-                effect_id = effect.get("effect_id")
-                if isinstance(effect_id, str):
-                    result[effect_id] = {
-                        "semantic_kind": "boundary_effect",
-                        "effect_kind": effect.get("kind"),
-                        "target": effect.get("target"),
-                        "node_ref": effect.get("node_ref"),
-                        "access_ref": effect.get("access_ref"),
-                    }
-        domains = boundary.get("domains", {})
-        if isinstance(domains, Mapping):
-            for domain_id in domains:
-                if isinstance(domain_id, str):
-                    result[domain_id] = {"semantic_kind": "domain"}
-    signature = j.get("signature", {})
-    parameters = (
-        signature.get("parameters", [])
-        if isinstance(signature, Mapping)
-        else []
-    )
-    if isinstance(parameters, list):
-        for parameter in parameters:
-            if not isinstance(parameter, Mapping):
-                continue
-            name = parameter.get("name")
-            if isinstance(name, str):
-                result[name] = {
-                    "semantic_kind": "signature_parameter",
-                    "kind": parameter.get("kind"),
-                    "mode": parameter.get("mode"),
-                    "logical_ref": parameter.get("logical_ref"),
-                }
-    return result
-
-
-def _packet_instance_endpoint(
-    instance_id: Any,
-    *,
-    instance_index: Mapping[Any, Any],
-    region_index: Mapping[Any, Any],
-    semantic_index: Mapping[str, Any],
-) -> dict[str, Any]:
-    """Resolve one already-authored pi instance without inventing semantics."""
-
-    instance = instance_index.get(instance_id)
-    if not isinstance(instance, Mapping):
-        return {"id": instance_id, "unresolved": True}
-    semantic_ref = instance.get("semantic_ref")
-    region_id = instance.get("region")
-    region = region_index.get(region_id)
-    return {
-        "id": instance_id,
-        "semantic_ref": semantic_ref,
-        "semantic": semantic_index.get(
-            semantic_ref,
-            {"semantic_kind": "unclassified_handle"},
-        ),
-        "mechanism": instance.get("mechanism"),
-        "region": region_id,
-        "region_placement": (
-            region.get("placement") if isinstance(region, Mapping) else None
-        ),
-    }
-
-
-def _packet_route_obligations(
-    packet: Mapping[str, Any], start: int, count: int
-) -> Any:
-    """Resolve authored pi routes to source-blind endpoint descriptions."""
-
-    pi = packet.get("pi", {})
-    if not isinstance(pi, Mapping):
-        raise TypeError("packet pi must be an object")
-    instances = pi.get("instances", [])
-    regions = pi.get("regions", [])
-    routes = pi.get("routes", [])
-    if (
-        not isinstance(instances, list)
-        or not isinstance(regions, list)
-        or not isinstance(routes, list)
-    ):
-        raise TypeError("packet pi instances/regions/routes must be arrays")
-    instance_index = {
-        item.get("id"): item
-        for item in instances
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    region_index = {
-        item.get("id"): item
-        for item in regions
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    semantic_index = _packet_semantic_index(packet)
-    resolved: list[dict[str, Any]] = []
-    for index, edge in enumerate(routes):
-        if not isinstance(edge, Mapping):
-            continue
-        source = _packet_instance_endpoint(
-            edge.get("source"),
-            instance_index=instance_index,
-            region_index=region_index,
-            semantic_index=semantic_index,
-        )
-        target = _packet_instance_endpoint(
-            edge.get("target"),
-            instance_index=instance_index,
-            region_index=region_index,
-            semantic_index=semantic_index,
-        )
-        slots = edge.get("slots", [])
-        resolved.append(
-            {
-                "original_index": index,
-                "source": source,
-                "target": target,
-                "target_local_slots": slots,
-                "required_flow": (
-                    f"{source.get('id')} MUST flow to {target.get('id')} "
-                    f"at target-local slots {slots}"
-                ),
-            }
-        )
-    items, next_start = _bounded_page(resolved, start=start, count=count)
-    return {
-        "protocol": "intentir.replay-resolved-routes.v1",
-        "meaning": (
-            "Every item expands one existing pi.routes entry. Slots remain "
-            "target-local exactly as authored; this view infers no edge, value, "
-            "or operation."
-        ),
-        "total": len(resolved),
-        "start": start,
-        "items": items,
-        "next_start": next_start,
-        "next": (
-            f"{INTENTIR_PACKET_QUERY} routes {next_start} {count}"
-            if next_start is not None
-            else None
-        ),
-    }
-
-
-def _packet_order_obligations(
-    packet: Mapping[str, Any], start: int, count: int
-) -> Any:
-    """Resolve pi order handles and rank causal/effect edges first."""
-
-    pi = packet.get("pi", {})
-    if not isinstance(pi, Mapping):
-        raise TypeError("packet pi must be an object")
-    instances = pi.get("instances", [])
-    regions = pi.get("regions", [])
-    order = pi.get("order", [])
-    if (
-        not isinstance(instances, list)
-        or not isinstance(regions, list)
-        or not isinstance(order, list)
-    ):
-        raise TypeError("packet pi instances/regions/order must be arrays")
-    instance_index = {
-        item.get("id"): item
-        for item in instances
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    region_index = {
-        item.get("id"): item
-        for item in regions
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    semantic_index = _packet_semantic_index(packet)
-
-    resolved: list[dict[str, Any]] = []
-    for index, edge in enumerate(order):
-        if not isinstance(edge, Mapping):
-            continue
-        before = _packet_instance_endpoint(
-            edge.get("before"),
-            instance_index=instance_index,
-            region_index=region_index,
-            semantic_index=semantic_index,
-        )
-        after = _packet_instance_endpoint(
-            edge.get("after"),
-            instance_index=instance_index,
-            region_index=region_index,
-            semantic_index=semantic_index,
-        )
-        reasons: list[str] = []
-        if before.get("region") != after.get("region"):
-            reasons.append("cross_region")
-        for side, value in (("before", before), ("after", after)):
-            semantic = value.get("semantic")
-            kind = (
-                semantic.get("semantic_kind")
-                if isinstance(semantic, Mapping)
-                else None
-            )
-            if kind in {"boundary_access", "boundary_effect"}:
-                reasons.append(f"{side}_observable_boundary")
-            if kind == "intent_op" and semantic.get("op") in {
-                "loop",
-                "effect_if",
-                "value_if",
-            }:
-                reasons.append(f"{side}_control_region")
-        resolved.append(
-            {
-                "original_index": index,
-                "before": before,
-                "after": after,
-                "required_direction": (
-                    f"{before.get('id')} MUST execute before "
-                    f"{after.get('id')}"
-                ),
-                "priority_reasons": reasons,
-            }
-        )
-    ranked = sorted(
-        resolved,
-        key=lambda item: (
-            -len(item["priority_reasons"]),
-            item["original_index"],
-        ),
-    )
-    items, next_start = _bounded_page(ranked, start=start, count=count)
-    critical_total = sum(bool(item["priority_reasons"]) for item in ranked)
-    return {
-        "protocol": "intentir.replay-resolved-order.v1",
-        "meaning": (
-            "For every item, the resolved before endpoint MUST execute before "
-            "the resolved after endpoint. Priority only changes this diagnostic "
-            "view order; it never changes pi."
-        ),
-        "total": len(ranked),
-        "critical_total": critical_total,
-        "start": start,
-        "items": items,
-        "next_start": next_start,
-        "next": (
-            f"{INTENTIR_PACKET_QUERY} order {next_start} {count}"
-            if next_start is not None
-            else None
-        ),
-    }
-
-
-def _packet_obligation_records(packet: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Join already-authored pi facts around each declared instance.
-
-    This is deliberately a projection, not a realization planner: it neither
-    invents an edge nor interprets Replay source.  The compact per-instance
-    ledger merely saves the source-blind writer from manually joining several
-    long, independently paged pi arrays.
-    """
-
-    pi = packet.get("pi", {})
-    if not isinstance(pi, Mapping):
-        raise TypeError("packet pi must be an object")
-    list_names = (
-        "regions",
-        "instances",
-        "routes",
-        "order",
-        "sharing",
-        "refinements",
-        "iterations",
-        "loop_carriers",
-        "physical_iterations",
-        "physical_loop_carriers",
-        "participant_mappings",
-    )
-    values: dict[str, list[Any]] = {}
-    for name in list_names:
-        value = pi.get(name, [])
-        if not isinstance(value, list):
-            raise TypeError(f"packet pi {name} must be an array")
-        values[name] = value
-
-    instance_index = {
-        item.get("id"): item
-        for item in values["instances"]
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    region_index = {
-        item.get("id"): item
-        for item in values["regions"]
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    semantic_index = _packet_semantic_index(packet)
-
-    def endpoint(instance_id: Any) -> dict[str, Any]:
-        instance = instance_index.get(instance_id)
-        if not isinstance(instance, Mapping):
-            return {"id": instance_id, "unresolved": True}
-        return {
-            "id": instance_id,
-            "semantic_ref": instance.get("semantic_ref"),
-        }
-
-    incoming: dict[str, list[dict[str, Any]]] = {
-        instance_id: [] for instance_id in instance_index
-    }
-    outgoing: dict[str, list[dict[str, Any]]] = {
-        instance_id: [] for instance_id in instance_index
-    }
-    for route in values["routes"]:
-        if not isinstance(route, Mapping):
-            continue
-        source = route.get("source")
-        target = route.get("target")
-        if isinstance(target, str) and target in incoming:
-            incoming[target].append(
-                {
-                    "source": endpoint(source),
-                    "target_local_slots": route.get("slots"),
-                }
-            )
-        if isinstance(source, str) and source in outgoing:
-            outgoing[source].append(
-                {
-                    "target": endpoint(target),
-                    "target_local_slots": route.get("slots"),
-                }
-            )
-
-    must_run_after: dict[str, list[dict[str, Any]]] = {
-        instance_id: [] for instance_id in instance_index
-    }
-    must_run_before: dict[str, list[dict[str, Any]]] = {
-        instance_id: [] for instance_id in instance_index
-    }
-    for relation in values["order"]:
-        if not isinstance(relation, Mapping):
-            continue
-        before = relation.get("before")
-        after = relation.get("after")
-        if isinstance(after, str) and after in must_run_after:
-            must_run_after[after].append(
-                {"before": endpoint(before)}
-            )
-        if isinstance(before, str) and before in must_run_before:
-            must_run_before[before].append(
-                {"after": endpoint(after)}
-            )
-
-    sharing_roles: dict[str, list[dict[str, Any]]] = {
-        instance_id: [] for instance_id in instance_index
-    }
-    for relation in values["sharing"]:
-        if not isinstance(relation, Mapping):
-            continue
-        source = relation.get("source")
-        consumers = relation.get("consumers", [])
-        if isinstance(source, str) and source in sharing_roles:
-            sharing_roles[source].append(
-                {
-                    "role": "source",
-                    "consumers": [endpoint(item) for item in consumers]
-                    if isinstance(consumers, list)
-                    else consumers,
-                }
-            )
-        if isinstance(consumers, list):
-            for consumer in consumers:
-                if isinstance(consumer, str) and consumer in sharing_roles:
-                    sharing_roles[consumer].append(
-                        {
-                            "role": "consumer",
-                            "source": endpoint(source),
-                        }
-                    )
-
-    temporal_roles: dict[str, list[dict[str, Any]]] = {
-        instance_id: [] for instance_id in instance_index
-    }
-    for relation_name, role_names in (
-        ("participant_mappings", ("domain_instance",)),
-        ("iterations", ("loop_instance", "tile_instance")),
-        (
-            "loop_carriers",
-            ("loop_instance", "init", "state", "next", "result"),
-        ),
-        (
-            "physical_iterations",
-            ("body_instance", "tile_instance"),
-        ),
-        (
-            "physical_loop_carriers",
-            ("init", "state", "next", "result"),
-        ),
-    ):
-        for index, relation in enumerate(values[relation_name]):
-            if not isinstance(relation, Mapping):
-                continue
-            for role in role_names:
-                instance_id = relation.get(role)
-                if isinstance(instance_id, str) and instance_id in temporal_roles:
-                    temporal_roles[instance_id].append(
-                        {
-                            "relation": relation_name,
-                            "original_index": index,
-                            "role": role,
-                            "authored_relation": dict(relation),
-                        }
-                    )
-
-    refinements: dict[str, list[dict[str, Any]]] = {
-        instance_id: [] for instance_id in instance_index
-    }
-    for relation in values["refinements"]:
-        if not isinstance(relation, Mapping):
-            continue
-        instance_id = relation.get("instance")
-        if isinstance(instance_id, str) and instance_id in refinements:
-            refinements[instance_id].append(dict(relation))
-
-    records: list[dict[str, Any]] = []
-    for instance in values["instances"]:
-        if not isinstance(instance, Mapping):
-            continue
-        instance_id = instance.get("id")
-        if not isinstance(instance_id, str):
-            continue
-        semantic_ref = instance.get("semantic_ref")
-        region_id = instance.get("region")
-        region = region_index.get(region_id)
-        records.append(
-            {
-                "id": instance_id,
-                "semantic_ref": semantic_ref,
-                "semantic": semantic_index.get(
-                    semantic_ref,
-                    {"semantic_kind": "unclassified_handle"},
-                ),
-                "mechanism": instance.get("mechanism"),
-                "region": (
-                    dict(region)
-                    if isinstance(region, Mapping)
-                    else {"id": region_id, "unresolved": True}
-                ),
-                "incoming_routes": incoming.get(instance_id, []),
-                "outgoing_routes": outgoing.get(instance_id, []),
-                "must_run_after": must_run_after.get(instance_id, []),
-                "must_run_before": must_run_before.get(instance_id, []),
-                "sharing_roles": sharing_roles.get(instance_id, []),
-                "temporal_roles": temporal_roles.get(instance_id, []),
-                "refinements": refinements.get(instance_id, []),
-            }
-        )
-    return records
-
-
-def _packet_obligations(
-    packet: Mapping[str, Any], start: int, count: int
-) -> dict[str, Any]:
-    records = _packet_obligation_records(packet)
-    items, next_start = _bounded_page(records, start=start, count=count)
-    compact_items: list[list[Any]] = []
-    for item in items:
-        semantic = item["semantic"]
-        semantic_kind = semantic.get("semantic_kind")
-        if semantic_kind == "intent_op":
-            semantic_view = [
-                semantic_kind,
-                semantic.get("op"),
-                semantic.get("scope_id"),
-            ]
-        elif semantic_kind == "boundary_access":
-            semantic_view = [
-                semantic_kind,
-                semantic.get("access_kind"),
-                semantic.get("tensor"),
-                semantic.get("node_ref"),
-            ]
-        elif semantic_kind == "boundary_effect":
-            semantic_view = [
-                semantic_kind,
-                semantic.get("effect_kind"),
-                semantic.get("target"),
-                semantic.get("node_ref"),
-                semantic.get("access_ref"),
-            ]
-        elif semantic_kind == "signature_parameter":
-            semantic_view = [
-                semantic_kind,
-                semantic.get("kind"),
-                semantic.get("mode"),
-                semantic.get("logical_ref"),
-            ]
-        else:
-            semantic_view = [semantic_kind]
-        region = item["region"]
-        compact_items.append(
-            [
-                item["id"],
-                item["semantic_ref"],
-                item["mechanism"],
-                [
-                    region.get("id"),
-                    region.get("parent"),
-                    region.get("placement"),
-                ],
-                semantic_view,
-                [
-                    [route["source"]["id"], route["target_local_slots"]]
-                    for route in item["incoming_routes"]
-                ],
-                [
-                    [route["target"]["id"], route["target_local_slots"]]
-                    for route in item["outgoing_routes"]
-                ],
-                [relation["before"]["id"] for relation in item["must_run_after"]],
-                [relation["after"]["id"] for relation in item["must_run_before"]],
-                [
-                    [
-                        relation["role"],
-                        (
-                            [peer["id"] for peer in relation["consumers"]]
-                            if relation["role"] == "source"
-                            else relation["source"]["id"]
-                        ),
-                    ]
-                    for relation in item["sharing_roles"]
-                ],
-                [
-                    [
-                        relation["relation"],
-                        relation["original_index"],
-                        relation["role"],
-                        relation["authored_relation"],
-                    ]
-                    for relation in item["temporal_roles"]
-                ],
-                [
-                    [relation.get("kind"), relation.get("auth_ref")]
-                    for relation in item["refinements"]
-                ],
-            ]
-        )
-    return {
-        "protocol": "intentir.replay-instance-obligations.v2",
-        "meaning": (
-            "Rows are a compact declaration-order index over this packet's own "
-            "already-authored J/pi facts. Columns name every row position. The "
-            "view infers no edge, value, operation, source construct, or "
-            "realization choice; use obligation HANDLE to expand one current "
-            "instance or semantic anchor."
-        ),
-        "total": len(records),
-        "start": start,
-        "columns": [
-            "id",
-            "semantic_ref",
-            "mechanism",
-            "region[id,parent,placement]",
-            "semantic",
-            "incoming_routes[source,slots]",
-            "outgoing_routes[target,slots]",
-            "order_predecessors",
-            "order_successors",
-            "sharing[role,peers]",
-            "temporal[relation,index,role,authored_relation]",
-            "refinements[kind,auth_ref]",
-        ],
-        "items": compact_items,
-        "next_start": next_start,
-        "next": (
-            f"{INTENTIR_PACKET_QUERY} obligations {next_start} {count}"
-            if next_start is not None
-            else None
-        ),
-    }
-
-
-def _packet_obligation(packet: Mapping[str, Any], handle: str) -> dict[str, Any]:
-    records = _packet_obligation_records(packet)
-    matches = [
-        item
-        for item in records
-        if item["id"] == handle or item["semantic_ref"] == handle
-    ]
-    if not matches:
-        raise KeyError(f"no pi instance or semantic anchor matches {handle!r}")
-    shown = matches[:4]
-    omitted = matches[4:]
-    return {
-        "protocol": "intentir.replay-instance-obligation.v1",
-        "meaning": (
-            "This is a bounded local join of authored facts only; it infers no "
-            "edge, value, operation, source construct, or realization choice."
-        ),
-        "query": handle,
-        "match_total": len(matches),
-        "items": shown,
-        "omitted_instance_ids": [item["id"] for item in omitted],
-        "omitted_queries": [
-            f"{INTENTIR_PACKET_QUERY} obligation {item['id']}" for item in omitted
-        ],
-    }
-
 
 def _packet_find(packet: Mapping[str, Any], needle: str) -> dict[str, Any]:
     matches: list[dict[str, Any]] = []
@@ -1933,41 +460,6 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         "graph",
     ]:
         return _packet_graph(packet, int(arguments[2]), int(arguments[3]))
-    if arguments == [INTENTIR_PACKET_QUERY, "realization"]:
-        return _packet_realization(packet)
-    if arguments == [INTENTIR_PACKET_QUERY, "requirements"]:
-        return _packet_requirements(packet)
-    if len(arguments) == 4 and arguments[:2] == [
-        INTENTIR_PACKET_QUERY,
-        "edges",
-    ]:
-        return _packet_edges(packet, int(arguments[2]), int(arguments[3]))
-    if len(arguments) == 4 and arguments[:2] == [
-        INTENTIR_PACKET_QUERY,
-        "routes",
-    ]:
-        return _packet_route_obligations(
-            packet, int(arguments[2]), int(arguments[3])
-        )
-    if len(arguments) == 4 and arguments[:2] == [
-        INTENTIR_PACKET_QUERY,
-        "order",
-    ]:
-        return _packet_order_obligations(
-            packet, int(arguments[2]), int(arguments[3])
-        )
-    if len(arguments) == 4 and arguments[:2] == [
-        INTENTIR_PACKET_QUERY,
-        "obligations",
-    ]:
-        return _packet_obligations(
-            packet, int(arguments[2]), int(arguments[3])
-        )
-    if len(arguments) == 3 and arguments[:2] == [
-        INTENTIR_PACKET_QUERY,
-        "obligation",
-    ]:
-        return _packet_obligation(packet, arguments[2])
     if len(arguments) == 3 and arguments[:2] == [
         INTENTIR_PACKET_QUERY,
         "section",
@@ -1992,8 +484,7 @@ def _query_packet(packet: Mapping[str, Any], arguments: list[str]) -> Any:
         return _packet_find(packet, arguments[2])
     raise ValueError(
         "usage: intentir_packet_query overview | abi START COUNT | graph START COUNT | "
-        "requirements | realization | routes START COUNT | order START COUNT | obligations START COUNT | "
-        "obligation HANDLE | edges START COUNT | section PATH | find HANDLE"
+        "section PATH | find HANDLE"
     )
 
 
@@ -2395,9 +886,10 @@ class IntentIRReplayWorkspace:
 
     @classmethod
     def create(cls, files: Mapping[str, str | bytes]) -> "IntentIRReplayWorkspace":
-        if frozenset(files) not in REPLAY_INPUT_FILE_SETS:
+        file_names = set(files)
+        if file_names != REPLAY_INPUT_FILES:
             raise ValueError(
-                "Replay input must contain one fixed baseline or J+S_J allowlist"
+                "Replay input must contain exactly the fixed allowlisted files"
             )
         root = Path(tempfile.mkdtemp(prefix="intentir-replay-"))
         workspace = cls(
@@ -2508,8 +1000,6 @@ class IntentIRReplayEnvironment:
         self._compile_passed_bytes: bytes | None = None
         self._source_inspect_calls = 0
         self._source_inspect_audit: list[str] = []
-        self._obligation_audited_source_digests: set[str] = set()
-        self._obligation_audit_log: list[dict[str, Any]] = []
         self._passed_bytes: bytes | None = None
         self._committed_bytes: bytes | None = None
         self._commit_audit: list[dict[str, Any]] = []
@@ -2522,7 +1012,7 @@ class IntentIRReplayEnvironment:
         self._probe()
 
     def validate_actions(self, actions: list[dict[str, Any]]) -> str | None:
-        """Permit a batch only when every call is a source-blind packet query."""
+        """Permit a batch only for independent immutable-input queries."""
 
         if len(actions) <= 1:
             return None
@@ -2530,7 +1020,7 @@ class IntentIRReplayEnvironment:
             self._multi_action_rejections += 1
             return (
                 f"{MULTI_ACTION_PROTOCOL}: at most four independent source-blind "
-                "packet queries are allowed; no action in this response was executed"
+                "input queries are allowed; no action in this response was executed"
             )
         allowed = True
         for action in actions:
@@ -2546,7 +1036,10 @@ class IntentIRReplayEnvironment:
             except ValueError:
                 allowed = False
                 break
-            if not arguments or arguments[0] != INTENTIR_PACKET_QUERY:
+            if not arguments or arguments[0] not in {
+                INTENTIR_PACKET_QUERY,
+                INTENTIR_SEMANTIC_QUERY,
+            }:
                 allowed = False
                 break
         if allowed:
@@ -2554,7 +1047,8 @@ class IntentIRReplayEnvironment:
         self._multi_action_rejections += 1
         return (
             f"{MULTI_ACTION_PROTOCOL}: multiple Replay calls are allowed only "
-            "for independent intentir_packet_query actions; no action in this "
+            "for independent intentir_packet_query/intentir_semantic_query actions; "
+            "no action in this "
             "response was executed"
         )
 
@@ -3023,15 +1517,12 @@ class IntentIRReplayEnvironment:
                 "test ! -e /lib64; test ! -e /usr/local; "
                 "for name in python python3 gcc g++ clang ld as nvcc ptxas "
                 "triton torch intentir; do ! command -v \"$name\"; done; "
-                "actual_names=$(find /input -type f | sed 's#^/input/##' | sort | "
-                "sha256sum | cut -d' ' -f1); "
-                "base_names=$(printf '%s\\n' README.md REPLAY_CONTRACT.md TOOL.md "
-                "packet.json | sort | sha256sum | cut -d' ' -f1); "
-                "semantic_names=$(printf '%s\\n' README.md REPLAY_CONTRACT.md "
-                "SEMANTIC_RECEIPT.json TOOL.md packet.json semantic_program.json "
-                "semantic_program.txt | sort | sha256sum | cut -d' ' -f1); "
-                "test \"$actual_names\" = \"$base_names\" || "
-                "test \"$actual_names\" = \"$semantic_names\""
+                "test \"$(find /input -type f | wc -l)\" -eq 10; "
+                "for name in README.md packet.json semantic-program.json "
+                "semantic-program.intent compiler-index.json "
+                "compiler-index.intent mask-c.json "
+                "frontend.json REPLAY_CONTRACT.md TOOL.md; do "
+                "test -f \"/input/$name\" || exit 1; done"
             ),
         ]
         try:
@@ -3268,23 +1759,14 @@ class IntentIRReplayEnvironment:
             except Exception:
                 result = _closed_failure("replay_compile_check_read_failed")
             else:
-                source_digest = hashlib.sha256(source_bytes).hexdigest()
-                facts = _packet_critical_facts(self._read_closed_packet())
-                audit_required = _replay_obligation_audit_required(facts)
-                if (
-                    audit_required
-                    and source_digest not in self._obligation_audited_source_digests
-                ):
-                    result = _closed_failure("replay_obligation_audit_required")
-                else:
-                    evaluated = True
-                    self._compile_check_evaluations += 1
-                    try:
-                        result = self._replay_compile_checker(source_text)
-                    except Exception:
-                        result = _closed_failure(
-                            "replay_compile_check_internal_failure"
-                        )
+                evaluated = True
+                self._compile_check_evaluations += 1
+                try:
+                    result = self._replay_compile_checker(source_text)
+                except Exception:
+                    result = _closed_failure(
+                        "replay_compile_check_internal_failure"
+                    )
         result = self._validate_check_result(result)
         diagnostics = result["diagnostics"]
         self._compile_check_audit.append(
@@ -3312,72 +1794,20 @@ class IntentIRReplayEnvironment:
         packet = json.loads(
             (self.config.input_dir / "packet.json").read_text(encoding="utf-8")
         )
-        if not isinstance(packet, Mapping) or set(packet) != {
-            "j",
-            "c",
-            "pi",
-            "u_f",
-        }:
+        if not isinstance(packet, Mapping) or set(packet) != {"j", "c", "u_f"}:
             raise ValueError("Replay packet has an invalid closed root")
         return packet
 
-    def _execute_replay_obligation_audit(
-        self, arguments: list[str]
-    ) -> dict[str, Any]:
-        try:
-            if arguments != [
-                INTENTIR_REPLAY_OBLIGATION_AUDIT,
-                "/output/replay.source",
-            ]:
-                raise ValueError(
-                    "usage: intentir_replay_obligation_audit "
-                    "/output/replay.source"
-                )
-            source_bytes, source_text = self._read_check_target(arguments[1])
-            value = _replay_obligation_audit_view(
-                self._read_closed_packet(), source_text
+    def _read_closed_semantic_program(self) -> Mapping[str, Any]:
+        value = json.loads(
+            (self.config.input_dir / "semantic-program.json").read_text(
+                encoding="utf-8"
             )
-            rendered = json.dumps(
-                value, indent=2, sort_keys=True, ensure_ascii=False
-            )
-            if len(rendered.encode("utf-8")) > MAX_PACKET_QUERY_OUTPUT_BYTES:
-                raise ValueError("obligation audit result exceeds the closed bound")
-        except Exception as exc:
-            return {
-                "output": (
-                    "Replay obligation audit rejected: "
-                    f"{type(exc).__name__}: {exc}\n"
-                ),
-                "returncode": 1,
-                "exception_info": "",
-            }
-        source_digest = hashlib.sha256(source_bytes).hexdigest()
-        self._obligation_audited_source_digests.add(source_digest)
-        self._obligation_audit_log.append(
-            {
-                "source_sha256": source_digest,
-                "broadcast_obligation_count": len(
-                    value["broadcast_obligations"]
-                ),
-                "identity_materialization_count": len(
-                    value["identity_materializations"]
-                ),
-                "lexical_region_count": len(value["lexical_regions"]),
-                "cross_region_order_count": len(value["cross_region_order"]),
-                "program_axis_count": len(value["program_axes"]),
-                "participant_mapping_count": len(
-                    value["participant_mappings"]
-                ),
-                "route_extent_transform_count": len(
-                    value["route_extent_transforms"]
-                ),
-            }
         )
-        return {
-            "output": rendered + "\n",
-            "returncode": 0,
-            "exception_info": "",
-        }
+        if not isinstance(value, Mapping):
+            raise ValueError("Replay semantic program has an invalid root")
+        return value
+
 
     def _execute_packet_query(self, arguments: list[str]) -> dict[str, Any]:
         try:
@@ -3391,6 +1821,31 @@ class IntentIRReplayEnvironment:
         except Exception as exc:
             return {
                 "output": f"packet query rejected: {type(exc).__name__}: {exc}\n",
+                "returncode": 1,
+                "exception_info": "",
+            }
+        return {
+            "output": rendered + "\n",
+            "returncode": 0,
+            "exception_info": "",
+        }
+
+    def _execute_semantic_query(self, arguments: list[str]) -> dict[str, Any]:
+        try:
+            value = query_replay_semantics(
+                self._read_closed_semantic_program(), arguments[1:]
+            )
+            rendered = json.dumps(
+                value, indent=2, sort_keys=True, ensure_ascii=False
+            )
+            if len(rendered.encode("utf-8")) > MAX_PACKET_QUERY_OUTPUT_BYTES:
+                raise ValueError("query result is too large; use a narrower view")
+        except Exception as exc:
+            return {
+                "output": (
+                    "semantic query rejected: "
+                    f"{type(exc).__name__}: {exc}\n"
+                ),
                 "returncode": 1,
                 "exception_info": "",
             }
@@ -3489,13 +1944,10 @@ class IntentIRReplayEnvironment:
             check_arguments = []
         if check_arguments and check_arguments[0] == INTENTIR_PACKET_QUERY:
             return self._execute_packet_query(check_arguments)
+        if check_arguments and check_arguments[0] == INTENTIR_SEMANTIC_QUERY:
+            return self._execute_semantic_query(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_INSPECT:
             return self._execute_replay_inspect(check_arguments)
-        if (
-            check_arguments
-            and check_arguments[0] == INTENTIR_REPLAY_OBLIGATION_AUDIT
-        ):
-            return self._execute_replay_obligation_audit(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_CHECK:
             return self._execute_replay_check(check_arguments)
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_COMMIT:
@@ -3760,16 +2212,6 @@ class IntentIRReplayEnvironment:
                     "limit": self.config.replay_compile_check_limit,
                     "results": list(self._compile_check_audit),
                 },
-                "replay_obligation_audit": {
-                    "protocol": "intentir.replay-obligation-audit.v5",
-                    "authority": (
-                        "exact current Replay bytes plus exact source-isolated "
-                        "J/pi ledger only; no mapping, diagnosis, repair, Gate, "
-                        "or acceptance authority"
-                    ),
-                    "calls": len(self._obligation_audit_log),
-                    "results": list(self._obligation_audit_log),
-                },
                 "replay_source_inspect": {
                     "protocol": "intentir.replay-own-source-inventory.v1",
                     "authority": "diagnostic_syntax_only_own_replay_source",
@@ -3798,7 +2240,7 @@ class IntentIRReplayEnvironment:
                     "max_actions": 4,
                     "authority": "whole-response fail-before-execute",
                     "allowed": (
-                        "independent source-blind intentir_packet_query actions"
+                        "independent source-blind packet/semantic query actions"
                     ),
                     "rejections": self._multi_action_rejections,
                 },
@@ -3808,11 +2250,11 @@ class IntentIRReplayEnvironment:
 
 __all__ = [
     "INTENTIR_PACKET_QUERY",
+    "INTENTIR_SEMANTIC_QUERY",
     "INTENTIR_REPLAY_COMMIT",
     "INTENTIR_REPLAY_CHECK",
     "INTENTIR_REPLAY_COMPILE_CHECK",
     "INTENTIR_REPLAY_INSPECT",
-    "INTENTIR_REPLAY_OBLIGATION_AUDIT",
     "INTENTIR_REPLAY_ROLLBACK",
     "INTENTIR_REPLAY_SUBMIT",
     "INTENTIR_REPLAY_SUBMIT_COMMAND",
@@ -3822,8 +2264,6 @@ __all__ = [
     "REPLAY_DIRECT_SUBMIT_PROTOCOL",
     "REPLAY_TRANSACTION_PROTOCOL",
     "REPLAY_INPUT_FILES",
-    "REPLAY_BASE_INPUT_FILES",
-    "REPLAY_INPUT_FILE_SETS",
     "IntentIRReplayEnvironment",
     "IntentIRReplayEnvironmentConfig",
     "IntentIRReplayWorkspace",

@@ -1,117 +1,58 @@
 agent:
   system_template: |
-    You are the sole source-blind Replay owner for one fresh IntentIR/SCRC replay
-    episode. Generate the complete Replay source yourself from exactly J, pi,
-    anonymous MaskC(C), and the public contract in `/input/packet.json`. The
-    sandbox contains no Source, Harness, compiler view, actual C values, Gate
-    feedback, prior Replay, or network. This session ends after this one Replay;
-    a changed J always receives a new source-blind owner.
+    You are the sole compiler owner for one fresh source-blind IntentIR Replay
+    episode. Read the deterministic cross-reference `/input/compiler-index.intent`
+    and the complete read-only semantic program S_J from
+    `/input/semantic-program.intent`; read `/input/frontend.json` and
+    `/input/mask-c.json` for the callable ABI. Exact J and MaskC(C) remain available
+    in `/input/packet.json`. No Source, pi,
+    Harness valuation, Gate result, previous Replay, repository, or network exists.
 
-    Write exactly one final file, `/output/replay.source`. For the first complete
-    source prefer `submit_replay(source_text)`: it writes your exact bytes and
-    runs the existing diagnostic-only ReplayCheck. For a focused correction use
-    `apply_replay_patch(path, old_text, new_text, submit=true)`. Fixed code may
-    reject, store, or replace your exact text and report closed diagnostics; it
-    never generates, infers, semantically edits, or certifies Replay.
+    J/S_J is the sole semantic authority. Program mapping, layout, loops, control,
+    carrier representation, target API, and materialization are source-blind compiler
+    choices; they may not add or alter J-owned value semantics. Follow
+    `/input/REPLAY_CONTRACT.md`.
 
-    Build from the packet in this order of understanding: first J's logical
-    computation and structured control, then pi's authored realization, then the
-    anonymous C slots and their use-sites. C values are intentionally absent;
-    the Harness privately binds them only after Replay is complete.
+    `compiler-index.intent` only places existing J dependency sets beside anonymous
+    MaskC attachments. It is not a schedule: preserve each authored access/effect,
+    keep logical domain guards distinct from access-local predicates, and choose every
+    target realization yourself.
 
-    Inspect only your own current source with `intentir_replay_inspect`; run
-    `intentir_replay_check /output/replay.source` for diagnostic preflight and
-    `intentir_replay_compile_check /output/replay.source` for the public synthetic
-    compile profile. These tools see no Source, Gate feedback or actual C values,
-    prescribe no edit, and decide no acceptance. Repair the source yourself.
-    Exact commit/rollback is an optional LLM-selected fallback, not automatic
-    candidate selection. Submit with `intentir_replay_submit`; do not use a stdout
-    marker.
+    Compile the whole S_J into one complete target program at
+    `/output/replay.source`. You may globally choose target APIs, addressing,
+    layouts, loops, control, synchronization, fusion, and code structure while
+    preserving J semantics. Do not fill holes, produce
+    per-node bindings, or wait for fixed code to assemble fragments.
 
-    The initial message normally embeds the complete exact source-blind packet once.
-    When `exact_packet_embedded=true`, consume it directly and draft source without
-    first calling overview, requirements, ABI, graph, realization or obligations.
-    For an oversized packet, the initial manifest already contains the exact
-    authored-requirements checklist; use up to four independent focused queries in
-    one response only for a named omitted page. Model/tool counts are telemetry;
-    active wall time governs the episode. Produce and direct-submit complete Replay
-    early, keep explanations short, and do not emit private chain-of-thought.
+    Work as a coding agent in this same episode: write an early complete draft,
+    compile it, inspect only its own IR, patch it, and submit the exact final bytes.
+    Keep inactive constexpr computations inside their branch.
+    ReplayCheck and compile-check diagnose construction only; they neither generate
+    code nor establish Gate1/Gate2. Model/tool counts are telemetry; wall time governs
+    the episode. Keep prose short and never claim certification.
 
   instance_template: |
-    The following is the exact immutable source-blind startup transport. It embeds
-    the complete packet when it is within the fixed byte bound; otherwise it embeds
-    one exact manifest and explicit continuation paths. It contains no Source
-    information and is not a semantic summary.
+    The startup object below contains paths and byte counts only. Read
+    `/input/compiler-index.intent`, `/input/semantic-program.intent`,
+    `/input/frontend.json`, and `/input/mask-c.json` first, then
+    `/input/REPLAY_CONTRACT.md` and `/input/TOOL.md`.
+    Query only to cross-reference one named handle; do not reload the whole packet.
 
     <persistent-workspace-mirror>
     {{ replay_startup_context }}
     </persistent-workspace-mirror>
 
-    If `exact_packet_embedded=true`, use its `packet` directly. Otherwise consume
-    `manifest.overview` and `manifest.authored_requirements`, then query only a
-    named omitted ABI/graph/boundary/realization page. Use `section PATH`,
-    `obligation HANDLE`, or `find HANDLE` only for one omitted named fact. Packet
-    queries expose exact authored facts and never infer a realization. Reconcile
-    every J op occurrence, boundary access/effect, pi instance mechanism,
-    route/order relation, and time/control relation before submitting.
-    Treat `critical_facts.lexical_regions` as the exact region-by-region
-    construction ledger and `critical_facts.cross_region_order` as the exact
-    ordering checklist. Treat `critical_facts.broadcast_obligations` as the exact
-    operand/access/consumer rank-projection checklist. Treat
-    `critical_facts.identity_materializations` as the exact representation-stage
-    and adjacent-transfer checklist. Consume every
-    `critical_facts.participant_mappings` item by resolving domain_instance to the
-    exact one-axis J domain; projection=cyclic uses that J-owned extent, never a
-    guessed C value. If an identity_materialization's sole outgoing route enters a
-    synchronize instance that resolves to a J reduce, explicitly combine the
-    J-owned typed reducer identity with the incoming carrier once before that
-    collective. Other identity materializations do not authorize this combine.
-    These views only reindex
-    the same J/pi and add no lowering fact. For each authored
-    J.boundary.broadcasts item, preserve the operand's closed type at its producer
-    and boundary access, then materialize the declared axes at that named consumer.
-    Never pre-expand an access index or load shape, and never let implicit
-    broadcasting erase the authored consumer stage.
+    Use `intentir_semantic_query overview|ownership|node REF|value REF|boundary NAME START COUNT`
+    only for a local S_J lookup. Use `intentir_packet_query abi`, `graph`, `find`, or
+    `section PATH` for exact local J/C facts. These are read-only projections, not plans.
 
-    Preserve the typed rank, axis, structured control, recurrence and carrier
-    relations authored by J and pi. Every J.signature p* is one already-existing
-    callable ABI carrier. Repeated pi instances anchored to the same p* only scope
-    or route uses of that one carrier; they never create another value or program
-    coordinate. Placement=`program` does not turn p* into `tl.program_id`, and
-    duplicate p* instances never authorize duplicate carrier reads or coordinates.
-    Only a distinct typed J-domain realization authorized by the public frontend
-    contract may create a program coordinate. A pi physical_iterations relation
-    keeps the reduce/contraction logical in J while requiring its explicit physical loop;
-    resolve only its C-attached axis, induction basis and direction, and preserve
-    every physical_loop_carriers temporal stage without inventing an update. Within
-    each region preserve declaration order as the exact shared init/state/next/result
-    carrier-tuple ordinal; never sort carriers by dtype, ref, or mechanism. This is
-    tuple slot order, not a substitute for pi.order event ordering.
-    An ordinary J effect_if remains an explicit runtime if/else. If one
-    pi.terminal_controls item names its sibling arm-scope instances, emit the
-    named terminal arm as a runtime if ending in bare return and then emit the
-    named continuation arm without else; negate only when the negative arm is
-    terminal. Never infer or copy its predicate, polarity, operations, or effects.
-    Emit an explicit public reshape or
-    expand-dimension step when it is required to realize an authored operand
-    shape or local reduction axis; do not replace it with a merely
-    value-equivalent flattened formula. A constexpr p* without `logical_ref` is
-    only a fixed-Harness-specialization ABI carrier: retain it, but do not invent
-    a dummy logical use or reconstruct an inactive variant.
-
-    Construct and direct-submit complete Triton source early. If preflight fails,
-    keep editing the same `/output/replay.source`; inspect your current source,
-    then run `intentir_replay_obligation_audit /output/replay.source` whenever the
-    exact critical ledger contains broadcast obligations, identity
-    materializations, lexical regions, or cross-region order. Compare
-    that ledger against your numbered current bytes yourself. Any later source edit
-    requires another audit of the new exact bytes. The audit diagnoses nothing and
-    supplies no mapping or repair.
-    call ReplayCheck and the public synthetic construction compile check. Apply
-    focused exact changes and resubmit. Submission reruns both checks for changed
-    bytes. Their PASS only closes Replay construction; it is not Gate1, semantic
-    membership, or certification. The external writer independently repeats
-    ingress after submission. Create no other file under `/output`.
+    Submit a complete source with `submit_replay(source_text)` or by writing the
+    single output file and calling `intentir_replay_submit /output/replay.source`.
+    Use `intentir_replay_compile_check /output/replay.source`, then call the
+    `replay_ttir_inspect jc` command documented in TOOL.md. Reinspect your own IR when
+    one concrete J obligation remains; prefer targeted raw/find/observer lookups over
+    dumping the full fingerprint. Remove work not authorized by S_J. Submission reruns closed
+    construction checks; formal Gate1 remains outside and invisible.
 
   step_limit: 0
   cost_limit: 0
@@ -138,11 +79,14 @@ model:
   compact_workspace_mirrors: false
   compact_response_history_keep_recent: 3
   use_previous_response_id: true
-  # Initial J/pi/MaskC interpretation keeps the requested effort. Only ordinary
+  # Initial J/MaskC interpretation keeps the requested effort. Only ordinary
   # own-source inspection, construction-check and exact repair turns use low.
   routine_reasoning_effort: low
   routine_timeout_seconds: 180
-  semantic_initial_turns: 1
+  # Turn 1 reads immutable J files; turn 2 is the first turn that can actually
+  # compile them.  Keep both at the requested effort, then use low only for
+  # ordinary own-source compile repair.
+  semantic_initial_turns: 2
   observation_template: |
     {%- if output.output | length < 8000 -%}
     {"returncode": {{ output.returncode }}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}{% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds <= 180 %}, "remaining_seconds": {{ wall_time_limit_seconds - elapsed_seconds }}, "directive": "Replay wall time is nearly exhausted; submit a checked complete source."{% endif %}}
