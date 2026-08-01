@@ -150,6 +150,18 @@ Gate2(Source,R,RefEval(J))                # 三边
 - 全程`lift_agent_calls=0`。两次失败分别沉淀为output-domain canonical mapping与pure-intermediate
   fusion两条通用J消费契约，没有增加kernel名称、Source matcher、历史winner或Gate-diff规则。
 
+### 6.5 CUDA gather run-001：未授权thread coordinate被hard Gate拒绝
+
+- fresh `gpt-5.6-sol/xhigh`，1次provider call，Replay episode 81.39 s；candidate一次construction PASS；
+- Replay正确恢复ABI、四个row/col bounds、zero fill、两级间接寻址与output store；semantic PTX的
+  interface、value operations、memory effects、control flow、target与address folds均hard PASS；
+- 但它将唯一output axis写成`blockIdx.x * blockDim.x + threadIdx.x`，Source/J canonical ownership只以
+  `blockIdx.x`枚举该域；真实launch下前者会额外枚举128倍坐标，并非合法schedule差异；
+- `coordinate_uses`作为唯一hard失败正确提前拒绝，Gate2未运行；raw PTX topology/opcode/cache差异只诊断；
+- 归因不是J丢失数学/effect，也不能放松observer。通用缺口是CUDA U_f尚未明确：没有独立J-owned
+  lane/participant axis时，`launch_block_*`仅是外部launch配置，`threadIdx`/`blockDim`不得进入J地址；
+  下一fresh run只增加该source-neutral ownership契约。
+
 ## 7. 最小实验输出
 
 每个fresh正式case记录：

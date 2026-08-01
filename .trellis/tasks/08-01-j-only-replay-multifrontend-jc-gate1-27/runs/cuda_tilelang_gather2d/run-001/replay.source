@@ -1,0 +1,17 @@
+extern "C" __global__ void scrc_k0(const int* p0,
+                                     const float* p1,
+                                     float* p2,
+                                     const int* p3,
+                                     int p4) {
+  const int i = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  const int column = p0[i];
+  const int row = p3[i];
+
+  float value = 0.0f;
+  if (column >= 0 && column < 64 && row >= 0 && row < p4) {
+    const long long offset = static_cast<long long>(row) * 64 + column;
+    value = p1[offset];
+  }
+
+  p2[i] = value;
+}
