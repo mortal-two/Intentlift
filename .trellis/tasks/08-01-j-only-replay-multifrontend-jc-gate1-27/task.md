@@ -119,6 +119,15 @@ Gate2(Source,R,RefEval(J))                # 三边
   CUDA semantic PTX hard全PASS；该预检不进入正式certificate；
 - `lift_agent_calls=0`，历史artifact只用于核对wire语法，不作为正式输入。
 
+### 6.2 TileLang gather run-001：合法 realization 被 identity profile拒绝
+
+- fresh `gpt-5.6-sol/xhigh`，1次provider call，Replay恢复了正确间接读取且construction PASS；
+- Replay选择`T.Kernel(1,threads=c0)+T.Parallel(256)`，Source使用`T.Kernel(256,threads=128)`的program id；
+- 数学访问一致，但TIR多出一个`control.for`，structure/topology/operation multiset hard拒绝；
+- 该结果不归因于J缺失，也不放松observer；当前identity profile需要一个固定、source-neutral的TileLang
+  canonical mapping：首个output-covering J domain直接成为`T.Kernel` program grid，不能改成singleton grid
+  下的parallel loop。该规则进入公开`U_f`，不读取π、Source、C value或Gate diff。
+
 ## 7. 最小实验输出
 
 每个fresh正式case记录：

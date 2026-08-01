@@ -1,0 +1,148 @@
+{
+  "cases": [
+    "tilelang:gather2d",
+    "cuda:tilelang_gather2d"
+  ],
+  "claim_scope": "The pair shares the valid-index mathematical gather contract, while the full J truthfully retains CUDA's explicit bounds-to-zero control and each frontend's real ABI.",
+  "frontend_deltas": {
+    "cuda": {
+      "c": {
+        "slots": [
+          {
+            "kind": "compiler",
+            "name": "c0",
+            "required": true,
+            "role": "launch_block_x",
+            "value_type": "i32"
+          }
+        ],
+        "values": {
+          "c0": 128
+        }
+      },
+      "signature": {
+        "parameters": [
+          {
+            "dtype": "i32",
+            "kind": "pointer",
+            "logical_ref": "t0",
+            "mode": "input",
+            "name": "p0",
+            "rank": 1
+          },
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "logical_ref": "t1",
+            "mode": "input",
+            "name": "p1",
+            "rank": 2
+          },
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "logical_ref": "t4",
+            "mode": "output",
+            "name": "p2",
+            "rank": 1
+          },
+          {
+            "dtype": "i32",
+            "kind": "pointer",
+            "logical_ref": "t2",
+            "mode": "input",
+            "name": "p3",
+            "rank": 1
+          },
+          {
+            "dtype": "i32",
+            "kind": "scalar",
+            "logical_ref": "t3",
+            "mode": "value",
+            "name": "p4",
+            "rank": 0
+          }
+        ]
+      },
+      "source_semantics": "explicit row/col guard with zero fill"
+    },
+    "tilelang": {
+      "c": {
+        "slots": [
+          {
+            "kind": "compiler",
+            "name": "c0",
+            "required": true,
+            "role": "launch_block_x",
+            "value_type": "int32"
+          }
+        ],
+        "values": {
+          "c0": 128
+        }
+      },
+      "signature": {
+        "parameters": [
+          {
+            "dtype": "f32",
+            "kind": "tensor",
+            "logical_ref": "t0",
+            "mode": "input",
+            "name": "p0",
+            "rank": 2
+          },
+          {
+            "dtype": "i32",
+            "kind": "tensor",
+            "logical_ref": "t1",
+            "mode": "input",
+            "name": "p1",
+            "rank": 1
+          },
+          {
+            "dtype": "i32",
+            "kind": "tensor",
+            "logical_ref": "t2",
+            "mode": "input",
+            "name": "p2",
+            "rank": 1
+          },
+          {
+            "dtype": "f32",
+            "kind": "tensor",
+            "logical_ref": "t3",
+            "mode": "output",
+            "name": "p3",
+            "rank": 1
+          }
+        ]
+      },
+      "source_semantics": "unguarded TIR access under typed index bounds"
+    }
+  },
+  "lift_agent_calls": 0,
+  "pi": {
+    "program_axes": [
+      {
+        "axis": 0,
+        "domain_ref": "d0"
+      }
+    ],
+    "schema": "intentir.pi.normalization-witness.v1"
+  },
+  "protocol": "intentir.experiment.manual-gather-paired-authoring.v1",
+  "shared_mathematical_contract": {
+    "declared_index_bounds": [
+      "0 <= row < x0",
+      "0 <= col < 64"
+    ],
+    "input": [
+      "f32[x0,64]",
+      "row_idx:i32[256]",
+      "col_idx:i32[256]"
+    ],
+    "output": "f32[256]",
+    "relation": "out[k0] = input[row_idx[k0], col_idx[k0]]"
+  },
+  "source_aware_author": "primary Codex agent"
+}
