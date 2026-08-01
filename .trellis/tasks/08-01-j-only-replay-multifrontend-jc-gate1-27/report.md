@@ -124,9 +124,9 @@ CUDA，并完成 Gate1/Gate2。
 - Replay kernel性能等同或优于 Source；本轮 Gate2只测正确性；
 - TileLang/CUDA full J byte-identical；它们的 ABI确实不同。
 
-## 8. 最小下一步
+## 8. gather2d扩展状态
 
-若论文预算只允许再做一组，应做 `gather2d` pair，而不是扩到许多简单算子：它增加 data-dependent
-indirect address，能直接检验 TileLang TIR 与 CUDA semantic PTX observer对合法 address realization 的
-误拒率。随后只需对 add2d 做 wrong-op、wrong-index、wrong-effect 三个受控 mutation，量化 Gate1 在
-Gate2前的拒绝价值。这样一张主表加一张小 mutation表，已经足以支撑5.2节，不必追求无限 kernel数。
+`gather2d` pair现已完成：TileLang run-003与CUDA run-002均通过各自Gate1和三边Gate2。完整机器指标、
+共享间接寻址核心、真实guard/ABI delta与三次机制失败归因见`gather_pair_metrics.json`和
+`gather_report.md`。剩余最小实验是wrong-op、wrong-index、wrong-effect mutation sensitivity，用于量化
+Gate1在Gate2前的拒绝价值；不再扩张更多简单kernel。

@@ -171,6 +171,7 @@ Gate2(Source,R,RefEval(J))                # 三边
 - Gate2的Source–Replay、Source–J、Replay–J三边均为exact PASS，f32 max abs error全部为0；
 - receipt为Replay backend v72，visible root仅`j,c,u_f`，`pi_visible_to_replay=false`，全程
   `lift_agent_calls=0`；Gate1在run-001提前拒绝了真实错误坐标，run-002没有通过放松observer获得PASS。
+- gather pair机器指标见`gather_pair_metrics.json`，论文解释与claim boundary见`gather_report.md`。
 
 ## 7. 最小实验输出
 

@@ -1,0 +1,206 @@
+{
+  "protocol": "intentir.experiment.multifrontend-gather2d-pair.v1",
+  "status": "pair_closed",
+  "authoring": {
+    "artifact_author": "primary Codex agent",
+    "lift_agent_calls": 0,
+    "shared_valid_index_contract_equal": true,
+    "shared_contract": "out[k0] = input[row_idx[k0], col_idx[k0]]",
+    "shared_domain_extents": [256, "x0", 64],
+    "shared_typed_gather_count": 2,
+    "shared_index_bounds_count": 2,
+    "full_j_byte_identical": false,
+    "pi_byte_identical": true,
+    "pi_canonical_bytes": 95,
+    "frontend_semantic_delta": {
+      "tilelang": "unguarded TIR access under typed index bounds",
+      "cuda": "explicit row/column bounds, zero fill, predicated input access, and select"
+    }
+  },
+  "frontends": {
+    "tilelang": {
+      "case": "tilelang:gather2d",
+      "run": "run-003",
+      "artifact_file_bytes": 5579,
+      "artifact_canonical_bytes": 2696,
+      "j_canonical_bytes": 2422,
+      "c_canonical_bytes": 124,
+      "j_body_operation_count": 2,
+      "j_body_operations": ["gather", "gather"],
+      "j_predicated_access_count": 0,
+      "j_fill_count": 0,
+      "abi": "input f32[x0,64], row i32[256], col i32[256], output f32[256] as four TileLang tensors",
+      "replay_model": "gpt-5.6-sol",
+      "replay_backend": "openai.codex-cli.intentir-replay.v71",
+      "replay_provider_calls": 1,
+      "replay_elapsed_ms": 161912.70025307313,
+      "replay_source_bytes": 297,
+      "replay_source_display_lines": 12,
+      "construction_tool_calls": 5,
+      "live_checkpoints": 3,
+      "pi_visible_to_replay": false,
+      "typecheck": "pass",
+      "gate1": {
+        "status": "replay_closed",
+        "elapsed_ms": 181233.34050178528,
+        "observer": "tilelang-tir-semantic-structure-ptx-diagnostic-v5",
+        "normalizer": "intentir.gate1.jc-normalizer.v2",
+        "hard_pass": true,
+        "hard_fields": [
+          "interface",
+          "tir_operations",
+          "tir_structure",
+          "tir_topology",
+          "ptx.interface",
+          "ptx.schema",
+          "ptx.target",
+          "schema"
+        ],
+        "diagnostic_differences": 5,
+        "diagnostic_difference_fields": [
+          "ptx.control_flow",
+          "ptx.raw_instruction_topology",
+          "ptx.raw_memory_effects",
+          "ptx.raw_opcode_multiset",
+          "ptx.value_operations"
+        ]
+      },
+      "gate2": {
+        "elapsed_ms": 201.16353034973145,
+        "passed": true,
+        "case_count": 1,
+        "source_replay": true,
+        "source_j": true,
+        "replay_j": true,
+        "max_abs_error": 0.0
+      }
+    },
+    "cuda": {
+      "case": "cuda:tilelang_gather2d",
+      "run": "run-002",
+      "artifact_file_bytes": 10115,
+      "artifact_canonical_bytes": 4381,
+      "j_canonical_bytes": 4109,
+      "c_canonical_bytes": 122,
+      "j_body_operation_count": 13,
+      "j_body_operations": {
+        "const": 3,
+        "map_binary": 7,
+        "gather": 2,
+        "select": 1
+      },
+      "j_predicated_access_count": 1,
+      "j_fill_count": 1,
+      "abi": "column pointer, input pointer, output pointer, row pointer, and scalar M",
+      "replay_model": "gpt-5.6-sol",
+      "replay_backend": "openai.codex-cli.intentir-replay.v72",
+      "replay_provider_calls": 1,
+      "replay_elapsed_ms": 120778.25633902103,
+      "replay_source_bytes": 426,
+      "replay_source_display_lines": 18,
+      "construction_tool_calls": 3,
+      "live_checkpoints": 1,
+      "pi_visible_to_replay": false,
+      "typecheck": "pass",
+      "gate1": {
+        "status": "replay_closed",
+        "elapsed_ms": 124177.06418037415,
+        "observer": "cuda-ptx-semantic-effects-v6",
+        "normalizer": "intentir.gate1.jc-normalizer.v2",
+        "hard_pass": true,
+        "hard_fields": [
+          "address_coordinate_folds",
+          "collectives",
+          "control_flow",
+          "coordinate_uses",
+          "interface",
+          "memory_effects",
+          "schema",
+          "target",
+          "value_operations"
+        ],
+        "diagnostic_differences": 3,
+        "diagnostic_difference_fields": [
+          "raw_instruction_topology",
+          "raw_memory_effects",
+          "raw_opcode_multiset"
+        ]
+      },
+      "gate2": {
+        "elapsed_ms": 6289.814233779907,
+        "passed": true,
+        "case_count": 1,
+        "source_replay": true,
+        "source_j": true,
+        "replay_j": true,
+        "max_abs_error": 0.0
+      }
+    }
+  },
+  "mechanism_iterations": {
+    "tilelang": [
+      {
+        "run": "run-001",
+        "replay_elapsed_ms": 192849.21280900016,
+        "gate1": "rejected",
+        "primary_hard_category": "tir_structure",
+        "cause": "singleton program grid plus an extra parallel loop"
+      },
+      {
+        "run": "run-002",
+        "replay_elapsed_ms": 225745.376938954,
+        "gate1": "rejected",
+        "primary_hard_category": "tir_structure",
+        "cause": "unauthorized materialization of a pure single-consumer gather intermediate"
+      },
+      {
+        "run": "run-003",
+        "replay_elapsed_ms": 161912.70025307313,
+        "gate1": "closed",
+        "primary_hard_category": null
+      }
+    ],
+    "cuda": [
+      {
+        "run": "run-001",
+        "replay_elapsed_ms": 81393.49370601121,
+        "gate1": "rejected",
+        "primary_hard_category": "coordinate_uses",
+        "cause": "thread-linear index introduced an unowned lane coordinate"
+      },
+      {
+        "run": "run-002",
+        "replay_elapsed_ms": 120778.25633902103,
+        "gate1": "closed",
+        "primary_hard_category": null
+      }
+    ]
+  },
+  "engineering_scope": {
+    "kernel_specific_production_loc_added": 0,
+    "generic_gather_closure_python_added": 47,
+    "generic_gather_closure_python_deleted": 10,
+    "generic_gather_closure_python_net": 37,
+    "generic_mechanism_commits": ["521fc8c2", "234f34af", "ab85efcb"],
+    "experiment_only_manual_gather_authoring_physical_loc": 522,
+    "experiment_only_shared_pair_runner_physical_loc": 271,
+    "loc_note": "Experiment scripts are auditable evidence and are not production frontend or kernel lowering rules; the runner is shared by add2d and gather2d."
+  },
+  "claim_boundary": {
+    "supported": [
+      "case-level J-only Replay sufficiency for one paired gather2d kernel",
+      "independent TileLang-TIR and CUDA-semantic-PTX Gate1 closure",
+      "three-edge finite Gate2 closure for both frontends",
+      "truthful retention of frontend-specific guard and ABI semantics in full J",
+      "zero kernel-specific production lowering rules for this pair"
+    ],
+    "not_supported": [
+      "J necessity or minimality",
+      "byte-identical full J across frontends",
+      "generalization beyond the measured add2d and gather2d pairs",
+      "pi normalization benefit",
+      "generated-kernel performance equivalence",
+      "a measured manual-authoring wall-time baseline"
+    ]
+  }
+}
