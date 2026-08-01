@@ -1,0 +1,65 @@
+{
+  "protocol": "intentir.experiment.cross-frontend-j-cohort.v1",
+  "source_task": "08-01-j-only-replay-multifrontend-batch-28",
+  "selection_inputs": [
+    "source_task/cohorts.json: stem membership only"
+  ],
+  "selection_excludes": [
+    "J or artifact contents",
+    "Gate outcomes or diffs",
+    "Replay source or trajectory",
+    "runtime or candidate size",
+    "pairwise difference metrics"
+  ],
+  "anchors": {
+    "pointwise": "add2d",
+    "irregular_access": "gather2d",
+    "reduction": "row_sum",
+    "normalization": "layernorm",
+    "attention": "flash_attention2d",
+    "contraction": "gemm",
+    "typed_fused_epilogue": "matmul_fused_epilogue2d",
+    "multi_stage_fusion": "mlp2d"
+  },
+  "fill_rule": {
+    "score": "sum(1 / (1 + selected_count[cohort])) over memberships",
+    "tie_break_1": "higher total membership degree",
+    "tie_break_2": "lexicographically smaller stem",
+    "stop_at_unique_pairs": 20
+  },
+  "primary_stems": [
+    "add2d",
+    "gather2d",
+    "row_sum",
+    "layernorm",
+    "flash_attention2d",
+    "gemm",
+    "matmul_fused_epilogue2d",
+    "mlp2d",
+    "any_kernel_dim",
+    "add_bias2d",
+    "masked_attention2d",
+    "copy2d_divmod",
+    "rowmask_where2d",
+    "groupnorm",
+    "transpose2d",
+    "where2d",
+    "grouped_row_sum2d",
+    "layer_norm_residual2d",
+    "masked_softmax2d",
+    "exp2d"
+  ],
+  "source_cohort_coverage": {
+    "g1_pointwise_selection": 7,
+    "g2_reduction_statistics_normalization": 6,
+    "g3_contraction_epilogue": 7,
+    "g4_attention_masking": 7,
+    "g5_indexing_layout_image": 8,
+    "g6_fusion_composition": 6,
+    "g7_cross_feature_stress": 7
+  },
+  "primary_unique_pair_count": 20,
+  "primary_frontend_artifact_count": 40,
+  "robustness_unique_pair_count": 31,
+  "robustness_frontend_artifact_count": 62
+}
