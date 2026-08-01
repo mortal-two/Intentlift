@@ -1,0 +1,15 @@
+{
+  "case": "tilelang:add2d",
+  "frontend": "tilelang",
+  "gate1": "no_closure",
+  "gate1_elapsed_ms": 574839.9138450623,
+  "gate2": null,
+  "gate2_elapsed_ms": 0.0,
+  "lift_agent_calls": 0,
+  "pi_visible_to_replay": false,
+  "protocol": "intentir.experiment.manual-add2d-j-only.v1",
+  "replay_provider_calls": 1,
+  "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-jc-gate1-27/runs/tilelang_add2d/run-001",
+  "total_elapsed_ms": 579393.0315971375,
+  "typecheck": "pass"
+}

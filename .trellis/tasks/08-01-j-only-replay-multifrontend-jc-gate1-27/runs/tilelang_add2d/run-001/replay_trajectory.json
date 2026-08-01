@@ -1,0 +1,544 @@
+{
+  "accepted_submission_interrupts": [
+    {
+      "elapsed_ms": 555317.460648017,
+      "recovery": "exact_checkpoint_restored",
+      "thread_id": "019fbb5b-7ec4-7b02-aba3-496e15bc9ad7"
+    }
+  ],
+  "backend": "openai.codex-cli.intentir-replay.v67",
+  "diagnostic_ready_interrupts": [],
+  "explicit_submission_accepted": true,
+  "formal_ingress_recheck": true,
+  "fresh_session": true,
+  "isolation": {
+    "input": "read-only",
+    "output_work_tmp": "write-only-scope",
+    "provider_secret_in_tool_env": false,
+    "source_blind": true,
+    "tool_network": "disabled"
+  },
+  "live_checkpoint": [
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 464,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 448,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 330,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 444,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 454,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 448,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 466,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 462,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 480,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 451,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 458,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 430,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 497,
+      "status": "fail"
+    },
+    {
+      "accepted": false,
+      "checkpoint_only": true,
+      "replay_bytes": 509,
+      "status": "fail"
+    },
+    {
+      "accepted": true,
+      "checkpoint_only": true,
+      "replay_bytes": 497,
+      "status": "pass"
+    }
+  ],
+  "packet_queries": [
+    {
+      "query": [
+        "abi",
+        "0",
+        "48"
+      ]
+    },
+    {
+      "query": [
+        "graph",
+        "0",
+        "12"
+      ]
+    }
+  ],
+  "protocol": "intentir.codex-cli.agent-runtime.v5",
+  "replay_check": [
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [],
+          "line": 3,
+          "path": "<line:3>",
+          "rule_code": "tilelang_module_binding_requires_uppercase_literal_or_T_dynamic"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [
+            "c0"
+          ],
+          "line": 13,
+          "path": "<T.Kernel:threads[0]>",
+          "rule_code": "tilelang_launch_slot_thread_binding"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [
+            "c0"
+          ],
+          "line": 13,
+          "path": "<T.Kernel:threads[0]>",
+          "rule_code": "tilelang_launch_slot_thread_binding"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [
+            "c0"
+          ],
+          "line": 13,
+          "path": "<T.Kernel:threads>",
+          "rule_code": "tilelang_launch_slot_thread_binding"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [
+            "c0"
+          ],
+          "line": 13,
+          "path": "<T.Kernel:threads[0]>",
+          "rule_code": "tilelang_launch_slot_thread_binding"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [
+            "c0"
+          ],
+          "line": 12,
+          "path": "<T.Kernel:threads[0]>",
+          "rule_code": "tilelang_launch_slot_thread_binding"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [
+            "c0"
+          ],
+          "line": 13,
+          "path": "<T.Kernel:threads[0]>",
+          "rule_code": "tilelang_launch_slot_thread_binding"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [
+            "c0"
+          ],
+          "line": 13,
+          "path": "<T.Kernel:threads[0]>",
+          "rule_code": "tilelang_launch_slot_thread_binding"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [
+            "c0"
+          ],
+          "line": 12,
+          "path": "<T.Kernel:threads[0]>",
+          "rule_code": "tilelang_launch_slot_thread_binding"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [
+            "c0"
+          ],
+          "line": 13,
+          "path": "<T.Kernel:threads[0]>",
+          "rule_code": "tilelang_launch_slot_thread_binding"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [
+            "c0"
+          ],
+          "line": 13,
+          "path": "<T.Kernel:threads[0]>",
+          "rule_code": "tilelang_launch_slot_thread_binding"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [
+            "c0"
+          ],
+          "line": 12,
+          "path": "<T.Kernel:threads[0]>",
+          "rule_code": "tilelang_launch_slot_thread_binding"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [],
+          "line": 4,
+          "path": "<line:4>",
+          "rule_code": "tilelang_module_binding_requires_uppercase_literal_or_T_dynamic"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_accepted_submission_restore"
+    }
+  ],
+  "replay_compile_check": [
+    {
+      "diagnostics": [
+        {
+          "anonymous_handles": [],
+          "line": null,
+          "path": "<synthetic-frontend-compile> AssertionError: threads must be an integer or a list of integers",
+          "rule_code": "synthetic_frontend_compile_failed"
+        }
+      ],
+      "status": "fail",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "live_checkpoint"
+    },
+    {
+      "diagnostics": [],
+      "status": "pass",
+      "trigger": "host_accepted_submission_restore"
+    }
+  ],
+  "replay_input": {
+    "authority": "path and byte-count receipt only; exact source-isolated packet bytes remain in input/packet.json and no code or schedule is generated",
+    "compiler_index_json_bytes": 530,
+    "compiler_index_text_bytes": 348,
+    "excluded_dependencies": [
+      "pi",
+      "Source",
+      "Harness valuation",
+      "Gate observation",
+      "prior Replay"
+    ],
+    "packet_bytes": 2526,
+    "paths": {
+      "compiler_index": "input/compiler-index.intent",
+      "compiler_index_json": "input/compiler-index.json",
+      "frontend": "input/frontend.json",
+      "host_check": "work/host_replay_check.json",
+      "mask_c": "input/mask-c.json",
+      "packet": "input/packet.json",
+      "public_contract": "input/REPLAY_CONTRACT.md",
+      "replay": "output/replay.source",
+      "semantic_program": "input/semantic-program.intent",
+      "semantic_program_json": "input/semantic-program.json",
+      "tool_contract": "input/TOOL.md"
+    },
+    "pi_visible_to_replay": false,
+    "protocol": "intentir.scrc.replay-startup-view.v6",
+    "semantic_program_json_bytes": 5053,
+    "semantic_program_text_bytes": 2443,
+    "visible_packet_components": [
+      "c",
+      "j",
+      "u_f"
+    ]
+  },
+  "replay_ttir_inspections": [],
+  "semantic_queries": [],
+  "thread_id": "019fbb5b-7ec4-7b02-aba3-496e15bc9ad7",
+  "thread_ids": [
+    "019fbb5b-7ec4-7b02-aba3-496e15bc9ad7"
+  ],
+  "timeout_events": [],
+  "tool_bridge": {
+    "authority": "closed allowlisted workspace callbacks; each handler response declares its own authority, and the mailbox transport performs no semantic inference, lowering, repair, Gate, or certification",
+    "calls": 18,
+    "protocol": "intentir.codex-cli.tool-bridge.v3",
+    "receipts": [
+      {
+        "argument_count": 3,
+        "arguments_sha256": "451889f14360aac2f0682588478a669d6643adbcba59e14c48ff395d42bf15ad",
+        "elapsed_ms": 3.2278629951179028,
+        "result_sha256": "9d19b42af87313a134e48e7e1161bc1f78eb108fb1b2af1ff21a8edaf2e41292",
+        "status": "pass",
+        "tool": "packet_query"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 3.888663020916283,
+        "result_sha256": "0d0cf40d8ae657122e1f40607fe68f2eab9a7cbd3a03acf1c56a4b04f9a64f9b",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 7.175901089794934,
+        "result_sha256": "a40360cc078438335ec53cdd457d3c24945a014ec4fbdb189e5d5643070de51c",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 5.823750980198383,
+        "result_sha256": "76a1b166a7f30c5a2f3dab1189d03e55682b9555d3328808dc732371ec7853a4",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 5.052095046266913,
+        "result_sha256": "d9c153e24f4ceef3695d71235d43bbc174beca1edddb45b573b0000179d752b8",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 5.640554009005427,
+        "result_sha256": "41c62503c99fe5a3c19e935b80c616652dc60ee66658eeb3213d0faff8fe7abf",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 4.213912063278258,
+        "result_sha256": "cd3b8268f6770fc6aed3060ae16268e6e79dea3f9a8b12077f512364161a6653",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 4.329029005020857,
+        "result_sha256": "74a81ff4feb7c5229378105f32c9dc9442e48895d9b46332b262249e8deb9f48",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 3.668859018944204,
+        "result_sha256": "058f64aa1a63b1abaf9e336ac2b517dc5b1ba3423314f74bc784f6350ec67862",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 3,
+        "arguments_sha256": "5a897cf3d5e481502b6f2dc7e9c7f7690274216dfcaf7f59760b2e6bca300b1f",
+        "elapsed_ms": 2.820863970555365,
+        "result_sha256": "fe09ad90d20588375cdf6973ed8929813a2ff2d916071b096723167fdc20e54c",
+        "status": "pass",
+        "tool": "packet_query"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 5.525985034182668,
+        "result_sha256": "4bbd9ac6be12041ca059235b4917a8b902dc18f2b8b09be3d3fd932f5dba9ffa",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 6.132308975793421,
+        "result_sha256": "349a1d9d6234bb0231fe69a7529c75f6e7fd43df5c1b11a77777b274bce2e13a",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 4.435029928572476,
+        "result_sha256": "e6d09b4de4f1be65e596d786416e57e92dc5f4cda0e838c99555898c700de5f4",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 4.895937046967447,
+        "result_sha256": "0350bfe5dd28ad975dae38418bc09a6e4ec4f32284cc3f6515c407fd968982ac",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 4.289051983505487,
+        "result_sha256": "7982a3e6771d9e8d4a0242916a780d2f48963aecc1977c76ba4a34a374b0517e",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 3843.6683310428634,
+        "result_sha256": "c35694fe13256b48857acf0aa04e12ffad93e0b519cd340f9041b9200b594668",
+        "status": "fail",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 13551.007752073929,
+        "result_sha256": "0ee3a5070dc2c6aac98a0d561b8c7d591b7b163c49bbe6b40eda816f8f333472",
+        "status": "pass",
+        "tool": "replay_compile_check"
+      },
+      {
+        "argument_count": 0,
+        "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "elapsed_ms": 7158.586967969313,
+        "result_sha256": "d6b5b67befa4806ddfccf38e97f7d1e43ac0cc2514e43f792e9ddd8310914191",
+        "status": "pass",
+        "tool": "submit_replay"
+      }
+    ],
+    "transport": "isolated_workspace_file_mailbox"
+  },
+  "turns": []
+}
