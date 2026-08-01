@@ -1,0 +1,36 @@
+extern "C" __global__ void scrc_k0(const float* p0,
+                                     float* p1,
+                                     float* p2,
+                                     float* p3,
+                                     int p4) {
+  const unsigned int row = blockIdx.x;
+  const unsigned int column = threadIdx.x % 16u;
+  const unsigned int offset = row * 16u + column;
+
+  const float input_value = p0[offset];
+
+  float row_max = fmaxf(-__builtin_inff(), input_value);
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 8));
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 4));
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 2));
+  row_max = fmaxf(row_max,
+                  __shfl_xor_sync(0xffffffffu, row_max, 1));
+  p2[row] = row_max;
+
+  const float exponential = expf(input_value - row_max);
+  float row_sum = __fadd_rn(0.0f, exponential);
+  row_sum = __fadd_rn(
+      row_sum, __shfl_xor_sync(0xffffffffu, row_sum, 8));
+  row_sum = __fadd_rn(
+      row_sum, __shfl_xor_sync(0xffffffffu, row_sum, 4));
+  row_sum = __fadd_rn(
+      row_sum, __shfl_xor_sync(0xffffffffu, row_sum, 2));
+  row_sum = __fadd_rn(
+      row_sum, __shfl_xor_sync(0xffffffffu, row_sum, 1));
+  p3[row] = row_sum;
+
+  p1[offset] = exponential / row_sum;
+}

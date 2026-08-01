@@ -1,0 +1,1924 @@
+{
+  "artifact_digest": "b13b8a2672af4c0cf3af6dbc9d729a6fd673069447208eae48c0fafb2a54e579",
+  "j_necessity_status": "inconclusive",
+  "llm_calls": {
+    "masked_j": 0,
+    "normal": 1
+  },
+  "masked_j": null,
+  "masked_j_isolation": {
+    "fresh_session_evidence": null,
+    "independent_writer": null,
+    "separate_generate_call": null
+  },
+  "normal": {
+    "comparison": {
+      "diagnostic_passes": {
+        "raw_instruction_topology": false,
+        "raw_memory_effects": false,
+        "raw_opcode_multiset": false
+      },
+      "differences": [
+        {
+          "category": "value_operations",
+          "message": "PTX value_operations differs between Source and Replay",
+          "replay": [
+            [
+              "add.f32",
+              6
+            ],
+            [
+              "cvt.sat.f32.f32",
+              1
+            ],
+            [
+              "div.rn.f32",
+              1
+            ],
+            [
+              "ex2.approx.ftz.f32",
+              1
+            ],
+            [
+              "fma.rm.f32",
+              1
+            ],
+            [
+              "fma.rn.f32",
+              3
+            ],
+            [
+              "ld.global.b32",
+              1
+            ],
+            [
+              "max.f32",
+              5
+            ],
+            [
+              "mov.b32",
+              18
+            ],
+            [
+              "mov.f32",
+              2
+            ],
+            [
+              "mul.f32",
+              1
+            ],
+            [
+              "neg.f32",
+              1
+            ],
+            [
+              "shfl.sync.bfly.b32",
+              8
+            ],
+            [
+              "shl.b32",
+              1
+            ],
+            [
+              "sub.f32",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "add.f32",
+              32
+            ],
+            [
+              "cvt.sat.f32.f32",
+              16
+            ],
+            [
+              "div.rn.f32",
+              16
+            ],
+            [
+              "ex2.approx.ftz.f32",
+              16
+            ],
+            [
+              "fma.rm.f32",
+              16
+            ],
+            [
+              "fma.rn.f32",
+              48
+            ],
+            [
+              "ld.global.b32",
+              16
+            ],
+            [
+              "max.f32",
+              16
+            ],
+            [
+              "mov.b32",
+              32
+            ],
+            [
+              "mov.f32",
+              2
+            ],
+            [
+              "mul.f32",
+              16
+            ],
+            [
+              "neg.f32",
+              16
+            ],
+            [
+              "shl.b32",
+              16
+            ],
+            [
+              "sub.f32",
+              16
+            ]
+          ]
+        },
+        {
+          "category": "memory_effects",
+          "message": "PTX memory_effects differs between Source and Replay",
+          "replay": [
+            [
+              "ld.global.b32",
+              1
+            ],
+            [
+              "ld.param.b64",
+              4
+            ],
+            [
+              "st.global.b32",
+              3
+            ]
+          ],
+          "source": [
+            [
+              "ld.global.b32",
+              16
+            ],
+            [
+              "ld.param.b64",
+              4
+            ],
+            [
+              "st.global.b32",
+              18
+            ]
+          ]
+        },
+        {
+          "category": "address_coordinate_folds",
+          "message": "PTX address_coordinate_folds differs between Source and Replay",
+          "replay": [
+            [
+              "ld.global.b32:%tid.x:cyclic:16",
+              1
+            ],
+            [
+              "st.global.b32:%tid.x:cyclic:16",
+              1
+            ]
+          ],
+          "source": []
+        },
+        {
+          "category": "collectives",
+          "message": "PTX collectives differs between Source and Replay",
+          "replay": [
+            "shuffle",
+            "shuffle",
+            "shuffle",
+            "shuffle",
+            "shuffle",
+            "shuffle",
+            "shuffle",
+            "shuffle"
+          ],
+          "source": []
+        },
+        {
+          "category": "coordinate_uses",
+          "message": "PTX coordinate_uses differs between Source and Replay",
+          "replay": [
+            "%ctaid.x",
+            "%tid.x"
+          ],
+          "source": [
+            "%ctaid.x"
+          ]
+        },
+        {
+          "category": "raw_instruction_topology",
+          "message": "PTX raw_instruction_topology differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u64 %b643,[param3];",
+            "cvta.to.global.u64 %b644,%b641;",
+            "cvta.to.global.u64 %b645,%b643;",
+            "cvta.to.global.u64 %b646,%b642;",
+            "cvta.to.global.u64 %b647,%b640;",
+            "mov.u32 %b320,%ctaid.x;",
+            "mov.u32 %b321,%tid.x;",
+            "and.b32 %b322,%b321,15;",
+            "shl.b32 %b323,%b320,4;",
+            "or.b32 %b324,%b323,%b322;",
+            "mul.wide.u32 %b648,%b324,4;",
+            "add.s64 %b649,%b647,%b648;",
+            "ld.global.f32 %f320,[%b649];",
+            "max.f32 %f321,%f320,0fFF800000;",
+            "mov.b32 %b325,%f321;",
+            "shfl.sync.bfly.b32 %b326|%pred0,%b325,1,31,-1;",
+            "mov.b32 %f322,%b326;",
+            "max.f32 %f323,%f321,%f322;",
+            "mov.b32 %b327,%f323;",
+            "shfl.sync.bfly.b32 %b328|%pred1,%b327,2,31,-1;",
+            "mov.b32 %f324,%b328;",
+            "max.f32 %f325,%f323,%f324;",
+            "mov.b32 %b329,%f325;",
+            "shfl.sync.bfly.b32 %b3210|%pred2,%b329,4,31,-1;",
+            "mov.b32 %f326,%b3210;",
+            "max.f32 %f327,%f325,%f326;",
+            "mov.b32 %b3211,%f327;",
+            "shfl.sync.bfly.b32 %b3212|%pred3,%b3211,8,31,-1;",
+            "mov.b32 %f328,%b3212;",
+            "max.f32 %f329,%f327,%f328;",
+            "mul.wide.u32 %b6410,%b320,4;",
+            "add.s64 %b6411,%b646,%b6410;",
+            "st.global.f32 [%b6411],%f329;",
+            "sub.f32 %f3210,%f320,%f329;",
+            "fma.rn.f32 %f3211,%f3210,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3212,%f3211;",
+            "mov.f32 %f3213,0f4B400001;",
+            "mov.f32 %f3214,0f437C0000;",
+            "fma.rm.f32 %f3215,%f3212,%f3214,%f3213;",
+            "add.f32 %f3216,%f3215,0fCB40007F;",
+            "neg.f32 %f3217,%f3216;",
+            "fma.rn.f32 %f3218,%f3210,0f3FB8AA3B,%f3217;",
+            "fma.rn.f32 %f3219,%f3210,0f32A57060,%f3218;",
+            "mov.b32 %b3213,%f3215;",
+            "shl.b32 %b3214,%b3213,23;",
+            "mov.b32 %f3220,%b3214;",
+            "ex2.approx.ftz.f32 %f3221,%f3219;",
+            "mul.f32 %f3222,%f3221,%f3220;",
+            "add.f32 %f3223,%f3222,0f00000000;",
+            "mov.b32 %b3215,%f3223;",
+            "shfl.sync.bfly.b32 %b3216|%pred4,%b3215,1,31,-1;",
+            "mov.b32 %f3224,%b3216;",
+            "add.f32 %f3225,%f3223,%f3224;",
+            "mov.b32 %b3217,%f3225;",
+            "shfl.sync.bfly.b32 %b3218|%pred5,%b3217,2,31,-1;",
+            "mov.b32 %f3226,%b3218;",
+            "add.f32 %f3227,%f3225,%f3226;",
+            "mov.b32 %b3219,%f3227;",
+            "shfl.sync.bfly.b32 %b3220|%pred6,%b3219,4,31,-1;",
+            "mov.b32 %f3228,%b3220;",
+            "add.f32 %f3229,%f3227,%f3228;",
+            "mov.b32 %b3221,%f3229;",
+            "shfl.sync.bfly.b32 %b3222|%pred7,%b3221,8,31,-1;",
+            "mov.b32 %f3230,%b3222;",
+            "add.f32 %f3231,%f3229,%f3230;",
+            "add.s64 %b6412,%b645,%b6410;",
+            "st.global.f32 [%b6412],%f3231;",
+            "div.rn.f32 %f3232,%f3222,%f3231;",
+            "add.s64 %b6413,%b644,%b648;",
+            "st.global.f32 [%b6413],%f3232;",
+            "ret;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u64 %b643,[param3];",
+            "cvta.to.global.u64 %b644,%b643;",
+            "cvta.to.global.u64 %b645,%b642;",
+            "mov.u32 %b320,%ctaid.x;",
+            "mul.wide.u32 %b646,%b320,16;",
+            "cvta.to.global.u64 %b647,%b640;",
+            "shl.b64 %b648,%b646,2;",
+            "add.s64 %b649,%b647,%b648;",
+            "ld.global.nc.f32 %f320,[%b649];",
+            "ld.global.nc.f32 %f321,[%b649+4];",
+            "ld.global.nc.f32 %f322,[%b649+8];",
+            "ld.global.nc.f32 %f323,[%b649+12];",
+            "ld.global.nc.f32 %f324,[%b649+16];",
+            "ld.global.nc.f32 %f325,[%b649+20];",
+            "ld.global.nc.f32 %f326,[%b649+24];",
+            "ld.global.nc.f32 %f327,[%b649+28];",
+            "ld.global.nc.f32 %f328,[%b649+32];",
+            "ld.global.nc.f32 %f329,[%b649+36];",
+            "ld.global.nc.f32 %f3210,[%b649+40];",
+            "ld.global.nc.f32 %f3211,[%b649+44];",
+            "ld.global.nc.f32 %f3212,[%b649+48];",
+            "ld.global.nc.f32 %f3213,[%b649+52];",
+            "ld.global.nc.f32 %f3214,[%b649+56];",
+            "ld.global.nc.f32 %f3215,[%b649+60];",
+            "max.f32 %f3216,%f320,0fFF800000;",
+            "max.f32 %f3217,%f3216,%f321;",
+            "max.f32 %f3218,%f3217,%f322;",
+            "max.f32 %f3219,%f3218,%f323;",
+            "max.f32 %f3220,%f3219,%f324;",
+            "max.f32 %f3221,%f3220,%f325;",
+            "max.f32 %f3222,%f3221,%f326;",
+            "max.f32 %f3223,%f3222,%f327;",
+            "max.f32 %f3224,%f3223,%f328;",
+            "max.f32 %f3225,%f3224,%f329;",
+            "max.f32 %f3226,%f3225,%f3210;",
+            "max.f32 %f3227,%f3226,%f3211;",
+            "max.f32 %f3228,%f3227,%f3212;",
+            "max.f32 %f3229,%f3228,%f3213;",
+            "max.f32 %f3230,%f3229,%f3214;",
+            "max.f32 %f3231,%f3230,%f3215;",
+            "mul.wide.u32 %b6410,%b320,4;",
+            "add.s64 %b6411,%b645,%b6410;",
+            "st.global.f32 [%b6411],%f3231;",
+            "sub.f32 %f3232,%f320,%f3231;",
+            "fma.rn.f32 %f3233,%f3232,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3234,%f3233;",
+            "mov.f32 %f3235,0f4B400001;",
+            "mov.f32 %f3236,0f437C0000;",
+            "fma.rm.f32 %f3237,%f3234,%f3236,%f3235;",
+            "add.f32 %f3238,%f3237,0fCB40007F;",
+            "neg.f32 %f3239,%f3238;",
+            "fma.rn.f32 %f3240,%f3232,0f3FB8AA3B,%f3239;",
+            "fma.rn.f32 %f3241,%f3232,0f32A57060,%f3240;",
+            "mov.b32 %b321,%f3237;",
+            "shl.b32 %b322,%b321,23;",
+            "mov.b32 %f3242,%b322;",
+            "ex2.approx.ftz.f32 %f3243,%f3241;",
+            "mul.f32 %f3244,%f3243,%f3242;",
+            "sub.f32 %f3245,%f321,%f3231;",
+            "fma.rn.f32 %f3246,%f3245,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3247,%f3246;",
+            "fma.rm.f32 %f3248,%f3247,%f3236,%f3235;",
+            "add.f32 %f3249,%f3248,0fCB40007F;",
+            "neg.f32 %f3250,%f3249;",
+            "fma.rn.f32 %f3251,%f3245,0f3FB8AA3B,%f3250;",
+            "fma.rn.f32 %f3252,%f3245,0f32A57060,%f3251;",
+            "mov.b32 %b323,%f3248;",
+            "shl.b32 %b324,%b323,23;",
+            "mov.b32 %f3253,%b324;",
+            "ex2.approx.ftz.f32 %f3254,%f3252;",
+            "mul.f32 %f3255,%f3254,%f3253;",
+            "sub.f32 %f3256,%f322,%f3231;",
+            "fma.rn.f32 %f3257,%f3256,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3258,%f3257;",
+            "fma.rm.f32 %f3259,%f3258,%f3236,%f3235;",
+            "add.f32 %f3260,%f3259,0fCB40007F;",
+            "neg.f32 %f3261,%f3260;",
+            "fma.rn.f32 %f3262,%f3256,0f3FB8AA3B,%f3261;",
+            "fma.rn.f32 %f3263,%f3256,0f32A57060,%f3262;",
+            "mov.b32 %b325,%f3259;",
+            "shl.b32 %b326,%b325,23;",
+            "mov.b32 %f3264,%b326;",
+            "ex2.approx.ftz.f32 %f3265,%f3263;",
+            "mul.f32 %f3266,%f3265,%f3264;",
+            "sub.f32 %f3267,%f323,%f3231;",
+            "fma.rn.f32 %f3268,%f3267,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3269,%f3268;",
+            "fma.rm.f32 %f3270,%f3269,%f3236,%f3235;",
+            "add.f32 %f3271,%f3270,0fCB40007F;",
+            "neg.f32 %f3272,%f3271;",
+            "fma.rn.f32 %f3273,%f3267,0f3FB8AA3B,%f3272;",
+            "fma.rn.f32 %f3274,%f3267,0f32A57060,%f3273;",
+            "mov.b32 %b327,%f3270;",
+            "shl.b32 %b328,%b327,23;",
+            "mov.b32 %f3275,%b328;",
+            "ex2.approx.ftz.f32 %f3276,%f3274;",
+            "mul.f32 %f3277,%f3276,%f3275;",
+            "sub.f32 %f3278,%f324,%f3231;",
+            "fma.rn.f32 %f3279,%f3278,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3280,%f3279;",
+            "fma.rm.f32 %f3281,%f3280,%f3236,%f3235;",
+            "add.f32 %f3282,%f3281,0fCB40007F;",
+            "neg.f32 %f3283,%f3282;",
+            "fma.rn.f32 %f3284,%f3278,0f3FB8AA3B,%f3283;",
+            "fma.rn.f32 %f3285,%f3278,0f32A57060,%f3284;",
+            "mov.b32 %b329,%f3281;",
+            "shl.b32 %b3210,%b329,23;",
+            "mov.b32 %f3286,%b3210;",
+            "ex2.approx.ftz.f32 %f3287,%f3285;",
+            "mul.f32 %f3288,%f3287,%f3286;",
+            "sub.f32 %f3289,%f325,%f3231;",
+            "fma.rn.f32 %f3290,%f3289,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f3291,%f3290;",
+            "fma.rm.f32 %f3292,%f3291,%f3236,%f3235;",
+            "add.f32 %f3293,%f3292,0fCB40007F;",
+            "neg.f32 %f3294,%f3293;",
+            "fma.rn.f32 %f3295,%f3289,0f3FB8AA3B,%f3294;",
+            "fma.rn.f32 %f3296,%f3289,0f32A57060,%f3295;",
+            "mov.b32 %b3211,%f3292;",
+            "shl.b32 %b3212,%b3211,23;",
+            "mov.b32 %f3297,%b3212;",
+            "ex2.approx.ftz.f32 %f3298,%f3296;",
+            "mul.f32 %f3299,%f3298,%f3297;",
+            "sub.f32 %f32100,%f326,%f3231;",
+            "fma.rn.f32 %f32101,%f32100,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32102,%f32101;",
+            "fma.rm.f32 %f32103,%f32102,%f3236,%f3235;",
+            "add.f32 %f32104,%f32103,0fCB40007F;",
+            "neg.f32 %f32105,%f32104;",
+            "fma.rn.f32 %f32106,%f32100,0f3FB8AA3B,%f32105;",
+            "fma.rn.f32 %f32107,%f32100,0f32A57060,%f32106;",
+            "mov.b32 %b3213,%f32103;",
+            "shl.b32 %b3214,%b3213,23;",
+            "mov.b32 %f32108,%b3214;",
+            "ex2.approx.ftz.f32 %f32109,%f32107;",
+            "mul.f32 %f32110,%f32109,%f32108;",
+            "sub.f32 %f32111,%f327,%f3231;",
+            "fma.rn.f32 %f32112,%f32111,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32113,%f32112;",
+            "fma.rm.f32 %f32114,%f32113,%f3236,%f3235;",
+            "add.f32 %f32115,%f32114,0fCB40007F;",
+            "neg.f32 %f32116,%f32115;",
+            "fma.rn.f32 %f32117,%f32111,0f3FB8AA3B,%f32116;",
+            "fma.rn.f32 %f32118,%f32111,0f32A57060,%f32117;",
+            "mov.b32 %b3215,%f32114;",
+            "shl.b32 %b3216,%b3215,23;",
+            "mov.b32 %f32119,%b3216;",
+            "ex2.approx.ftz.f32 %f32120,%f32118;",
+            "mul.f32 %f32121,%f32120,%f32119;",
+            "sub.f32 %f32122,%f328,%f3231;",
+            "fma.rn.f32 %f32123,%f32122,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32124,%f32123;",
+            "fma.rm.f32 %f32125,%f32124,%f3236,%f3235;",
+            "add.f32 %f32126,%f32125,0fCB40007F;",
+            "neg.f32 %f32127,%f32126;",
+            "fma.rn.f32 %f32128,%f32122,0f3FB8AA3B,%f32127;",
+            "fma.rn.f32 %f32129,%f32122,0f32A57060,%f32128;",
+            "mov.b32 %b3217,%f32125;",
+            "shl.b32 %b3218,%b3217,23;",
+            "mov.b32 %f32130,%b3218;",
+            "ex2.approx.ftz.f32 %f32131,%f32129;",
+            "mul.f32 %f32132,%f32131,%f32130;",
+            "sub.f32 %f32133,%f329,%f3231;",
+            "fma.rn.f32 %f32134,%f32133,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32135,%f32134;",
+            "fma.rm.f32 %f32136,%f32135,%f3236,%f3235;",
+            "add.f32 %f32137,%f32136,0fCB40007F;",
+            "neg.f32 %f32138,%f32137;",
+            "fma.rn.f32 %f32139,%f32133,0f3FB8AA3B,%f32138;",
+            "fma.rn.f32 %f32140,%f32133,0f32A57060,%f32139;",
+            "mov.b32 %b3219,%f32136;",
+            "shl.b32 %b3220,%b3219,23;",
+            "mov.b32 %f32141,%b3220;",
+            "ex2.approx.ftz.f32 %f32142,%f32140;",
+            "mul.f32 %f32143,%f32142,%f32141;",
+            "sub.f32 %f32144,%f3210,%f3231;",
+            "fma.rn.f32 %f32145,%f32144,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32146,%f32145;",
+            "fma.rm.f32 %f32147,%f32146,%f3236,%f3235;",
+            "add.f32 %f32148,%f32147,0fCB40007F;",
+            "neg.f32 %f32149,%f32148;",
+            "fma.rn.f32 %f32150,%f32144,0f3FB8AA3B,%f32149;",
+            "fma.rn.f32 %f32151,%f32144,0f32A57060,%f32150;",
+            "mov.b32 %b3221,%f32147;",
+            "shl.b32 %b3222,%b3221,23;",
+            "mov.b32 %f32152,%b3222;",
+            "ex2.approx.ftz.f32 %f32153,%f32151;",
+            "mul.f32 %f32154,%f32153,%f32152;",
+            "sub.f32 %f32155,%f3211,%f3231;",
+            "fma.rn.f32 %f32156,%f32155,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32157,%f32156;",
+            "fma.rm.f32 %f32158,%f32157,%f3236,%f3235;",
+            "add.f32 %f32159,%f32158,0fCB40007F;",
+            "neg.f32 %f32160,%f32159;",
+            "fma.rn.f32 %f32161,%f32155,0f3FB8AA3B,%f32160;",
+            "fma.rn.f32 %f32162,%f32155,0f32A57060,%f32161;",
+            "mov.b32 %b3223,%f32158;",
+            "shl.b32 %b3224,%b3223,23;",
+            "mov.b32 %f32163,%b3224;",
+            "ex2.approx.ftz.f32 %f32164,%f32162;",
+            "mul.f32 %f32165,%f32164,%f32163;",
+            "sub.f32 %f32166,%f3212,%f3231;",
+            "fma.rn.f32 %f32167,%f32166,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32168,%f32167;",
+            "fma.rm.f32 %f32169,%f32168,%f3236,%f3235;",
+            "add.f32 %f32170,%f32169,0fCB40007F;",
+            "neg.f32 %f32171,%f32170;",
+            "fma.rn.f32 %f32172,%f32166,0f3FB8AA3B,%f32171;",
+            "fma.rn.f32 %f32173,%f32166,0f32A57060,%f32172;",
+            "mov.b32 %b3225,%f32169;",
+            "shl.b32 %b3226,%b3225,23;",
+            "mov.b32 %f32174,%b3226;",
+            "ex2.approx.ftz.f32 %f32175,%f32173;",
+            "mul.f32 %f32176,%f32175,%f32174;",
+            "sub.f32 %f32177,%f3213,%f3231;",
+            "fma.rn.f32 %f32178,%f32177,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32179,%f32178;",
+            "fma.rm.f32 %f32180,%f32179,%f3236,%f3235;",
+            "add.f32 %f32181,%f32180,0fCB40007F;",
+            "neg.f32 %f32182,%f32181;",
+            "fma.rn.f32 %f32183,%f32177,0f3FB8AA3B,%f32182;",
+            "fma.rn.f32 %f32184,%f32177,0f32A57060,%f32183;",
+            "mov.b32 %b3227,%f32180;",
+            "shl.b32 %b3228,%b3227,23;",
+            "mov.b32 %f32185,%b3228;",
+            "ex2.approx.ftz.f32 %f32186,%f32184;",
+            "mul.f32 %f32187,%f32186,%f32185;",
+            "sub.f32 %f32188,%f3214,%f3231;",
+            "fma.rn.f32 %f32189,%f32188,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32190,%f32189;",
+            "fma.rm.f32 %f32191,%f32190,%f3236,%f3235;",
+            "add.f32 %f32192,%f32191,0fCB40007F;",
+            "neg.f32 %f32193,%f32192;",
+            "fma.rn.f32 %f32194,%f32188,0f3FB8AA3B,%f32193;",
+            "fma.rn.f32 %f32195,%f32188,0f32A57060,%f32194;",
+            "mov.b32 %b3229,%f32191;",
+            "shl.b32 %b3230,%b3229,23;",
+            "mov.b32 %f32196,%b3230;",
+            "ex2.approx.ftz.f32 %f32197,%f32195;",
+            "mul.f32 %f32198,%f32197,%f32196;",
+            "sub.f32 %f32199,%f3215,%f3231;",
+            "fma.rn.f32 %f32200,%f32199,0f3BBB989D,0f3F000000;",
+            "cvt.sat.f32.f32 %f32201,%f32200;",
+            "fma.rm.f32 %f32202,%f32201,%f3236,%f3235;",
+            "add.f32 %f32203,%f32202,0fCB40007F;",
+            "neg.f32 %f32204,%f32203;",
+            "fma.rn.f32 %f32205,%f32199,0f3FB8AA3B,%f32204;",
+            "fma.rn.f32 %f32206,%f32199,0f32A57060,%f32205;",
+            "mov.b32 %b3231,%f32202;",
+            "shl.b32 %b3232,%b3231,23;",
+            "mov.b32 %f32207,%b3232;",
+            "ex2.approx.ftz.f32 %f32208,%f32206;",
+            "mul.f32 %f32209,%f32208,%f32207;",
+            "add.f32 %f32210,%f3244,0f00000000;",
+            "add.f32 %f32211,%f32210,%f3255;",
+            "add.f32 %f32212,%f32211,%f3266;",
+            "add.f32 %f32213,%f32212,%f3277;",
+            "add.f32 %f32214,%f32213,%f3288;",
+            "add.f32 %f32215,%f32214,%f3299;",
+            "add.f32 %f32216,%f32215,%f32110;",
+            "add.f32 %f32217,%f32216,%f32121;",
+            "add.f32 %f32218,%f32217,%f32132;",
+            "add.f32 %f32219,%f32218,%f32143;",
+            "add.f32 %f32220,%f32219,%f32154;",
+            "add.f32 %f32221,%f32220,%f32165;",
+            "add.f32 %f32222,%f32221,%f32176;",
+            "add.f32 %f32223,%f32222,%f32187;",
+            "add.f32 %f32224,%f32223,%f32198;",
+            "add.f32 %f32225,%f32224,%f32209;",
+            "add.s64 %b6412,%b644,%b6410;",
+            "st.global.f32 [%b6412],%f32225;",
+            "div.rn.f32 %f32226,%f3244,%f32225;",
+            "div.rn.f32 %f32227,%f3255,%f32225;",
+            "div.rn.f32 %f32228,%f3266,%f32225;",
+            "div.rn.f32 %f32229,%f3277,%f32225;",
+            "div.rn.f32 %f32230,%f3288,%f32225;",
+            "div.rn.f32 %f32231,%f3299,%f32225;",
+            "div.rn.f32 %f32232,%f32110,%f32225;",
+            "div.rn.f32 %f32233,%f32121,%f32225;",
+            "div.rn.f32 %f32234,%f32132,%f32225;",
+            "div.rn.f32 %f32235,%f32143,%f32225;",
+            "div.rn.f32 %f32236,%f32154,%f32225;",
+            "div.rn.f32 %f32237,%f32165,%f32225;",
+            "div.rn.f32 %f32238,%f32176,%f32225;",
+            "div.rn.f32 %f32239,%f32187,%f32225;",
+            "div.rn.f32 %f32240,%f32198,%f32225;",
+            "div.rn.f32 %f32241,%f32209,%f32225;",
+            "cvta.to.global.u64 %b6413,%b641;",
+            "add.s64 %b6414,%b6413,%b648;",
+            "st.global.f32 [%b6414],%f32226;",
+            "st.global.f32 [%b6414+4],%f32227;",
+            "st.global.f32 [%b6414+8],%f32228;",
+            "st.global.f32 [%b6414+12],%f32229;",
+            "st.global.f32 [%b6414+16],%f32230;",
+            "st.global.f32 [%b6414+20],%f32231;",
+            "st.global.f32 [%b6414+24],%f32232;",
+            "st.global.f32 [%b6414+28],%f32233;",
+            "st.global.f32 [%b6414+32],%f32234;",
+            "st.global.f32 [%b6414+36],%f32235;",
+            "st.global.f32 [%b6414+40],%f32236;",
+            "st.global.f32 [%b6414+44],%f32237;",
+            "st.global.f32 [%b6414+48],%f32238;",
+            "st.global.f32 [%b6414+52],%f32239;",
+            "st.global.f32 [%b6414+56],%f32240;",
+            "st.global.f32 [%b6414+60],%f32241;",
+            "ret;"
+          ]
+        },
+        {
+          "category": "raw_opcode_multiset",
+          "message": "PTX raw_opcode_multiset differs between Source and Replay",
+          "replay": [
+            [
+              "add.f32",
+              6
+            ],
+            [
+              "add.s64",
+              4
+            ],
+            [
+              "and.b32",
+              1
+            ],
+            [
+              "cvt.sat.f32.f32",
+              1
+            ],
+            [
+              "cvta.to.global.u64",
+              4
+            ],
+            [
+              "div.rn.f32",
+              1
+            ],
+            [
+              "ex2.approx.ftz.f32",
+              1
+            ],
+            [
+              "fma.rm.f32",
+              1
+            ],
+            [
+              "fma.rn.f32",
+              3
+            ],
+            [
+              "ld.global.f32",
+              1
+            ],
+            [
+              "ld.param.u64",
+              4
+            ],
+            [
+              "max.f32",
+              5
+            ],
+            [
+              "mov.b32",
+              18
+            ],
+            [
+              "mov.f32",
+              2
+            ],
+            [
+              "mov.u32",
+              2
+            ],
+            [
+              "mul.f32",
+              1
+            ],
+            [
+              "mul.wide.u32",
+              2
+            ],
+            [
+              "neg.f32",
+              1
+            ],
+            [
+              "or.b32",
+              1
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "shfl.sync.bfly.b32",
+              8
+            ],
+            [
+              "shl.b32",
+              2
+            ],
+            [
+              "st.global.f32",
+              3
+            ],
+            [
+              "sub.f32",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "add.f32",
+              32
+            ],
+            [
+              "add.s64",
+              4
+            ],
+            [
+              "cvt.sat.f32.f32",
+              16
+            ],
+            [
+              "cvta.to.global.u64",
+              4
+            ],
+            [
+              "div.rn.f32",
+              16
+            ],
+            [
+              "ex2.approx.ftz.f32",
+              16
+            ],
+            [
+              "fma.rm.f32",
+              16
+            ],
+            [
+              "fma.rn.f32",
+              48
+            ],
+            [
+              "ld.global.nc.f32",
+              16
+            ],
+            [
+              "ld.param.u64",
+              4
+            ],
+            [
+              "max.f32",
+              16
+            ],
+            [
+              "mov.b32",
+              32
+            ],
+            [
+              "mov.f32",
+              2
+            ],
+            [
+              "mov.u32",
+              1
+            ],
+            [
+              "mul.f32",
+              16
+            ],
+            [
+              "mul.wide.u32",
+              2
+            ],
+            [
+              "neg.f32",
+              16
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "shl.b32",
+              16
+            ],
+            [
+              "shl.b64",
+              1
+            ],
+            [
+              "st.global.f32",
+              18
+            ],
+            [
+              "sub.f32",
+              16
+            ]
+          ]
+        },
+        {
+          "category": "raw_memory_effects",
+          "message": "PTX raw_memory_effects differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u64 %b643,[param3];",
+            "ld.global.f32 %f320,[%b649];",
+            "st.global.f32 [%b6411],%f329;",
+            "st.global.f32 [%b6412],%f3231;",
+            "st.global.f32 [%b6413],%f3232;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.param.u64 %b642,[param2];",
+            "ld.param.u64 %b643,[param3];",
+            "ld.global.nc.f32 %f320,[%b649];",
+            "ld.global.nc.f32 %f321,[%b649+4];",
+            "ld.global.nc.f32 %f322,[%b649+8];",
+            "ld.global.nc.f32 %f323,[%b649+12];",
+            "ld.global.nc.f32 %f324,[%b649+16];",
+            "ld.global.nc.f32 %f325,[%b649+20];",
+            "ld.global.nc.f32 %f326,[%b649+24];",
+            "ld.global.nc.f32 %f327,[%b649+28];",
+            "ld.global.nc.f32 %f328,[%b649+32];",
+            "ld.global.nc.f32 %f329,[%b649+36];",
+            "ld.global.nc.f32 %f3210,[%b649+40];",
+            "ld.global.nc.f32 %f3211,[%b649+44];",
+            "ld.global.nc.f32 %f3212,[%b649+48];",
+            "ld.global.nc.f32 %f3213,[%b649+52];",
+            "ld.global.nc.f32 %f3214,[%b649+56];",
+            "ld.global.nc.f32 %f3215,[%b649+60];",
+            "st.global.f32 [%b6411],%f3231;",
+            "st.global.f32 [%b6412],%f32225;",
+            "st.global.f32 [%b6414],%f32226;",
+            "st.global.f32 [%b6414+4],%f32227;",
+            "st.global.f32 [%b6414+8],%f32228;",
+            "st.global.f32 [%b6414+12],%f32229;",
+            "st.global.f32 [%b6414+16],%f32230;",
+            "st.global.f32 [%b6414+20],%f32231;",
+            "st.global.f32 [%b6414+24],%f32232;",
+            "st.global.f32 [%b6414+28],%f32233;",
+            "st.global.f32 [%b6414+32],%f32234;",
+            "st.global.f32 [%b6414+36],%f32235;",
+            "st.global.f32 [%b6414+40],%f32236;",
+            "st.global.f32 [%b6414+44],%f32237;",
+            "st.global.f32 [%b6414+48],%f32238;",
+            "st.global.f32 [%b6414+52],%f32239;",
+            "st.global.f32 [%b6414+56],%f32240;",
+            "st.global.f32 [%b6414+60],%f32241;"
+          ]
+        }
+      ],
+      "hard_pass": false,
+      "hard_passes": {
+        "address_coordinate_folds": false,
+        "collectives": false,
+        "control_flow": true,
+        "coordinate_uses": false,
+        "interface": true,
+        "memory_effects": false,
+        "schema": true,
+        "target": true,
+        "value_operations": false
+      },
+      "primary_difference_category": "value_operations",
+      "replay_digest": "497ea7413a27aad321706ff38771e9532022cede631a5885aa1bd361ec2ea50e",
+      "source_digest": "165d04d2f576c69fe59984412e6878af0716ab9a7e042d63ceed6593a5f3c7ee"
+    },
+    "compile": {
+      "cache_key": "d33e5d660c036ad12ce4d0671bcecf0586aee3f54138f77e051eccbc65abd44c",
+      "compiler": {
+        "name": "nvcc",
+        "version": "Build cuda_12.8.r12.8/compiler.35404655_0"
+      },
+      "diagnostic": "",
+      "elapsed_ms": 397.7910520043224,
+      "entry": "scrc_k0",
+      "interface": {
+        "grid_rank": 1,
+        "parameters": [
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "mode": "input",
+            "rank": 2
+          },
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "mode": "output",
+            "rank": 2
+          },
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "mode": "output",
+            "rank": 1
+          },
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "mode": "output",
+            "rank": 1
+          },
+          {
+            "dtype": "i32",
+            "kind": "scalar",
+            "mode": "value",
+            "rank": 0
+          }
+        ]
+      },
+      "ok": true,
+      "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120\n.address_size 64\n\n\t// .globl\tscrc_k0\n\n.visible .entry scrc_k0(\n\t.param .u64 scrc_k0_param_0,\n\t.param .u64 scrc_k0_param_1,\n\t.param .u64 scrc_k0_param_2,\n\t.param .u64 scrc_k0_param_3,\n\t.param .u32 scrc_k0_param_4\n)\n{\n\t.reg .pred \t%p<9>;\n\t.reg .b32 \t%r<24>;\n\t.reg .f32 \t%f<34>;\n\t.reg .b64 \t%rd<15>;\n\t.loc\t1 1 0\n\n\tld.param.u64 \t%rd1, [scrc_k0_param_0];\n\tld.param.u64 \t%rd2, [scrc_k0_param_1];\n\tld.param.u64 \t%rd3, [scrc_k0_param_2];\n\tld.param.u64 \t%rd4, [scrc_k0_param_3];\n\t.loc\t1 6 3\n\tcvta.to.global.u64 \t%rd5, %rd2;\n\tcvta.to.global.u64 \t%rd6, %rd4;\n\tcvta.to.global.u64 \t%rd7, %rd3;\n\tcvta.to.global.u64 \t%rd8, %rd1;\n\tmov.u32 \t%r1, %ctaid.x;\n\t.loc\t1 7 3\n\tmov.u32 \t%r2, %tid.x;\n\tand.b32  \t%r3, %r2, 15;\n\t.loc\t1 8 3\n\tshl.b32 \t%r4, %r1, 4;\n\tor.b32  \t%r5, %r4, %r3;\n\t.loc\t1 10 3\n\tmul.wide.u32 \t%rd9, %r5, 4;\n\tadd.s64 \t%rd10, %rd8, %rd9;\n\tld.global.f32 \t%f1, [%rd10];\n\t.loc\t1 13 3\n\tmax.f32 \t%f2, %f1, 0fFF800000;\n\t.loc\t1 15 19\n\t.loc\t2 449 9, function_name $L__info_string0, inlined_at 1 15 19\n\tmov.b32 \t%r6, %f2;\n\tshfl.sync.bfly.b32\t%r7|%p1, %r6, 1, 31, -1;\n\t.loc\t2 450 2, function_name $L__info_string0, inlined_at 1 15 19\n\tmov.b32 \t%f3, %r7;\n\t.loc\t1 14 13\n\tmax.f32 \t%f4, %f2, %f3;\n\t.loc\t1 17 19\n\t.loc\t2 449 9, function_name $L__info_string0, inlined_at 1 17 19\n\tmov.b32 \t%r8, %f4;\n\tshfl.sync.bfly.b32\t%r9|%p2, %r8, 2, 31, -1;\n\t.loc\t2 450 2, function_name $L__info_string0, inlined_at 1 17 19\n\tmov.b32 \t%f5, %r9;\n\t.loc\t1 16 13\n\tmax.f32 \t%f6, %f4, %f5;\n\t.loc\t1 19 19\n\t.loc\t2 449 9, function_name $L__info_string0, inlined_at 1 19 19\n\tmov.b32 \t%r10, %f6;\n\tshfl.sync.bfly.b32\t%r11|%p3, %r10, 4, 31, -1;\n\t.loc\t2 450 2, function_name $L__info_string0, inlined_at 1 19 19\n\tmov.b32 \t%f7, %r11;\n\t.loc\t1 18 13\n\tmax.f32 \t%f8, %f6, %f7;\n\t.loc\t1 21 19\n\t.loc\t2 449 9, function_name $L__info_string0, inlined_at 1 21 19\n\tmov.b32 \t%r12, %f8;\n\tshfl.sync.bfly.b32\t%r13|%p4, %r12, 8, 31, -1;\n\t.loc\t2 450 2, function_name $L__info_string0, inlined_at 1 21 19\n\tmov.b32 \t%f9, %r13;\n\t.loc\t1 20 13\n\tmax.f32 \t%f10, %f8, %f9;\n\t.loc\t1 22 3\n\tmul.wide.u32 \t%rd11, %r1, 4;\n\tadd.s64 \t%rd12, %rd7, %rd11;\n\tst.global.f32 \t[%rd12], %f10;\n\t.loc\t1 24 3\n\tsub.f32 \t%f11, %f1, %f10;\n\tfma.rn.f32 \t%f12, %f11, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f13, %f12;\n\tmov.f32 \t%f14, 0f4B400001;\n\tmov.f32 \t%f15, 0f437C0000;\n\tfma.rm.f32 \t%f16, %f13, %f15, %f14;\n\tadd.f32 \t%f17, %f16, 0fCB40007F;\n\tneg.f32 \t%f18, %f17;\n\tfma.rn.f32 \t%f19, %f11, 0f3FB8AA3B, %f18;\n\tfma.rn.f32 \t%f20, %f11, 0f32A57060, %f19;\n\tmov.b32 \t%r14, %f16;\n\tshl.b32 \t%r15, %r14, 23;\n\tmov.b32 \t%f21, %r15;\n\tex2.approx.ftz.f32 \t%f22, %f20;\n\tmul.f32 \t%f23, %f22, %f21;\n\t.loc\t1 27 3\n\tadd.f32 \t%f24, %f23, 0f00000000;\n\t.loc\t1 28 3\n\t.loc\t2 449 9, function_name $L__info_string0, inlined_at 1 28 3\n\tmov.b32 \t%r16, %f24;\n\tshfl.sync.bfly.b32\t%r17|%p5, %r16, 1, 31, -1;\n\t.loc\t2 450 2, function_name $L__info_string0, inlined_at 1 28 3\n\tmov.b32 \t%f25, %r17;\n\t.loc\t1 28 3\n\tadd.f32 \t%f26, %f24, %f25;\n\t.loc\t1 29 3\n\t.loc\t2 449 9, function_name $L__info_string0, inlined_at 1 29 3\n\tmov.b32 \t%r18, %f26;\n\tshfl.sync.bfly.b32\t%r19|%p6, %r18, 2, 31, -1;\n\t.loc\t2 450 2, function_name $L__info_string0, inlined_at 1 29 3\n\tmov.b32 \t%f27, %r19;\n\t.loc\t1 29 3\n\tadd.f32 \t%f28, %f26, %f27;\n\t.loc\t1 30 3\n\t.loc\t2 449 9, function_name $L__info_string0, inlined_at 1 30 3\n\tmov.b32 \t%r20, %f28;\n\tshfl.sync.bfly.b32\t%r21|%p7, %r20, 4, 31, -1;\n\t.loc\t2 450 2, function_name $L__info_string0, inlined_at 1 30 3\n\tmov.b32 \t%f29, %r21;\n\t.loc\t1 30 3\n\tadd.f32 \t%f30, %f28, %f29;\n\t.loc\t1 31 3\n\t.loc\t2 449 9, function_name $L__info_string0, inlined_at 1 31 3\n\tmov.b32 \t%r22, %f30;\n\tshfl.sync.bfly.b32\t%r23|%p8, %r22, 8, 31, -1;\n\t.loc\t2 450 2, function_name $L__info_string0, inlined_at 1 31 3\n\tmov.b32 \t%f31, %r23;\n\t.loc\t1 31 3\n\tadd.f32 \t%f32, %f30, %f31;\n\t.loc\t1 32 3\n\tadd.s64 \t%rd13, %rd6, %rd11;\n\tst.global.f32 \t[%rd13], %f32;\n\t.loc\t1 34 3\n\tdiv.rn.f32 \t%f33, %f23, %f32;\n\tadd.s64 \t%rd14, %rd5, %rd9;\n\tst.global.f32 \t[%rd14], %f33;\n\t.loc\t1 35 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/intentir-cuda-gate1-eb592m8g/kernel.cu\"\n\t.file\t2 \"/usr/local/cuda/bin/../targets/x86_64-linux/include/sm_30_intrinsics.hpp\"\n\t.section\t.debug_str\n\t{\n$L__info_string0:\n.b8 95\n.b8 90\n.b8 78\n.b8 51\n.b8 56\n.b8 95\n.b8 73\n.b8 78\n.b8 84\n.b8 69\n.b8 82\n.b8 78\n.b8 65\n.b8 76\n.b8 95\n.b8 98\n.b8 53\n.b8 53\n.b8 53\n.b8 54\n.b8 100\n.b8 53\n.b8 100\n.b8 95\n.b8 57\n.b8 95\n.b8 107\n.b8 101\n.b8 114\n.b8 110\n.b8 101\n.b8 108\n.b8 95\n.b8 99\n.b8 117\n.b8 95\n.b8 115\n.b8 99\n.b8 114\n.b8 99\n.b8 95\n.b8 107\n.b8 48\n.b8 49\n.b8 53\n.b8 95\n.b8 95\n.b8 115\n.b8 104\n.b8 102\n.b8 108\n.b8 95\n.b8 120\n.b8 111\n.b8 114\n.b8 95\n.b8 115\n.b8 121\n.b8 110\n.b8 99\n.b8 69\n.b8 106\n.b8 102\n.b8 105\n.b8 105\n.b8 0\n\t}\n",
+      "target": {
+        "arch": "sm_120"
+      }
+    },
+    "diagnostic": null,
+    "fingerprint": {
+      "collectives": [
+        "shuffle",
+        "shuffle",
+        "shuffle",
+        "shuffle",
+        "shuffle",
+        "shuffle",
+        "shuffle",
+        "shuffle"
+      ],
+      "control_flow": [
+        "ret;"
+      ],
+      "coordinate_uses": [
+        "%ctaid.x",
+        "%tid.x"
+      ],
+      "digest": "497ea7413a27aad321706ff38771e9532022cede631a5885aa1bd361ec2ea50e",
+      "instructions": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.param.u64 %b642,[param2];",
+        "ld.param.u64 %b643,[param3];",
+        "cvta.to.global.u64 %b644,%b641;",
+        "cvta.to.global.u64 %b645,%b643;",
+        "cvta.to.global.u64 %b646,%b642;",
+        "cvta.to.global.u64 %b647,%b640;",
+        "mov.u32 %b320,%ctaid.x;",
+        "mov.u32 %b321,%tid.x;",
+        "and.b32 %b322,%b321,15;",
+        "shl.b32 %b323,%b320,4;",
+        "or.b32 %b324,%b323,%b322;",
+        "mul.wide.u32 %b648,%b324,4;",
+        "add.s64 %b649,%b647,%b648;",
+        "ld.global.f32 %f320,[%b649];",
+        "max.f32 %f321,%f320,0fFF800000;",
+        "mov.b32 %b325,%f321;",
+        "shfl.sync.bfly.b32 %b326|%pred0,%b325,1,31,-1;",
+        "mov.b32 %f322,%b326;",
+        "max.f32 %f323,%f321,%f322;",
+        "mov.b32 %b327,%f323;",
+        "shfl.sync.bfly.b32 %b328|%pred1,%b327,2,31,-1;",
+        "mov.b32 %f324,%b328;",
+        "max.f32 %f325,%f323,%f324;",
+        "mov.b32 %b329,%f325;",
+        "shfl.sync.bfly.b32 %b3210|%pred2,%b329,4,31,-1;",
+        "mov.b32 %f326,%b3210;",
+        "max.f32 %f327,%f325,%f326;",
+        "mov.b32 %b3211,%f327;",
+        "shfl.sync.bfly.b32 %b3212|%pred3,%b3211,8,31,-1;",
+        "mov.b32 %f328,%b3212;",
+        "max.f32 %f329,%f327,%f328;",
+        "mul.wide.u32 %b6410,%b320,4;",
+        "add.s64 %b6411,%b646,%b6410;",
+        "st.global.f32 [%b6411],%f329;",
+        "sub.f32 %f3210,%f320,%f329;",
+        "fma.rn.f32 %f3211,%f3210,0f3BBB989D,0f3F000000;",
+        "cvt.sat.f32.f32 %f3212,%f3211;",
+        "mov.f32 %f3213,0f4B400001;",
+        "mov.f32 %f3214,0f437C0000;",
+        "fma.rm.f32 %f3215,%f3212,%f3214,%f3213;",
+        "add.f32 %f3216,%f3215,0fCB40007F;",
+        "neg.f32 %f3217,%f3216;",
+        "fma.rn.f32 %f3218,%f3210,0f3FB8AA3B,%f3217;",
+        "fma.rn.f32 %f3219,%f3210,0f32A57060,%f3218;",
+        "mov.b32 %b3213,%f3215;",
+        "shl.b32 %b3214,%b3213,23;",
+        "mov.b32 %f3220,%b3214;",
+        "ex2.approx.ftz.f32 %f3221,%f3219;",
+        "mul.f32 %f3222,%f3221,%f3220;",
+        "add.f32 %f3223,%f3222,0f00000000;",
+        "mov.b32 %b3215,%f3223;",
+        "shfl.sync.bfly.b32 %b3216|%pred4,%b3215,1,31,-1;",
+        "mov.b32 %f3224,%b3216;",
+        "add.f32 %f3225,%f3223,%f3224;",
+        "mov.b32 %b3217,%f3225;",
+        "shfl.sync.bfly.b32 %b3218|%pred5,%b3217,2,31,-1;",
+        "mov.b32 %f3226,%b3218;",
+        "add.f32 %f3227,%f3225,%f3226;",
+        "mov.b32 %b3219,%f3227;",
+        "shfl.sync.bfly.b32 %b3220|%pred6,%b3219,4,31,-1;",
+        "mov.b32 %f3228,%b3220;",
+        "add.f32 %f3229,%f3227,%f3228;",
+        "mov.b32 %b3221,%f3229;",
+        "shfl.sync.bfly.b32 %b3222|%pred7,%b3221,8,31,-1;",
+        "mov.b32 %f3230,%b3222;",
+        "add.f32 %f3231,%f3229,%f3230;",
+        "add.s64 %b6412,%b645,%b6410;",
+        "st.global.f32 [%b6412],%f3231;",
+        "div.rn.f32 %f3232,%f3222,%f3231;",
+        "add.s64 %b6413,%b644,%b648;",
+        "st.global.f32 [%b6413],%f3232;",
+        "ret;"
+      ],
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":1,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":3,\"rank\":1},{\"dtype\":\"i32\",\"kind\":\"scalar\",\"mode\":\"value\",\"position\":4,\"rank\":0}]",
+          null
+        ],
+        [
+          "ptx_abi",
+          "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+          null
+        ]
+      ],
+      "memory_effects": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.param.u64 %b642,[param2];",
+        "ld.param.u64 %b643,[param3];",
+        "ld.global.f32 %f320,[%b649];",
+        "st.global.f32 [%b6411],%f329;",
+        "st.global.f32 [%b6412],%f3231;",
+        "st.global.f32 [%b6413],%f3232;"
+      ],
+      "opcode_multiset": [
+        [
+          "add.f32",
+          6
+        ],
+        [
+          "add.s64",
+          4
+        ],
+        [
+          "and.b32",
+          1
+        ],
+        [
+          "cvt.sat.f32.f32",
+          1
+        ],
+        [
+          "cvta.to.global.u64",
+          4
+        ],
+        [
+          "div.rn.f32",
+          1
+        ],
+        [
+          "ex2.approx.ftz.f32",
+          1
+        ],
+        [
+          "fma.rm.f32",
+          1
+        ],
+        [
+          "fma.rn.f32",
+          3
+        ],
+        [
+          "ld.global.f32",
+          1
+        ],
+        [
+          "ld.param.u64",
+          4
+        ],
+        [
+          "max.f32",
+          5
+        ],
+        [
+          "mov.b32",
+          18
+        ],
+        [
+          "mov.f32",
+          2
+        ],
+        [
+          "mov.u32",
+          2
+        ],
+        [
+          "mul.f32",
+          1
+        ],
+        [
+          "mul.wide.u32",
+          2
+        ],
+        [
+          "neg.f32",
+          1
+        ],
+        [
+          "or.b32",
+          1
+        ],
+        [
+          "ret;",
+          1
+        ],
+        [
+          "shfl.sync.bfly.b32",
+          8
+        ],
+        [
+          "shl.b32",
+          2
+        ],
+        [
+          "st.global.f32",
+          3
+        ],
+        [
+          "sub.f32",
+          1
+        ]
+      ],
+      "schedule_view": [
+        [
+          "c0",
+          "128"
+        ]
+      ],
+      "schema_version": "cuda-ptx-semantic-effects-v7",
+      "semantic_address_coordinate_folds": [
+        [
+          "ld.global.b32:%tid.x:cyclic:16",
+          1
+        ],
+        [
+          "st.global.b32:%tid.x:cyclic:16",
+          1
+        ]
+      ],
+      "semantic_memory_effects": [
+        [
+          "ld.global.b32",
+          1
+        ],
+        [
+          "ld.param.b64",
+          4
+        ],
+        [
+          "st.global.b32",
+          3
+        ]
+      ],
+      "semantic_value_opcodes": [
+        [
+          "add.f32",
+          6
+        ],
+        [
+          "cvt.sat.f32.f32",
+          1
+        ],
+        [
+          "div.rn.f32",
+          1
+        ],
+        [
+          "ex2.approx.ftz.f32",
+          1
+        ],
+        [
+          "fma.rm.f32",
+          1
+        ],
+        [
+          "fma.rn.f32",
+          3
+        ],
+        [
+          "ld.global.b32",
+          1
+        ],
+        [
+          "max.f32",
+          5
+        ],
+        [
+          "mov.b32",
+          18
+        ],
+        [
+          "mov.f32",
+          2
+        ],
+        [
+          "mul.f32",
+          1
+        ],
+        [
+          "neg.f32",
+          1
+        ],
+        [
+          "shfl.sync.bfly.b32",
+          8
+        ],
+        [
+          "shl.b32",
+          1
+        ],
+        [
+          "sub.f32",
+          1
+        ]
+      ],
+      "target_view": [
+        [
+          "arch",
+          "\"sm_120\""
+        ]
+      ]
+    },
+    "generation": {
+      "attempts": 1,
+      "context_receipt": {
+        "backend_protocol": "openai.codex-cli.intentir-replay.v76",
+        "cli_turns": 1,
+        "context_rollover_input_tokens": 0,
+        "episode_wall_time_limit_seconds": 7200.0,
+        "excluded_dependencies": [
+          "pi",
+          "Source",
+          "Harness valuation",
+          "Gate observation",
+          "prior Replay"
+        ],
+        "formal_compile_recheck": true,
+        "formal_ingress_protocol": "intentir.scrc.replay-check.v17",
+        "fresh_session": true,
+        "model_segments_lower_bound": 1,
+        "pi_visible_to_replay": false,
+        "replay_input_protocol": "intentir.scrc.replay-input.v4",
+        "retrieval_trace": [],
+        "thread_id": "019fbc90-3c0f-72f2-829a-7b3540ebbeaf",
+        "thread_ids": [
+          "019fbc90-3c0f-72f2-829a-7b3540ebbeaf"
+        ],
+        "tool_actions": 0,
+        "visible_packet_components": [
+          "c",
+          "j",
+          "u_f"
+        ]
+      },
+      "elapsed_ms": 157141.55941002537,
+      "entry_function_name": null,
+      "function_name": "scrc_k0",
+      "model": "gpt-5.6-sol",
+      "response_id": "019fbc90-3c0f-72f2-829a-7b3540ebbeaf",
+      "response_model": "gpt-5.6-sol",
+      "usage": {}
+    },
+    "mode": "normal",
+    "normalization": {
+      "active_rules": [],
+      "frontend": "cuda",
+      "hard_preservation_check": "passed",
+      "hard_relations": [
+        "program_axes"
+      ],
+      "idempotence_check": "passed",
+      "observer_profile": "cuda-ptx-semantic-effects-v7",
+      "peer_observation_visible": false,
+      "profile_ok": true,
+      "protocol": "intentir.gate1.jc-normalizer.v2",
+      "transformed_occurrences": 0,
+      "unary": true,
+      "unknown_atoms": "hard"
+    },
+    "physical_calls": 1
+  },
+  "normal_fanout": null,
+  "observer_profile": {
+    "canonicalization_version": "cuda-ptx-semantic-effects-v7",
+    "compiler_stage": "ptx",
+    "evidence_class": "semantic_effects_with_raw_topology_diagnostic",
+    "frontend": "cuda",
+    "profile_id": "cuda_ptx_semantic_effects",
+    "profile_version": "cuda-ptx-semantic-effects-v7"
+  },
+  "protocol": "intentir.j-only-replay.jc-structural-gate1.v2",
+  "source_compile": {
+    "cache_key": "7fc864971fc450150dc505740b9275d7e2e67c3bf0f32fc5f44f67fb9390b231",
+    "compiler": {
+      "name": "nvcc",
+      "version": "Build cuda_12.8.r12.8/compiler.35404655_0"
+    },
+    "diagnostic": "",
+    "elapsed_ms": 2073.2511410024017,
+    "entry": "main_kernel",
+    "interface": {
+      "grid_rank": 1,
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "mode": "input",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "mode": "output",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "mode": "output",
+          "rank": 1
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "mode": "output",
+          "rank": 1
+        },
+        {
+          "dtype": "i32",
+          "kind": "scalar",
+          "mode": "value",
+          "rank": 0
+        }
+      ]
+    },
+    "ok": true,
+    "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120\n.address_size 64\n\n\t// .globl\tmain_kernel\n.global .align 1 .b8 _ZN39_INTERNAL_81bf6da2_9_kernel_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_81bf6da2_9_kernel_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN39_INTERNAL_81bf6da2_9_kernel_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_81bf6da2_9_kernel_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_81bf6da2_9_kernel_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_81bf6da2_9_kernel_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_81bf6da2_9_kernel_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_81bf6da2_9_kernel_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_81bf6da2_9_kernel_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN39_INTERNAL_81bf6da2_9_kernel_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n\n.visible .entry main_kernel(\n\t.param .u64 main_kernel_param_0,\n\t.param .u64 main_kernel_param_1,\n\t.param .u64 main_kernel_param_2,\n\t.param .u64 main_kernel_param_3,\n\t.param .u32 main_kernel_param_4\n)\n.maxntid 128, 1, 1\n.minnctapersm 1\n{\n\t.reg .b32 \t%r<34>;\n\t.reg .f32 \t%f<243>;\n\t.reg .b64 \t%rd<16>;\n\t.loc\t1 13 0\n\n\tld.param.u64 \t%rd1, [main_kernel_param_0];\n\tld.param.u64 \t%rd2, [main_kernel_param_1];\n\tld.param.u64 \t%rd3, [main_kernel_param_2];\n\tld.param.u64 \t%rd4, [main_kernel_param_3];\n\tcvta.to.global.u64 \t%rd5, %rd4;\n\tcvta.to.global.u64 \t%rd6, %rd3;\n\tmov.u32 \t%r1, %ctaid.x;\n\tmul.wide.u32 \t%rd7, %r1, 16;\n\tcvta.to.global.u64 \t%rd8, %rd1;\n\t.loc\t1 20 5\n\tshl.b64 \t%rd9, %rd7, 2;\n\tadd.s64 \t%rd10, %rd8, %rd9;\n\tld.global.nc.f32 \t%f1, [%rd10];\n\tld.global.nc.f32 \t%f2, [%rd10+4];\n\tld.global.nc.f32 \t%f3, [%rd10+8];\n\tld.global.nc.f32 \t%f4, [%rd10+12];\n\tld.global.nc.f32 \t%f5, [%rd10+16];\n\tld.global.nc.f32 \t%f6, [%rd10+20];\n\tld.global.nc.f32 \t%f7, [%rd10+24];\n\tld.global.nc.f32 \t%f8, [%rd10+28];\n\tld.global.nc.f32 \t%f9, [%rd10+32];\n\tld.global.nc.f32 \t%f10, [%rd10+36];\n\tld.global.nc.f32 \t%f11, [%rd10+40];\n\tld.global.nc.f32 \t%f12, [%rd10+44];\n\tld.global.nc.f32 \t%f13, [%rd10+48];\n\tld.global.nc.f32 \t%f14, [%rd10+52];\n\tld.global.nc.f32 \t%f15, [%rd10+56];\n\tld.global.nc.f32 \t%f16, [%rd10+60];\n\t.loc\t1 25 5\n\t.loc\t2 1107 3, function_name $L__info_string0, inlined_at 1 25 5\n\tmax.f32 \t%f17, %f1, 0fFF800000;\n\tmax.f32 \t%f18, %f17, %f2;\n\tmax.f32 \t%f19, %f18, %f3;\n\tmax.f32 \t%f20, %f19, %f4;\n\tmax.f32 \t%f21, %f20, %f5;\n\tmax.f32 \t%f22, %f21, %f6;\n\tmax.f32 \t%f23, %f22, %f7;\n\tmax.f32 \t%f24, %f23, %f8;\n\tmax.f32 \t%f25, %f24, %f9;\n\tmax.f32 \t%f26, %f25, %f10;\n\tmax.f32 \t%f27, %f26, %f11;\n\tmax.f32 \t%f28, %f27, %f12;\n\tmax.f32 \t%f29, %f28, %f13;\n\tmax.f32 \t%f30, %f29, %f14;\n\tmax.f32 \t%f31, %f30, %f15;\n\tmax.f32 \t%f32, %f31, %f16;\n\t.loc\t1 27 3\n\tmul.wide.u32 \t%rd11, %r1, 4;\n\tadd.s64 \t%rd12, %rd6, %rd11;\n\tst.global.f32 \t[%rd12], %f32;\n\t.loc\t1 29 5\n\tsub.f32 \t%f33, %f1, %f32;\n\tfma.rn.f32 \t%f34, %f33, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f35, %f34;\n\tmov.f32 \t%f36, 0f4B400001;\n\tmov.f32 \t%f37, 0f437C0000;\n\tfma.rm.f32 \t%f38, %f35, %f37, %f36;\n\tadd.f32 \t%f39, %f38, 0fCB40007F;\n\tneg.f32 \t%f40, %f39;\n\tfma.rn.f32 \t%f41, %f33, 0f3FB8AA3B, %f40;\n\tfma.rn.f32 \t%f42, %f33, 0f32A57060, %f41;\n\tmov.b32 \t%r2, %f38;\n\tshl.b32 \t%r3, %r2, 23;\n\tmov.b32 \t%f43, %r3;\n\tex2.approx.ftz.f32 \t%f44, %f42;\n\tmul.f32 \t%f45, %f44, %f43;\n\tsub.f32 \t%f46, %f2, %f32;\n\tfma.rn.f32 \t%f47, %f46, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f48, %f47;\n\tfma.rm.f32 \t%f49, %f48, %f37, %f36;\n\tadd.f32 \t%f50, %f49, 0fCB40007F;\n\tneg.f32 \t%f51, %f50;\n\tfma.rn.f32 \t%f52, %f46, 0f3FB8AA3B, %f51;\n\tfma.rn.f32 \t%f53, %f46, 0f32A57060, %f52;\n\tmov.b32 \t%r4, %f49;\n\tshl.b32 \t%r5, %r4, 23;\n\tmov.b32 \t%f54, %r5;\n\tex2.approx.ftz.f32 \t%f55, %f53;\n\tmul.f32 \t%f56, %f55, %f54;\n\tsub.f32 \t%f57, %f3, %f32;\n\tfma.rn.f32 \t%f58, %f57, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f59, %f58;\n\tfma.rm.f32 \t%f60, %f59, %f37, %f36;\n\tadd.f32 \t%f61, %f60, 0fCB40007F;\n\tneg.f32 \t%f62, %f61;\n\tfma.rn.f32 \t%f63, %f57, 0f3FB8AA3B, %f62;\n\tfma.rn.f32 \t%f64, %f57, 0f32A57060, %f63;\n\tmov.b32 \t%r6, %f60;\n\tshl.b32 \t%r7, %r6, 23;\n\tmov.b32 \t%f65, %r7;\n\tex2.approx.ftz.f32 \t%f66, %f64;\n\tmul.f32 \t%f67, %f66, %f65;\n\tsub.f32 \t%f68, %f4, %f32;\n\tfma.rn.f32 \t%f69, %f68, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f70, %f69;\n\tfma.rm.f32 \t%f71, %f70, %f37, %f36;\n\tadd.f32 \t%f72, %f71, 0fCB40007F;\n\tneg.f32 \t%f73, %f72;\n\tfma.rn.f32 \t%f74, %f68, 0f3FB8AA3B, %f73;\n\tfma.rn.f32 \t%f75, %f68, 0f32A57060, %f74;\n\tmov.b32 \t%r8, %f71;\n\tshl.b32 \t%r9, %r8, 23;\n\tmov.b32 \t%f76, %r9;\n\tex2.approx.ftz.f32 \t%f77, %f75;\n\tmul.f32 \t%f78, %f77, %f76;\n\tsub.f32 \t%f79, %f5, %f32;\n\tfma.rn.f32 \t%f80, %f79, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f81, %f80;\n\tfma.rm.f32 \t%f82, %f81, %f37, %f36;\n\tadd.f32 \t%f83, %f82, 0fCB40007F;\n\tneg.f32 \t%f84, %f83;\n\tfma.rn.f32 \t%f85, %f79, 0f3FB8AA3B, %f84;\n\tfma.rn.f32 \t%f86, %f79, 0f32A57060, %f85;\n\tmov.b32 \t%r10, %f82;\n\tshl.b32 \t%r11, %r10, 23;\n\tmov.b32 \t%f87, %r11;\n\tex2.approx.ftz.f32 \t%f88, %f86;\n\tmul.f32 \t%f89, %f88, %f87;\n\tsub.f32 \t%f90, %f6, %f32;\n\tfma.rn.f32 \t%f91, %f90, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f92, %f91;\n\tfma.rm.f32 \t%f93, %f92, %f37, %f36;\n\tadd.f32 \t%f94, %f93, 0fCB40007F;\n\tneg.f32 \t%f95, %f94;\n\tfma.rn.f32 \t%f96, %f90, 0f3FB8AA3B, %f95;\n\tfma.rn.f32 \t%f97, %f90, 0f32A57060, %f96;\n\tmov.b32 \t%r12, %f93;\n\tshl.b32 \t%r13, %r12, 23;\n\tmov.b32 \t%f98, %r13;\n\tex2.approx.ftz.f32 \t%f99, %f97;\n\tmul.f32 \t%f100, %f99, %f98;\n\tsub.f32 \t%f101, %f7, %f32;\n\tfma.rn.f32 \t%f102, %f101, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f103, %f102;\n\tfma.rm.f32 \t%f104, %f103, %f37, %f36;\n\tadd.f32 \t%f105, %f104, 0fCB40007F;\n\tneg.f32 \t%f106, %f105;\n\tfma.rn.f32 \t%f107, %f101, 0f3FB8AA3B, %f106;\n\tfma.rn.f32 \t%f108, %f101, 0f32A57060, %f107;\n\tmov.b32 \t%r14, %f104;\n\tshl.b32 \t%r15, %r14, 23;\n\tmov.b32 \t%f109, %r15;\n\tex2.approx.ftz.f32 \t%f110, %f108;\n\tmul.f32 \t%f111, %f110, %f109;\n\tsub.f32 \t%f112, %f8, %f32;\n\tfma.rn.f32 \t%f113, %f112, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f114, %f113;\n\tfma.rm.f32 \t%f115, %f114, %f37, %f36;\n\tadd.f32 \t%f116, %f115, 0fCB40007F;\n\tneg.f32 \t%f117, %f116;\n\tfma.rn.f32 \t%f118, %f112, 0f3FB8AA3B, %f117;\n\tfma.rn.f32 \t%f119, %f112, 0f32A57060, %f118;\n\tmov.b32 \t%r16, %f115;\n\tshl.b32 \t%r17, %r16, 23;\n\tmov.b32 \t%f120, %r17;\n\tex2.approx.ftz.f32 \t%f121, %f119;\n\tmul.f32 \t%f122, %f121, %f120;\n\tsub.f32 \t%f123, %f9, %f32;\n\tfma.rn.f32 \t%f124, %f123, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f125, %f124;\n\tfma.rm.f32 \t%f126, %f125, %f37, %f36;\n\tadd.f32 \t%f127, %f126, 0fCB40007F;\n\tneg.f32 \t%f128, %f127;\n\tfma.rn.f32 \t%f129, %f123, 0f3FB8AA3B, %f128;\n\tfma.rn.f32 \t%f130, %f123, 0f32A57060, %f129;\n\tmov.b32 \t%r18, %f126;\n\tshl.b32 \t%r19, %r18, 23;\n\tmov.b32 \t%f131, %r19;\n\tex2.approx.ftz.f32 \t%f132, %f130;\n\tmul.f32 \t%f133, %f132, %f131;\n\tsub.f32 \t%f134, %f10, %f32;\n\tfma.rn.f32 \t%f135, %f134, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f136, %f135;\n\tfma.rm.f32 \t%f137, %f136, %f37, %f36;\n\tadd.f32 \t%f138, %f137, 0fCB40007F;\n\tneg.f32 \t%f139, %f138;\n\tfma.rn.f32 \t%f140, %f134, 0f3FB8AA3B, %f139;\n\tfma.rn.f32 \t%f141, %f134, 0f32A57060, %f140;\n\tmov.b32 \t%r20, %f137;\n\tshl.b32 \t%r21, %r20, 23;\n\tmov.b32 \t%f142, %r21;\n\tex2.approx.ftz.f32 \t%f143, %f141;\n\tmul.f32 \t%f144, %f143, %f142;\n\tsub.f32 \t%f145, %f11, %f32;\n\tfma.rn.f32 \t%f146, %f145, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f147, %f146;\n\tfma.rm.f32 \t%f148, %f147, %f37, %f36;\n\tadd.f32 \t%f149, %f148, 0fCB40007F;\n\tneg.f32 \t%f150, %f149;\n\tfma.rn.f32 \t%f151, %f145, 0f3FB8AA3B, %f150;\n\tfma.rn.f32 \t%f152, %f145, 0f32A57060, %f151;\n\tmov.b32 \t%r22, %f148;\n\tshl.b32 \t%r23, %r22, 23;\n\tmov.b32 \t%f153, %r23;\n\tex2.approx.ftz.f32 \t%f154, %f152;\n\tmul.f32 \t%f155, %f154, %f153;\n\tsub.f32 \t%f156, %f12, %f32;\n\tfma.rn.f32 \t%f157, %f156, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f158, %f157;\n\tfma.rm.f32 \t%f159, %f158, %f37, %f36;\n\tadd.f32 \t%f160, %f159, 0fCB40007F;\n\tneg.f32 \t%f161, %f160;\n\tfma.rn.f32 \t%f162, %f156, 0f3FB8AA3B, %f161;\n\tfma.rn.f32 \t%f163, %f156, 0f32A57060, %f162;\n\tmov.b32 \t%r24, %f159;\n\tshl.b32 \t%r25, %r24, 23;\n\tmov.b32 \t%f164, %r25;\n\tex2.approx.ftz.f32 \t%f165, %f163;\n\tmul.f32 \t%f166, %f165, %f164;\n\tsub.f32 \t%f167, %f13, %f32;\n\tfma.rn.f32 \t%f168, %f167, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f169, %f168;\n\tfma.rm.f32 \t%f170, %f169, %f37, %f36;\n\tadd.f32 \t%f171, %f170, 0fCB40007F;\n\tneg.f32 \t%f172, %f171;\n\tfma.rn.f32 \t%f173, %f167, 0f3FB8AA3B, %f172;\n\tfma.rn.f32 \t%f174, %f167, 0f32A57060, %f173;\n\tmov.b32 \t%r26, %f170;\n\tshl.b32 \t%r27, %r26, 23;\n\tmov.b32 \t%f175, %r27;\n\tex2.approx.ftz.f32 \t%f176, %f174;\n\tmul.f32 \t%f177, %f176, %f175;\n\tsub.f32 \t%f178, %f14, %f32;\n\tfma.rn.f32 \t%f179, %f178, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f180, %f179;\n\tfma.rm.f32 \t%f181, %f180, %f37, %f36;\n\tadd.f32 \t%f182, %f181, 0fCB40007F;\n\tneg.f32 \t%f183, %f182;\n\tfma.rn.f32 \t%f184, %f178, 0f3FB8AA3B, %f183;\n\tfma.rn.f32 \t%f185, %f178, 0f32A57060, %f184;\n\tmov.b32 \t%r28, %f181;\n\tshl.b32 \t%r29, %r28, 23;\n\tmov.b32 \t%f186, %r29;\n\tex2.approx.ftz.f32 \t%f187, %f185;\n\tmul.f32 \t%f188, %f187, %f186;\n\tsub.f32 \t%f189, %f15, %f32;\n\tfma.rn.f32 \t%f190, %f189, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f191, %f190;\n\tfma.rm.f32 \t%f192, %f191, %f37, %f36;\n\tadd.f32 \t%f193, %f192, 0fCB40007F;\n\tneg.f32 \t%f194, %f193;\n\tfma.rn.f32 \t%f195, %f189, 0f3FB8AA3B, %f194;\n\tfma.rn.f32 \t%f196, %f189, 0f32A57060, %f195;\n\tmov.b32 \t%r30, %f192;\n\tshl.b32 \t%r31, %r30, 23;\n\tmov.b32 \t%f197, %r31;\n\tex2.approx.ftz.f32 \t%f198, %f196;\n\tmul.f32 \t%f199, %f198, %f197;\n\tsub.f32 \t%f200, %f16, %f32;\n\tfma.rn.f32 \t%f201, %f200, 0f3BBB989D, 0f3F000000;\n\tcvt.sat.f32.f32 \t%f202, %f201;\n\tfma.rm.f32 \t%f203, %f202, %f37, %f36;\n\tadd.f32 \t%f204, %f203, 0fCB40007F;\n\tneg.f32 \t%f205, %f204;\n\tfma.rn.f32 \t%f206, %f200, 0f3FB8AA3B, %f205;\n\tfma.rn.f32 \t%f207, %f200, 0f32A57060, %f206;\n\tmov.b32 \t%r32, %f203;\n\tshl.b32 \t%r33, %r32, 23;\n\tmov.b32 \t%f208, %r33;\n\tex2.approx.ftz.f32 \t%f209, %f207;\n\tmul.f32 \t%f210, %f209, %f208;\n\t.loc\t1 34 5\n\tadd.f32 \t%f211, %f45, 0f00000000;\n\tadd.f32 \t%f212, %f211, %f56;\n\tadd.f32 \t%f213, %f212, %f67;\n\tadd.f32 \t%f214, %f213, %f78;\n\tadd.f32 \t%f215, %f214, %f89;\n\tadd.f32 \t%f216, %f215, %f100;\n\tadd.f32 \t%f217, %f216, %f111;\n\tadd.f32 \t%f218, %f217, %f122;\n\tadd.f32 \t%f219, %f218, %f133;\n\tadd.f32 \t%f220, %f219, %f144;\n\tadd.f32 \t%f221, %f220, %f155;\n\tadd.f32 \t%f222, %f221, %f166;\n\tadd.f32 \t%f223, %f222, %f177;\n\tadd.f32 \t%f224, %f223, %f188;\n\tadd.f32 \t%f225, %f224, %f199;\n\tadd.f32 \t%f226, %f225, %f210;\n\t.loc\t1 36 3\n\tadd.s64 \t%rd13, %rd5, %rd11;\n\tst.global.f32 \t[%rd13], %f226;\n\t.loc\t1 38 5\n\tdiv.rn.f32 \t%f227, %f45, %f226;\n\tdiv.rn.f32 \t%f228, %f56, %f226;\n\tdiv.rn.f32 \t%f229, %f67, %f226;\n\tdiv.rn.f32 \t%f230, %f78, %f226;\n\tdiv.rn.f32 \t%f231, %f89, %f226;\n\tdiv.rn.f32 \t%f232, %f100, %f226;\n\tdiv.rn.f32 \t%f233, %f111, %f226;\n\tdiv.rn.f32 \t%f234, %f122, %f226;\n\tdiv.rn.f32 \t%f235, %f133, %f226;\n\tdiv.rn.f32 \t%f236, %f144, %f226;\n\tdiv.rn.f32 \t%f237, %f155, %f226;\n\tdiv.rn.f32 \t%f238, %f166, %f226;\n\tdiv.rn.f32 \t%f239, %f177, %f226;\n\tdiv.rn.f32 \t%f240, %f188, %f226;\n\tdiv.rn.f32 \t%f241, %f199, %f226;\n\tdiv.rn.f32 \t%f242, %f210, %f226;\n\tcvta.to.global.u64 \t%rd14, %rd2;\n\t.loc\t1 41 5\n\tadd.s64 \t%rd15, %rd14, %rd9;\n\tst.global.f32 \t[%rd15], %f227;\n\tst.global.f32 \t[%rd15+4], %f228;\n\tst.global.f32 \t[%rd15+8], %f229;\n\tst.global.f32 \t[%rd15+12], %f230;\n\tst.global.f32 \t[%rd15+16], %f231;\n\tst.global.f32 \t[%rd15+20], %f232;\n\tst.global.f32 \t[%rd15+24], %f233;\n\tst.global.f32 \t[%rd15+28], %f234;\n\tst.global.f32 \t[%rd15+32], %f235;\n\tst.global.f32 \t[%rd15+36], %f236;\n\tst.global.f32 \t[%rd15+40], %f237;\n\tst.global.f32 \t[%rd15+44], %f238;\n\tst.global.f32 \t[%rd15+48], %f239;\n\tst.global.f32 \t[%rd15+52], %f240;\n\tst.global.f32 \t[%rd15+56], %f241;\n\tst.global.f32 \t[%rd15+60], %f242;\n\t.loc\t1 43 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/intentir-cuda-gate1-q2_8k313/kernel.cu\"\n\t.file\t2 \"/usr/local/cuda/bin/../targets/x86_64-linux/include/crt/math_functions.hpp\"\n\t.section\t.debug_str\n\t{\n$L__info_string0:\n.b8 95\n.b8 90\n.b8 78\n.b8 51\n.b8 57\n.b8 95\n.b8 73\n.b8 78\n.b8 84\n.b8 69\n.b8 82\n.b8 78\n.b8 65\n.b8 76\n.b8 95\n.b8 56\n.b8 49\n.b8 98\n.b8 102\n.b8 54\n.b8 100\n.b8 97\n.b8 50\n.b8 95\n.b8 57\n.b8 95\n.b8 107\n.b8 101\n.b8 114\n.b8 110\n.b8 101\n.b8 108\n.b8 95\n.b8 99\n.b8 117\n.b8 95\n.b8 49\n.b8 98\n.b8 54\n.b8 51\n.b8 101\n.b8 48\n.b8 56\n.b8 53\n.b8 51\n.b8 109\n.b8 97\n.b8 120\n.b8 69\n.b8 102\n.b8 102\n.b8 0\n\t}\n",
+    "target": {
+      "arch": "sm_120"
+    }
+  },
+  "source_fingerprint": {
+    "collectives": [],
+    "control_flow": [
+      "ret;"
+    ],
+    "coordinate_uses": [
+      "%ctaid.x"
+    ],
+    "digest": "165d04d2f576c69fe59984412e6878af0716ab9a7e042d63ceed6593a5f3c7ee",
+    "instructions": [
+      "ld.param.u64 %b640,[param0];",
+      "ld.param.u64 %b641,[param1];",
+      "ld.param.u64 %b642,[param2];",
+      "ld.param.u64 %b643,[param3];",
+      "cvta.to.global.u64 %b644,%b643;",
+      "cvta.to.global.u64 %b645,%b642;",
+      "mov.u32 %b320,%ctaid.x;",
+      "mul.wide.u32 %b646,%b320,16;",
+      "cvta.to.global.u64 %b647,%b640;",
+      "shl.b64 %b648,%b646,2;",
+      "add.s64 %b649,%b647,%b648;",
+      "ld.global.nc.f32 %f320,[%b649];",
+      "ld.global.nc.f32 %f321,[%b649+4];",
+      "ld.global.nc.f32 %f322,[%b649+8];",
+      "ld.global.nc.f32 %f323,[%b649+12];",
+      "ld.global.nc.f32 %f324,[%b649+16];",
+      "ld.global.nc.f32 %f325,[%b649+20];",
+      "ld.global.nc.f32 %f326,[%b649+24];",
+      "ld.global.nc.f32 %f327,[%b649+28];",
+      "ld.global.nc.f32 %f328,[%b649+32];",
+      "ld.global.nc.f32 %f329,[%b649+36];",
+      "ld.global.nc.f32 %f3210,[%b649+40];",
+      "ld.global.nc.f32 %f3211,[%b649+44];",
+      "ld.global.nc.f32 %f3212,[%b649+48];",
+      "ld.global.nc.f32 %f3213,[%b649+52];",
+      "ld.global.nc.f32 %f3214,[%b649+56];",
+      "ld.global.nc.f32 %f3215,[%b649+60];",
+      "max.f32 %f3216,%f320,0fFF800000;",
+      "max.f32 %f3217,%f3216,%f321;",
+      "max.f32 %f3218,%f3217,%f322;",
+      "max.f32 %f3219,%f3218,%f323;",
+      "max.f32 %f3220,%f3219,%f324;",
+      "max.f32 %f3221,%f3220,%f325;",
+      "max.f32 %f3222,%f3221,%f326;",
+      "max.f32 %f3223,%f3222,%f327;",
+      "max.f32 %f3224,%f3223,%f328;",
+      "max.f32 %f3225,%f3224,%f329;",
+      "max.f32 %f3226,%f3225,%f3210;",
+      "max.f32 %f3227,%f3226,%f3211;",
+      "max.f32 %f3228,%f3227,%f3212;",
+      "max.f32 %f3229,%f3228,%f3213;",
+      "max.f32 %f3230,%f3229,%f3214;",
+      "max.f32 %f3231,%f3230,%f3215;",
+      "mul.wide.u32 %b6410,%b320,4;",
+      "add.s64 %b6411,%b645,%b6410;",
+      "st.global.f32 [%b6411],%f3231;",
+      "sub.f32 %f3232,%f320,%f3231;",
+      "fma.rn.f32 %f3233,%f3232,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f3234,%f3233;",
+      "mov.f32 %f3235,0f4B400001;",
+      "mov.f32 %f3236,0f437C0000;",
+      "fma.rm.f32 %f3237,%f3234,%f3236,%f3235;",
+      "add.f32 %f3238,%f3237,0fCB40007F;",
+      "neg.f32 %f3239,%f3238;",
+      "fma.rn.f32 %f3240,%f3232,0f3FB8AA3B,%f3239;",
+      "fma.rn.f32 %f3241,%f3232,0f32A57060,%f3240;",
+      "mov.b32 %b321,%f3237;",
+      "shl.b32 %b322,%b321,23;",
+      "mov.b32 %f3242,%b322;",
+      "ex2.approx.ftz.f32 %f3243,%f3241;",
+      "mul.f32 %f3244,%f3243,%f3242;",
+      "sub.f32 %f3245,%f321,%f3231;",
+      "fma.rn.f32 %f3246,%f3245,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f3247,%f3246;",
+      "fma.rm.f32 %f3248,%f3247,%f3236,%f3235;",
+      "add.f32 %f3249,%f3248,0fCB40007F;",
+      "neg.f32 %f3250,%f3249;",
+      "fma.rn.f32 %f3251,%f3245,0f3FB8AA3B,%f3250;",
+      "fma.rn.f32 %f3252,%f3245,0f32A57060,%f3251;",
+      "mov.b32 %b323,%f3248;",
+      "shl.b32 %b324,%b323,23;",
+      "mov.b32 %f3253,%b324;",
+      "ex2.approx.ftz.f32 %f3254,%f3252;",
+      "mul.f32 %f3255,%f3254,%f3253;",
+      "sub.f32 %f3256,%f322,%f3231;",
+      "fma.rn.f32 %f3257,%f3256,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f3258,%f3257;",
+      "fma.rm.f32 %f3259,%f3258,%f3236,%f3235;",
+      "add.f32 %f3260,%f3259,0fCB40007F;",
+      "neg.f32 %f3261,%f3260;",
+      "fma.rn.f32 %f3262,%f3256,0f3FB8AA3B,%f3261;",
+      "fma.rn.f32 %f3263,%f3256,0f32A57060,%f3262;",
+      "mov.b32 %b325,%f3259;",
+      "shl.b32 %b326,%b325,23;",
+      "mov.b32 %f3264,%b326;",
+      "ex2.approx.ftz.f32 %f3265,%f3263;",
+      "mul.f32 %f3266,%f3265,%f3264;",
+      "sub.f32 %f3267,%f323,%f3231;",
+      "fma.rn.f32 %f3268,%f3267,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f3269,%f3268;",
+      "fma.rm.f32 %f3270,%f3269,%f3236,%f3235;",
+      "add.f32 %f3271,%f3270,0fCB40007F;",
+      "neg.f32 %f3272,%f3271;",
+      "fma.rn.f32 %f3273,%f3267,0f3FB8AA3B,%f3272;",
+      "fma.rn.f32 %f3274,%f3267,0f32A57060,%f3273;",
+      "mov.b32 %b327,%f3270;",
+      "shl.b32 %b328,%b327,23;",
+      "mov.b32 %f3275,%b328;",
+      "ex2.approx.ftz.f32 %f3276,%f3274;",
+      "mul.f32 %f3277,%f3276,%f3275;",
+      "sub.f32 %f3278,%f324,%f3231;",
+      "fma.rn.f32 %f3279,%f3278,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f3280,%f3279;",
+      "fma.rm.f32 %f3281,%f3280,%f3236,%f3235;",
+      "add.f32 %f3282,%f3281,0fCB40007F;",
+      "neg.f32 %f3283,%f3282;",
+      "fma.rn.f32 %f3284,%f3278,0f3FB8AA3B,%f3283;",
+      "fma.rn.f32 %f3285,%f3278,0f32A57060,%f3284;",
+      "mov.b32 %b329,%f3281;",
+      "shl.b32 %b3210,%b329,23;",
+      "mov.b32 %f3286,%b3210;",
+      "ex2.approx.ftz.f32 %f3287,%f3285;",
+      "mul.f32 %f3288,%f3287,%f3286;",
+      "sub.f32 %f3289,%f325,%f3231;",
+      "fma.rn.f32 %f3290,%f3289,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f3291,%f3290;",
+      "fma.rm.f32 %f3292,%f3291,%f3236,%f3235;",
+      "add.f32 %f3293,%f3292,0fCB40007F;",
+      "neg.f32 %f3294,%f3293;",
+      "fma.rn.f32 %f3295,%f3289,0f3FB8AA3B,%f3294;",
+      "fma.rn.f32 %f3296,%f3289,0f32A57060,%f3295;",
+      "mov.b32 %b3211,%f3292;",
+      "shl.b32 %b3212,%b3211,23;",
+      "mov.b32 %f3297,%b3212;",
+      "ex2.approx.ftz.f32 %f3298,%f3296;",
+      "mul.f32 %f3299,%f3298,%f3297;",
+      "sub.f32 %f32100,%f326,%f3231;",
+      "fma.rn.f32 %f32101,%f32100,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f32102,%f32101;",
+      "fma.rm.f32 %f32103,%f32102,%f3236,%f3235;",
+      "add.f32 %f32104,%f32103,0fCB40007F;",
+      "neg.f32 %f32105,%f32104;",
+      "fma.rn.f32 %f32106,%f32100,0f3FB8AA3B,%f32105;",
+      "fma.rn.f32 %f32107,%f32100,0f32A57060,%f32106;",
+      "mov.b32 %b3213,%f32103;",
+      "shl.b32 %b3214,%b3213,23;",
+      "mov.b32 %f32108,%b3214;",
+      "ex2.approx.ftz.f32 %f32109,%f32107;",
+      "mul.f32 %f32110,%f32109,%f32108;",
+      "sub.f32 %f32111,%f327,%f3231;",
+      "fma.rn.f32 %f32112,%f32111,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f32113,%f32112;",
+      "fma.rm.f32 %f32114,%f32113,%f3236,%f3235;",
+      "add.f32 %f32115,%f32114,0fCB40007F;",
+      "neg.f32 %f32116,%f32115;",
+      "fma.rn.f32 %f32117,%f32111,0f3FB8AA3B,%f32116;",
+      "fma.rn.f32 %f32118,%f32111,0f32A57060,%f32117;",
+      "mov.b32 %b3215,%f32114;",
+      "shl.b32 %b3216,%b3215,23;",
+      "mov.b32 %f32119,%b3216;",
+      "ex2.approx.ftz.f32 %f32120,%f32118;",
+      "mul.f32 %f32121,%f32120,%f32119;",
+      "sub.f32 %f32122,%f328,%f3231;",
+      "fma.rn.f32 %f32123,%f32122,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f32124,%f32123;",
+      "fma.rm.f32 %f32125,%f32124,%f3236,%f3235;",
+      "add.f32 %f32126,%f32125,0fCB40007F;",
+      "neg.f32 %f32127,%f32126;",
+      "fma.rn.f32 %f32128,%f32122,0f3FB8AA3B,%f32127;",
+      "fma.rn.f32 %f32129,%f32122,0f32A57060,%f32128;",
+      "mov.b32 %b3217,%f32125;",
+      "shl.b32 %b3218,%b3217,23;",
+      "mov.b32 %f32130,%b3218;",
+      "ex2.approx.ftz.f32 %f32131,%f32129;",
+      "mul.f32 %f32132,%f32131,%f32130;",
+      "sub.f32 %f32133,%f329,%f3231;",
+      "fma.rn.f32 %f32134,%f32133,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f32135,%f32134;",
+      "fma.rm.f32 %f32136,%f32135,%f3236,%f3235;",
+      "add.f32 %f32137,%f32136,0fCB40007F;",
+      "neg.f32 %f32138,%f32137;",
+      "fma.rn.f32 %f32139,%f32133,0f3FB8AA3B,%f32138;",
+      "fma.rn.f32 %f32140,%f32133,0f32A57060,%f32139;",
+      "mov.b32 %b3219,%f32136;",
+      "shl.b32 %b3220,%b3219,23;",
+      "mov.b32 %f32141,%b3220;",
+      "ex2.approx.ftz.f32 %f32142,%f32140;",
+      "mul.f32 %f32143,%f32142,%f32141;",
+      "sub.f32 %f32144,%f3210,%f3231;",
+      "fma.rn.f32 %f32145,%f32144,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f32146,%f32145;",
+      "fma.rm.f32 %f32147,%f32146,%f3236,%f3235;",
+      "add.f32 %f32148,%f32147,0fCB40007F;",
+      "neg.f32 %f32149,%f32148;",
+      "fma.rn.f32 %f32150,%f32144,0f3FB8AA3B,%f32149;",
+      "fma.rn.f32 %f32151,%f32144,0f32A57060,%f32150;",
+      "mov.b32 %b3221,%f32147;",
+      "shl.b32 %b3222,%b3221,23;",
+      "mov.b32 %f32152,%b3222;",
+      "ex2.approx.ftz.f32 %f32153,%f32151;",
+      "mul.f32 %f32154,%f32153,%f32152;",
+      "sub.f32 %f32155,%f3211,%f3231;",
+      "fma.rn.f32 %f32156,%f32155,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f32157,%f32156;",
+      "fma.rm.f32 %f32158,%f32157,%f3236,%f3235;",
+      "add.f32 %f32159,%f32158,0fCB40007F;",
+      "neg.f32 %f32160,%f32159;",
+      "fma.rn.f32 %f32161,%f32155,0f3FB8AA3B,%f32160;",
+      "fma.rn.f32 %f32162,%f32155,0f32A57060,%f32161;",
+      "mov.b32 %b3223,%f32158;",
+      "shl.b32 %b3224,%b3223,23;",
+      "mov.b32 %f32163,%b3224;",
+      "ex2.approx.ftz.f32 %f32164,%f32162;",
+      "mul.f32 %f32165,%f32164,%f32163;",
+      "sub.f32 %f32166,%f3212,%f3231;",
+      "fma.rn.f32 %f32167,%f32166,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f32168,%f32167;",
+      "fma.rm.f32 %f32169,%f32168,%f3236,%f3235;",
+      "add.f32 %f32170,%f32169,0fCB40007F;",
+      "neg.f32 %f32171,%f32170;",
+      "fma.rn.f32 %f32172,%f32166,0f3FB8AA3B,%f32171;",
+      "fma.rn.f32 %f32173,%f32166,0f32A57060,%f32172;",
+      "mov.b32 %b3225,%f32169;",
+      "shl.b32 %b3226,%b3225,23;",
+      "mov.b32 %f32174,%b3226;",
+      "ex2.approx.ftz.f32 %f32175,%f32173;",
+      "mul.f32 %f32176,%f32175,%f32174;",
+      "sub.f32 %f32177,%f3213,%f3231;",
+      "fma.rn.f32 %f32178,%f32177,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f32179,%f32178;",
+      "fma.rm.f32 %f32180,%f32179,%f3236,%f3235;",
+      "add.f32 %f32181,%f32180,0fCB40007F;",
+      "neg.f32 %f32182,%f32181;",
+      "fma.rn.f32 %f32183,%f32177,0f3FB8AA3B,%f32182;",
+      "fma.rn.f32 %f32184,%f32177,0f32A57060,%f32183;",
+      "mov.b32 %b3227,%f32180;",
+      "shl.b32 %b3228,%b3227,23;",
+      "mov.b32 %f32185,%b3228;",
+      "ex2.approx.ftz.f32 %f32186,%f32184;",
+      "mul.f32 %f32187,%f32186,%f32185;",
+      "sub.f32 %f32188,%f3214,%f3231;",
+      "fma.rn.f32 %f32189,%f32188,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f32190,%f32189;",
+      "fma.rm.f32 %f32191,%f32190,%f3236,%f3235;",
+      "add.f32 %f32192,%f32191,0fCB40007F;",
+      "neg.f32 %f32193,%f32192;",
+      "fma.rn.f32 %f32194,%f32188,0f3FB8AA3B,%f32193;",
+      "fma.rn.f32 %f32195,%f32188,0f32A57060,%f32194;",
+      "mov.b32 %b3229,%f32191;",
+      "shl.b32 %b3230,%b3229,23;",
+      "mov.b32 %f32196,%b3230;",
+      "ex2.approx.ftz.f32 %f32197,%f32195;",
+      "mul.f32 %f32198,%f32197,%f32196;",
+      "sub.f32 %f32199,%f3215,%f3231;",
+      "fma.rn.f32 %f32200,%f32199,0f3BBB989D,0f3F000000;",
+      "cvt.sat.f32.f32 %f32201,%f32200;",
+      "fma.rm.f32 %f32202,%f32201,%f3236,%f3235;",
+      "add.f32 %f32203,%f32202,0fCB40007F;",
+      "neg.f32 %f32204,%f32203;",
+      "fma.rn.f32 %f32205,%f32199,0f3FB8AA3B,%f32204;",
+      "fma.rn.f32 %f32206,%f32199,0f32A57060,%f32205;",
+      "mov.b32 %b3231,%f32202;",
+      "shl.b32 %b3232,%b3231,23;",
+      "mov.b32 %f32207,%b3232;",
+      "ex2.approx.ftz.f32 %f32208,%f32206;",
+      "mul.f32 %f32209,%f32208,%f32207;",
+      "add.f32 %f32210,%f3244,0f00000000;",
+      "add.f32 %f32211,%f32210,%f3255;",
+      "add.f32 %f32212,%f32211,%f3266;",
+      "add.f32 %f32213,%f32212,%f3277;",
+      "add.f32 %f32214,%f32213,%f3288;",
+      "add.f32 %f32215,%f32214,%f3299;",
+      "add.f32 %f32216,%f32215,%f32110;",
+      "add.f32 %f32217,%f32216,%f32121;",
+      "add.f32 %f32218,%f32217,%f32132;",
+      "add.f32 %f32219,%f32218,%f32143;",
+      "add.f32 %f32220,%f32219,%f32154;",
+      "add.f32 %f32221,%f32220,%f32165;",
+      "add.f32 %f32222,%f32221,%f32176;",
+      "add.f32 %f32223,%f32222,%f32187;",
+      "add.f32 %f32224,%f32223,%f32198;",
+      "add.f32 %f32225,%f32224,%f32209;",
+      "add.s64 %b6412,%b644,%b6410;",
+      "st.global.f32 [%b6412],%f32225;",
+      "div.rn.f32 %f32226,%f3244,%f32225;",
+      "div.rn.f32 %f32227,%f3255,%f32225;",
+      "div.rn.f32 %f32228,%f3266,%f32225;",
+      "div.rn.f32 %f32229,%f3277,%f32225;",
+      "div.rn.f32 %f32230,%f3288,%f32225;",
+      "div.rn.f32 %f32231,%f3299,%f32225;",
+      "div.rn.f32 %f32232,%f32110,%f32225;",
+      "div.rn.f32 %f32233,%f32121,%f32225;",
+      "div.rn.f32 %f32234,%f32132,%f32225;",
+      "div.rn.f32 %f32235,%f32143,%f32225;",
+      "div.rn.f32 %f32236,%f32154,%f32225;",
+      "div.rn.f32 %f32237,%f32165,%f32225;",
+      "div.rn.f32 %f32238,%f32176,%f32225;",
+      "div.rn.f32 %f32239,%f32187,%f32225;",
+      "div.rn.f32 %f32240,%f32198,%f32225;",
+      "div.rn.f32 %f32241,%f32209,%f32225;",
+      "cvta.to.global.u64 %b6413,%b641;",
+      "add.s64 %b6414,%b6413,%b648;",
+      "st.global.f32 [%b6414],%f32226;",
+      "st.global.f32 [%b6414+4],%f32227;",
+      "st.global.f32 [%b6414+8],%f32228;",
+      "st.global.f32 [%b6414+12],%f32229;",
+      "st.global.f32 [%b6414+16],%f32230;",
+      "st.global.f32 [%b6414+20],%f32231;",
+      "st.global.f32 [%b6414+24],%f32232;",
+      "st.global.f32 [%b6414+28],%f32233;",
+      "st.global.f32 [%b6414+32],%f32234;",
+      "st.global.f32 [%b6414+36],%f32235;",
+      "st.global.f32 [%b6414+40],%f32236;",
+      "st.global.f32 [%b6414+44],%f32237;",
+      "st.global.f32 [%b6414+48],%f32238;",
+      "st.global.f32 [%b6414+52],%f32239;",
+      "st.global.f32 [%b6414+56],%f32240;",
+      "st.global.f32 [%b6414+60],%f32241;",
+      "ret;"
+    ],
+    "interface": [
+      [
+        "parameters",
+        "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":1,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":2,\"rank\":1},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":3,\"rank\":1},{\"dtype\":\"i32\",\"kind\":\"scalar\",\"mode\":\"value\",\"position\":4,\"rank\":0}]",
+        null
+      ],
+      [
+        "ptx_abi",
+        "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+        null
+      ]
+    ],
+    "memory_effects": [
+      "ld.param.u64 %b640,[param0];",
+      "ld.param.u64 %b641,[param1];",
+      "ld.param.u64 %b642,[param2];",
+      "ld.param.u64 %b643,[param3];",
+      "ld.global.nc.f32 %f320,[%b649];",
+      "ld.global.nc.f32 %f321,[%b649+4];",
+      "ld.global.nc.f32 %f322,[%b649+8];",
+      "ld.global.nc.f32 %f323,[%b649+12];",
+      "ld.global.nc.f32 %f324,[%b649+16];",
+      "ld.global.nc.f32 %f325,[%b649+20];",
+      "ld.global.nc.f32 %f326,[%b649+24];",
+      "ld.global.nc.f32 %f327,[%b649+28];",
+      "ld.global.nc.f32 %f328,[%b649+32];",
+      "ld.global.nc.f32 %f329,[%b649+36];",
+      "ld.global.nc.f32 %f3210,[%b649+40];",
+      "ld.global.nc.f32 %f3211,[%b649+44];",
+      "ld.global.nc.f32 %f3212,[%b649+48];",
+      "ld.global.nc.f32 %f3213,[%b649+52];",
+      "ld.global.nc.f32 %f3214,[%b649+56];",
+      "ld.global.nc.f32 %f3215,[%b649+60];",
+      "st.global.f32 [%b6411],%f3231;",
+      "st.global.f32 [%b6412],%f32225;",
+      "st.global.f32 [%b6414],%f32226;",
+      "st.global.f32 [%b6414+4],%f32227;",
+      "st.global.f32 [%b6414+8],%f32228;",
+      "st.global.f32 [%b6414+12],%f32229;",
+      "st.global.f32 [%b6414+16],%f32230;",
+      "st.global.f32 [%b6414+20],%f32231;",
+      "st.global.f32 [%b6414+24],%f32232;",
+      "st.global.f32 [%b6414+28],%f32233;",
+      "st.global.f32 [%b6414+32],%f32234;",
+      "st.global.f32 [%b6414+36],%f32235;",
+      "st.global.f32 [%b6414+40],%f32236;",
+      "st.global.f32 [%b6414+44],%f32237;",
+      "st.global.f32 [%b6414+48],%f32238;",
+      "st.global.f32 [%b6414+52],%f32239;",
+      "st.global.f32 [%b6414+56],%f32240;",
+      "st.global.f32 [%b6414+60],%f32241;"
+    ],
+    "opcode_multiset": [
+      [
+        "add.f32",
+        32
+      ],
+      [
+        "add.s64",
+        4
+      ],
+      [
+        "cvt.sat.f32.f32",
+        16
+      ],
+      [
+        "cvta.to.global.u64",
+        4
+      ],
+      [
+        "div.rn.f32",
+        16
+      ],
+      [
+        "ex2.approx.ftz.f32",
+        16
+      ],
+      [
+        "fma.rm.f32",
+        16
+      ],
+      [
+        "fma.rn.f32",
+        48
+      ],
+      [
+        "ld.global.nc.f32",
+        16
+      ],
+      [
+        "ld.param.u64",
+        4
+      ],
+      [
+        "max.f32",
+        16
+      ],
+      [
+        "mov.b32",
+        32
+      ],
+      [
+        "mov.f32",
+        2
+      ],
+      [
+        "mov.u32",
+        1
+      ],
+      [
+        "mul.f32",
+        16
+      ],
+      [
+        "mul.wide.u32",
+        2
+      ],
+      [
+        "neg.f32",
+        16
+      ],
+      [
+        "ret;",
+        1
+      ],
+      [
+        "shl.b32",
+        16
+      ],
+      [
+        "shl.b64",
+        1
+      ],
+      [
+        "st.global.f32",
+        18
+      ],
+      [
+        "sub.f32",
+        16
+      ]
+    ],
+    "schedule_view": [
+      [
+        "c0",
+        "128"
+      ]
+    ],
+    "schema_version": "cuda-ptx-semantic-effects-v7",
+    "semantic_address_coordinate_folds": [],
+    "semantic_memory_effects": [
+      [
+        "ld.global.b32",
+        16
+      ],
+      [
+        "ld.param.b64",
+        4
+      ],
+      [
+        "st.global.b32",
+        18
+      ]
+    ],
+    "semantic_value_opcodes": [
+      [
+        "add.f32",
+        32
+      ],
+      [
+        "cvt.sat.f32.f32",
+        16
+      ],
+      [
+        "div.rn.f32",
+        16
+      ],
+      [
+        "ex2.approx.ftz.f32",
+        16
+      ],
+      [
+        "fma.rm.f32",
+        16
+      ],
+      [
+        "fma.rn.f32",
+        48
+      ],
+      [
+        "ld.global.b32",
+        16
+      ],
+      [
+        "max.f32",
+        16
+      ],
+      [
+        "mov.b32",
+        32
+      ],
+      [
+        "mov.f32",
+        2
+      ],
+      [
+        "mul.f32",
+        16
+      ],
+      [
+        "neg.f32",
+        16
+      ],
+      [
+        "shl.b32",
+        16
+      ],
+      [
+        "sub.f32",
+        16
+      ]
+    ],
+    "target_view": [
+      [
+        "arch",
+        "\"sm_120\""
+      ]
+    ]
+  },
+  "source_normalization": {
+    "active_rules": [],
+    "frontend": "cuda",
+    "hard_preservation_check": "passed",
+    "hard_relations": [
+      "program_axes"
+    ],
+    "idempotence_check": "passed",
+    "observer_profile": "cuda-ptx-semantic-effects-v7",
+    "peer_observation_visible": false,
+    "profile_ok": true,
+    "protocol": "intentir.gate1.jc-normalizer.v2",
+    "transformed_occurrences": 0,
+    "unary": true,
+    "unknown_atoms": "hard"
+  },
+  "status": "no_closure"
+}

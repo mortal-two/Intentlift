@@ -1,0 +1,33 @@
+{
+  "block": [
+    64,
+    1,
+    1
+  ],
+  "case_id": "tilelang:rms_norm_residual2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "5cb9b7cb8dad1efc968afaff9d6f8e6346c42207a3e227af6c8bd9737191abb4",
+  "dimensions": {
+    "M": 16
+  },
+  "factory_kwargs": {
+    "eps": 1e-05,
+    "n": 64,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "M",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 1655213634,
+  "source_sha256": "02bb4b97486cc457065139d4588ccc3ce86a2d0afa2d582b992d2f337395e74d"
+}

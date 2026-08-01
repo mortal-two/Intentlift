@@ -1,0 +1,35 @@
+extern "C" __global__ void scrc_k0(const float* p0,
+                                     float* p1,
+                                     float* p2,
+                                     float* p3,
+                                     int p4) {
+  const unsigned int row = blockIdx.x;
+  const unsigned int column = threadIdx.x % 16u;
+  const unsigned int index = row * 16u + column;
+
+  const float input = p0[index];
+
+  float maximum = -__builtin_inff();
+  maximum = fmaxf(maximum, input);
+  maximum = fmaxf(maximum,
+                  __shfl_xor_sync(0xffffffffu, maximum, 1));
+  maximum = fmaxf(maximum,
+                  __shfl_xor_sync(0xffffffffu, maximum, 2));
+  maximum = fmaxf(maximum,
+                  __shfl_xor_sync(0xffffffffu, maximum, 4));
+  maximum = fmaxf(maximum,
+                  __shfl_xor_sync(0xffffffffu, maximum, 8));
+  p2[row] = maximum;
+
+  const float exponential = expf(input - maximum);
+
+  float sum = 0.0f;
+  sum += exponential;
+  sum += __shfl_xor_sync(0xffffffffu, sum, 1);
+  sum += __shfl_xor_sync(0xffffffffu, sum, 2);
+  sum += __shfl_xor_sync(0xffffffffu, sum, 4);
+  sum += __shfl_xor_sync(0xffffffffu, sum, 8);
+  p3[row] = sum;
+
+  p1[index] = exponential / sum;
+}

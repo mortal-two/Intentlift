@@ -1,0 +1,23 @@
+{
+  "case": "cuda:tilelang_row_sum",
+  "cohort_memberships": [
+    "g2_reduction_statistics_normalization",
+    "g4_attention_masking"
+  ],
+  "frontend": "cuda",
+  "gate1": "replay_closed",
+  "gate1_elapsed_ms": 102544.74663734436,
+  "gate2": "gate2_pass",
+  "gate2_elapsed_ms": 3034.4316959381104,
+  "gate2_passed": true,
+  "gate2_status_counts": {
+    "gate2_pass": 1
+  },
+  "lift_agent_calls": 0,
+  "pi_visible_to_replay": false,
+  "protocol": "intentir.experiment.manual-batch-j-only.v3",
+  "replay_provider_calls": 1,
+  "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_row_sum/run-001",
+  "total_elapsed_ms": 106669.4667339325,
+  "typecheck": "pass"
+}

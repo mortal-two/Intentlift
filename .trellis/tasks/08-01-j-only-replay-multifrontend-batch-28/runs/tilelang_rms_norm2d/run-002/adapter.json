@@ -1,0 +1,33 @@
+{
+  "block": [
+    64,
+    1,
+    1
+  ],
+  "case_id": "tilelang:rms_norm2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "a3dc7e8d68f8d5edd1c035ad73b7d4b6756e0a71e56a8b94380c229588d540ab",
+  "dimensions": {
+    "M": 16
+  },
+  "factory_kwargs": {
+    "eps": 1e-05,
+    "n": 64,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "M",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 5175873,
+  "source_sha256": "0a1e787e48cccb57dda4e13df346c257c7a71e8795e904f5ee9b73b64b304997"
+}

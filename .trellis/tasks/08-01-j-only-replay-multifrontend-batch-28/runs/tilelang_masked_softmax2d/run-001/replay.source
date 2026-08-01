@@ -1,0 +1,32 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, 64), "float32"),
+    p1: T.Tensor((64,), "int8"),
+    p2: T.Tensor((X0, 64), "float32"),
+):
+    with T.Kernel(X0, threads=c0) as v12:
+        values = T.alloc_fragment((64,), "float32")
+        reduced_max = T.alloc_fragment((1,), "float32")
+        reduced_sum = T.alloc_fragment((1,), "float32")
+
+        one = T.float32(1.0)
+        penalty = T.float32(-1000000000.0)
+        T.copy(p0[v12, 0], values)
+        for v13 in T.Parallel(64):
+            mask_value = T.float32(p1[v13])
+            values[v13] = values[v13] * mask_value + penalty * (
+                one - mask_value
+            )
+
+        T.reduce_max(values, reduced_max, dim=0)
+        for v13 in T.Parallel(64):
+            values[v13] = T.exp(values[v13] - reduced_max[0])
+
+        T.reduce_sum(values, reduced_sum, dim=0)
+        for v13 in T.Parallel(64):
+            p2[v12, v13] = values[v13] / reduced_sum[0]

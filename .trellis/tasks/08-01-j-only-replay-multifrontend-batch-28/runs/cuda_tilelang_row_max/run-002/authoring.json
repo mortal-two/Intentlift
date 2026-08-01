@@ -1,0 +1,112 @@
+{
+  "cases": [
+    "tilelang:row_max",
+    "cuda:tilelang_row_max"
+  ],
+  "claim_scope": "Shared sections are measured structural equality, not an a-priori requirement. Each frontend artifact retains its exact ABI and is independently TypeChecked and Gate-certified.",
+  "frontend_deltas": {
+    "cuda": {
+      "c": {
+        "slots": [
+          {
+            "kind": "compiler",
+            "name": "c0",
+            "required": true,
+            "role": "launch_block_x",
+            "value_type": "i32"
+          }
+        ],
+        "values": {
+          "c0": 128
+        }
+      },
+      "signature": {
+        "parameters": [
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "logical_ref": "t0",
+            "mode": "input",
+            "name": "p0",
+            "rank": 2
+          },
+          {
+            "dtype": "f32",
+            "kind": "pointer",
+            "logical_ref": "t1",
+            "mode": "output",
+            "name": "p1",
+            "rank": 1
+          },
+          {
+            "dtype": "i32",
+            "kind": "scalar",
+            "logical_ref": "x0",
+            "mode": "value",
+            "name": "p2",
+            "rank": 0
+          }
+        ]
+      }
+    },
+    "tilelang": {
+      "c": {
+        "slots": [
+          {
+            "kind": "compiler",
+            "name": "c0",
+            "required": true,
+            "role": "launch_block_x",
+            "value_type": "i32"
+          }
+        ],
+        "values": {
+          "c0": 128
+        }
+      },
+      "signature": {
+        "parameters": [
+          {
+            "dtype": "f32",
+            "kind": "tensor",
+            "logical_ref": "t0",
+            "mode": "input",
+            "name": "p0",
+            "rank": 2
+          },
+          {
+            "dtype": "f32",
+            "kind": "tensor",
+            "logical_ref": "t1",
+            "mode": "output",
+            "name": "p1",
+            "rank": 1
+          }
+        ]
+      }
+    }
+  },
+  "lift_agent_calls": 0,
+  "pi": {
+    "program_axes": [
+      {
+        "axis": 0,
+        "domain_ref": "d0"
+      }
+    ],
+    "schema": "intentir.pi.normalization-witness.v1"
+  },
+  "protocol": "intentir.experiment.manual-paired-authoring.v2",
+  "shared_sections": [
+    "intent",
+    "node_ids",
+    "boundary",
+    "scopes",
+    "storage",
+    "dimension_constraints",
+    "value_dimension_relations",
+    "dimension_relations"
+  ],
+  "source_aware_author": "primary Codex agent",
+  "stem": "row_max"
+}

@@ -1,0 +1,24 @@
+extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
+    const int v7 = static_cast<int>(blockIdx.x);
+    const int v9 = static_cast<int>(blockIdx.y);
+    const int v8 = static_cast<int>(threadIdx.x);
+
+    const float loaded = p0[v7 * 64 + v8];
+    const float selected = static_cast<float>((v8 / 4) == v9);
+    float reduction_value = 0.0f;
+    reduction_value = reduction_value + loaded * selected;
+
+    __shared__ float reduction_values[64];
+    reduction_values[v8] = reduction_value;
+    __syncthreads();
+
+    for (int offset = 32; offset > 0; offset /= 2) {
+        if (v8 < offset) {
+            reduction_values[v8] =
+                reduction_values[v8] + reduction_values[v8 + offset];
+        }
+        __syncthreads();
+    }
+
+    p1[v7 * 16 + v9] = reduction_values[0];
+}

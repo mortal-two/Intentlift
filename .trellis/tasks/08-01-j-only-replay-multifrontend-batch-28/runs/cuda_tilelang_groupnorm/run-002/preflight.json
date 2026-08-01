@@ -1,0 +1,17 @@
+{
+  "case": "cuda:tilelang_groupnorm",
+  "cohort_memberships": [
+    "g2_reduction_statistics_normalization",
+    "g6_fusion_composition"
+  ],
+  "diagnostics": [],
+  "frontend": "cuda",
+  "lift_agent_calls": 0,
+  "packet_root": [
+    "c",
+    "j",
+    "u_f"
+  ],
+  "pi_visible_to_replay": false,
+  "typecheck": "pass"
+}

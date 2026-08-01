@@ -1,0 +1,64 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    float* p1,
+    float* p2,
+    const float* p3,
+    const float* p4,
+    float* p5,
+    int p6) {
+  const int batch = static_cast<int>(blockIdx.x);
+  const int group = static_cast<int>(blockIdx.y);
+  const int local_channel = static_cast<int>(threadIdx.x) % 16;
+  const int channel = group * 16 + local_channel;
+
+  float values[16];
+  float lane_sum = 0.0f;
+  float lane_square_sum = 0.0f;
+  for (int position = 0; position < 16; ++position) {
+    const int offset = (batch * 64 + channel) * 16 + position;
+    const float value = p4[offset];
+    values[position] = value;
+    lane_sum = lane_sum + value;
+    lane_square_sum = lane_square_sum + value * value;
+  }
+
+  float sum = 0.0f;
+  sum = sum + lane_sum;
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 8);
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 4);
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 2);
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 1);
+
+  float square_sum = 0.0f;
+  square_sum = square_sum + lane_square_sum;
+  square_sum = square_sum +
+               __shfl_xor_sync(0xffffffffu, square_sum, 8);
+  square_sum = square_sum +
+               __shfl_xor_sync(0xffffffffu, square_sum, 4);
+  square_sum = square_sum +
+               __shfl_xor_sync(0xffffffffu, square_sum, 2);
+  square_sum = square_sum +
+               __shfl_xor_sync(0xffffffffu, square_sum, 1);
+
+  const float mean = sum * 0.00390625f;
+  const float mean_square = square_sum * 0.00390625f;
+  const float variance = mean_square - mean * mean;
+  const float inverse_scale = rsqrtf(variance + 1.0e-5f);
+
+  if (local_channel == 0) {
+    const int statistic_offset = batch * 4 + group;
+    p1[statistic_offset] = mean;
+    p2[statistic_offset] = inverse_scale;
+  }
+
+  const float scale = p3[channel];
+  const float bias = p0[channel];
+  for (int position = 0; position < 16; ++position) {
+    const float centered = values[position] - mean;
+    const float normalized = centered * inverse_scale;
+    const float scaled = normalized * scale;
+    const float shifted = scaled + bias;
+    const int offset = (batch * 64 + channel) * 16 + position;
+    p5[offset] = shifted;
+  }
+}

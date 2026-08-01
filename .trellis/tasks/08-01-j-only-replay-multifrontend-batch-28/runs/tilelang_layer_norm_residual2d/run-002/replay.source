@@ -1,0 +1,43 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, 64), "float32"),
+    p1: T.Tensor((X0, 64), "float32"),
+    p2: T.Tensor((64,), "float32"),
+    p3: T.Tensor((64,), "float32"),
+    p4: T.Tensor((X0, 64), "float32"),
+    p5: T.Tensor((X0,), "float32"),
+    p6: T.Tensor((X0,), "float32"),
+):
+    with T.Kernel(X0, threads=c0) as v14:
+        row = T.alloc_fragment((64,), "float32")
+        scratch = T.alloc_fragment((64,), "float32")
+        reduced = T.alloc_fragment((1,), "float32")
+
+        T.copy(p0[v14, 0], row)
+        T.copy(p1[v14, 0], scratch)
+        for v15 in T.Parallel(64):
+            row[v15] = row[v15] + scratch[v15]
+
+        T.reduce_sum(row, reduced, dim=0)
+        reduced[0] = reduced[0] * T.float32(0.015625)
+        p5[v14] = reduced[0]
+
+        for v15 in T.Parallel(64):
+            row[v15] = row[v15] - reduced[0]
+            scratch[v15] = row[v15] * row[v15]
+
+        T.reduce_sum(scratch, reduced, dim=0)
+        reduced[0] = T.rsqrt(
+            reduced[0] * T.float32(0.015625) + T.float32(0.00001)
+        )
+        p6[v14] = reduced[0]
+
+        for v15 in T.Parallel(64):
+            p4[v14, v15] = (
+                row[v15] * reduced[0] * p2[v15] + p3[v15]
+            )

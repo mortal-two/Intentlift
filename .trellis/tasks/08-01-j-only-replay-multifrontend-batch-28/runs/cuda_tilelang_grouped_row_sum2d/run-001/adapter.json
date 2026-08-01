@@ -1,0 +1,31 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "cuda:tilelang_grouped_row_sum2d",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "1c81fefa6d01515d80b50c7544f13f67fabb3dc11373eaad4864443d0bf8e1bf",
+  "dimensions": {
+    "M": 16
+  },
+  "factory_kwargs": {},
+  "frontend": "cuda",
+  "grid": [
+    16,
+    16,
+    1
+  ],
+  "grid_contract": [
+    "16",
+    "M",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {
+    "M": 16
+  },
+  "seed": 1438095278,
+  "source_sha256": "27e1a550caf3e3f8de38dd932e8fb1839d139dd828e01daab9f6b0c27b18efa2"
+}

@@ -1,0 +1,59 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, 64, 16), "float32"),
+    p1: T.Tensor((X0, 64, 16), "float32"),
+    p2: T.Tensor((64,), "float32"),
+    p3: T.Tensor((64,), "float32"),
+    p4: T.Tensor((X0, 4), "float32"),
+    p5: T.Tensor((X0, 4), "float32"),
+):
+    with T.Kernel(X0, threads=c0) as v23:
+        values = T.alloc_fragment((64, 16), "float32")
+        grouped_values = T.alloc_fragment((4, 256), "float32")
+        grouped_squares = T.alloc_fragment((4, 256), "float32")
+        sums = T.alloc_fragment((4,), "float32")
+        square_sums = T.alloc_fragment((4,), "float32")
+        means = T.alloc_fragment((4,), "float32")
+        inverse_stddevs = T.alloc_fragment((4,), "float32")
+        means_shared = T.alloc_shared((4,), "float32")
+        inverse_stddevs_shared = T.alloc_shared((4,), "float32")
+
+        T.copy(p0[v23, 0:64, 0:16], values)
+        for v26, v27 in T.Parallel(4, 256):
+            grouped_values[v26, v27] = values[v26 * 16 + v27 // 16, v27 % 16]
+            grouped_squares[v26, v27] = (
+                grouped_values[v26, v27] * grouped_values[v26, v27]
+            )
+
+        T.reduce_sum(grouped_values, sums, dim=1)
+        T.reduce_sum(grouped_squares, square_sums, dim=1)
+
+        for v26 in T.Parallel(4):
+            means[v26] = sums[v26] * 0.00390625
+            inverse_stddevs[v26] = T.rsqrt(
+                square_sums[v26] * 0.00390625
+                - means[v26] * means[v26]
+                + 0.00001
+            )
+
+        T.copy(means, means_shared)
+        T.copy(inverse_stddevs, inverse_stddevs_shared)
+        T.copy(means, p4[v23, 0:4])
+        T.copy(inverse_stddevs, p5[v23, 0:4])
+        T.sync_threads()
+
+        for v24 in T.Parallel(64):
+            scale = T.float32(p2[v24])
+            bias = T.float32(p3[v24])
+            for v25 in T.serial(16):
+                p1[v23, v24, v25] = (
+                    (values[v24, v25] - means_shared[v24 // 16])
+                    * inverse_stddevs_shared[v24 // 16]
+                    * scale
+                    + bias
+                )

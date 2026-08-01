@@ -1,0 +1,34 @@
+extern "C" __global__ void scrc_k0(const float* p0,
+                                     float* p1,
+                                     float* p2,
+                                     const float* p3,
+                                     int p4) {
+  int v9 = static_cast<int>(blockIdx.x);
+  int v10 = static_cast<int>(threadIdx.x);
+  int offset = v9 * 64 + v10;
+
+  float input = p0[offset];
+  float square = input * input;
+  float reduction_value = 0.0f;
+  reduction_value += square;
+
+  __shared__ float reduction[64];
+  reduction[v10] = reduction_value;
+  __syncthreads();
+
+  for (int stride = 32; stride != 0; stride >>= 1) {
+    if (v10 < stride) {
+      reduction[v10] = reduction[v10] + reduction[v10 + stride];
+    }
+    __syncthreads();
+  }
+
+  float scaled = reduction[0] * 0.015625f;
+  float shifted = scaled + 1.0e-5f;
+  float inverse_root = rsqrtf(shifted);
+  p2[v9] = inverse_root;
+
+  float normalized = input * inverse_root;
+  float weight = p3[v10];
+  p1[offset] = normalized * weight;
+}

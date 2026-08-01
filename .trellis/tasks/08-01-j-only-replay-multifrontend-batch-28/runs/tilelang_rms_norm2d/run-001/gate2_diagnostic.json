@@ -1,0 +1,463 @@
+{
+  "c0": {
+    "c0": 64
+  },
+  "cases": [
+    {
+      "case_id": "finite-hidden-1",
+      "input_digest": "75826748e5906123b11446aaec086a2b4bfb243a3d47e86764caecb514537a0a",
+      "metadata": {
+        "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+        "comparison_policy": {
+          "policy_id": "intentir.gate2.default.v1",
+          "protocol": "intentir.scrc.gate2-q.v1",
+          "tolerances": {
+            "bf16": {
+              "atol": 0.002,
+              "equal_nan": false,
+              "rtol": 0.02
+            },
+            "f16": {
+              "atol": 0.001,
+              "equal_nan": false,
+              "rtol": 0.01
+            },
+            "f32": {
+              "atol": 1e-06,
+              "equal_nan": false,
+              "rtol": 1e-05
+            },
+            "f64": {
+              "atol": 1e-12,
+              "equal_nan": false,
+              "rtol": 1e-12
+            }
+          }
+        },
+        "frontend": "tilelang",
+        "protocol": "source_replay_j_three_edges_q_v5",
+        "test_mode": "diagnostic_after_gate1_reject_not_certificate"
+      },
+      "reference": {
+        "error": "",
+        "leg": "j",
+        "metadata": {
+          "access_relation_count": 4,
+          "boundary_digest": "d9770b9efcbe3326faafca4519f1817e9d73e95d602fc3ef7a4d3a55850c7c48",
+          "boundary_profile": "dense_functional_v1",
+          "boundary_projection": {
+            "access_axes": [
+              [
+                "a0",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ],
+              [
+                "a1",
+                [
+                  "k1"
+                ]
+              ],
+              [
+                "a2",
+                [
+                  "k0"
+                ]
+              ],
+              [
+                "a3",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ]
+            ],
+            "access_coordinates": [
+              [
+                "a0",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ],
+              [
+                "a1",
+                [
+                  "k1"
+                ]
+              ],
+              [
+                "a2",
+                [
+                  "k0"
+                ]
+              ],
+              [
+                "a3",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ]
+            ],
+            "access_guard_relations": [],
+            "boundary_digest": "d9770b9efcbe3326faafca4519f1817e9d73e95d602fc3ef7a4d3a55850c7c48",
+            "broadcast_axes": [
+              [
+                "t2",
+                [
+                  [
+                    "t1",
+                    [
+                      0
+                    ]
+                  ]
+                ]
+              ],
+              [
+                "vmean_eps",
+                [
+                  [
+                    "veps",
+                    [
+                      0
+                    ]
+                  ]
+                ]
+              ],
+              [
+                "vmean_sq",
+                [
+                  [
+                    "vinv",
+                    [
+                      0
+                    ]
+                  ]
+                ]
+              ],
+              [
+                "vnorm",
+                [
+                  [
+                    "t3",
+                    [
+                      1
+                    ]
+                  ]
+                ]
+              ]
+            ],
+            "concat_store_partitions": [],
+            "conditional_effect_stores": [],
+            "constant_gathers": [],
+            "consumed": [
+              "access:a0",
+              "access:a1",
+              "access:a2",
+              "access:a3",
+              "broadcast:n3:vinv",
+              "broadcast:n5:veps",
+              "broadcast:n7:t3",
+              "broadcast:n8:t1",
+              "domain:d0",
+              "domain:d1",
+              "effect:e0",
+              "effect:e1",
+              "effect:e2",
+              "effect:e3",
+              "reduction:n1",
+              "result_relation:t2",
+              "result_relation:t3"
+            ],
+            "consumer_extensions": [],
+            "context_domains": [],
+            "dimension_relations": [],
+            "direct_store_partitions": [],
+            "domains": [
+              [
+                "k0",
+                16
+              ],
+              [
+                "k1",
+                64
+              ]
+            ],
+            "erased_fill_count": 0,
+            "index_bounded_gathers": [],
+            "mixed_radix_accesses": [],
+            "predicated_access_count": 0,
+            "predicates": [
+              [
+                "a0",
+                null
+              ],
+              [
+                "a1",
+                null
+              ],
+              [
+                "a2",
+                null
+              ],
+              [
+                "a3",
+                null
+              ]
+            ],
+            "profile": "dense_functional_v1",
+            "protocol": "intentir.j-functional-boundary.v22",
+            "proven_index_bounds": [],
+            "runtime_predicate_proofs": [],
+            "value_dimension_relations": []
+          },
+          "broadcast_consumer_count": 4,
+          "domain_relation_count": 2,
+          "effect_relation_count": 4,
+          "erased_fill_count": 0,
+          "execution_evidence": {
+            "abi_protocol": "intentir_cpu_ranked_memref_abi_v1",
+            "compiler_protocol": "intentir_cpu_mlir_shared_object_v2",
+            "compute_symbol": "intentir_cpu_compute_v1",
+            "entry_symbol": "_mlir_ciface_intentir_cpu_entry_v1",
+            "input_count": 2,
+            "isolated_process": true,
+            "lowering_pipeline": [
+              "-one-shot-bufferize=bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map",
+              "-buffer-deallocation-pipeline",
+              "-convert-bufferization-to-memref",
+              "-convert-linalg-to-loops",
+              "-convert-math-to-libm",
+              "-convert-scf-to-cf",
+              "-convert-cf-to-llvm",
+              "-expand-strided-metadata",
+              "-finalize-memref-to-llvm",
+              "-convert-func-to-llvm",
+              "-convert-arith-to-llvm",
+              "-reconcile-unrealized-casts"
+            ],
+            "module_depends_on_runtime_values": false,
+            "native_call_count": 1,
+            "output_count": 2,
+            "runtime_protocol": "intentir_cpu_isolated_runtime_v1",
+            "schema": "intentir_cpu_execution_record_v2",
+            "toolchain": {
+              "clang": "/usr/lib/llvm-20/bin/clang",
+              "intent_opt": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/build/tools/intent-opt/intent-opt",
+              "mlir_c_runner_utils": "/usr/lib/llvm-20/lib/libmlir_c_runner_utils.so.20.1",
+              "mlir_opt": "/usr/lib/llvm-20/bin/mlir-opt",
+              "mlir_translate": "/usr/lib/llvm-20/bin/mlir-translate"
+            }
+          },
+          "function": "scrc_j0",
+          "index_bounds_count": 0,
+          "j_digest": "f1d072a6fc57f941e4202adb3ebab0577211785b1c9bcc6d96743c118958a657",
+          "path": "canonical J -> intent MLIR -> scalar CPU",
+          "predicated_access_count": 0,
+          "protocol": "j_scalar_cpu_mlir_v25",
+          "result_relation_count": 2,
+          "runtime_predicate_proof_count": 0,
+          "scalar_spec_digest": "ed0c420ce439b0fbac0fb6d51056879c9428a392ad3f1207d768957c5c1e2773"
+        },
+        "ok": true,
+        "outputs": {
+          "output_p2": {
+            "dtype": "float32",
+            "shape": [
+              16,
+              64
+            ]
+          },
+          "output_p3": {
+            "dtype": "float32",
+            "shape": [
+              16
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay": {
+        "error": "",
+        "leg": "replay",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+          "block": [
+            64,
+            1,
+            1
+          ],
+          "dataset_case_id": "tilelang:rms_norm2d",
+          "frontend": "tilelang",
+          "grid": [
+            16,
+            1,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p2": {
+            "dtype": "float32",
+            "shape": [
+              16,
+              64
+            ]
+          },
+          "output_p3": {
+            "dtype": "float32",
+            "shape": [
+              16
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay_j": {
+        "left": "replay",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 1.7881393432617188e-07,
+            "output": "output_p2",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          },
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 9.5367431640625e-07,
+            "output": "output_p3",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "source": {
+        "error": "",
+        "leg": "source",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+          "block": [
+            64,
+            1,
+            1
+          ],
+          "dataset_case_id": "tilelang:rms_norm2d",
+          "frontend": "tilelang",
+          "grid": [
+            16,
+            1,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p2": {
+            "dtype": "float32",
+            "shape": [
+              16,
+              64
+            ]
+          },
+          "output_p3": {
+            "dtype": "float32",
+            "shape": [
+              16
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "source_j": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 1.1920928955078125e-07,
+            "output": "output_p2",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          },
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 4.76837158203125e-07,
+            "output": "output_p3",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "source_replay": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 1.1920928955078125e-07,
+            "output": "output_p2",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          },
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 4.76837158203125e-07,
+            "output": "output_p3",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "replay"
+      },
+      "status": "gate2_pass"
+    }
+  ],
+  "diagnostic_only": true,
+  "failed_case_ids": [],
+  "formal_acceptance": false,
+  "passed": true,
+  "reason": "Gate1 rejected this exact Replay",
+  "status_counts": {
+    "gate2_pass": 1
+  },
+  "suite_id": "tilelang:rms_norm2d"
+}

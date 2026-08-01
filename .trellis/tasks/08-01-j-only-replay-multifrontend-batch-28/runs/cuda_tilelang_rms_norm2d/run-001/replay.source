@@ -1,0 +1,32 @@
+extern "C" __global__ void scrc_k0(const float* p0,
+                                    float* p1,
+                                    float* p2,
+                                    const float* p3,
+                                    int p4) {
+  __shared__ float reduction_values[64];
+
+  const unsigned int row = blockIdx.x;
+  const unsigned int column = threadIdx.x;
+  const unsigned int index = row * 64u + column;
+
+  const float input_value = p0[index];
+  float reduction_value = 0.0f;
+  reduction_value = reduction_value + input_value * input_value;
+  reduction_values[column] = reduction_value;
+  __syncthreads();
+
+  for (unsigned int offset = 32u; offset != 0u; offset >>= 1u) {
+    if (column < offset) {
+      reduction_values[column] =
+          reduction_values[column] + reduction_values[column + offset];
+    }
+    __syncthreads();
+  }
+
+  const float inverse_rms =
+      rsqrtf(reduction_values[0] * 0.015625f + 0.00001f);
+  p2[row] = inverse_rms;
+
+  const float scaled_input = input_value * inverse_rms;
+  p1[index] = scaled_input * p3[column];
+}

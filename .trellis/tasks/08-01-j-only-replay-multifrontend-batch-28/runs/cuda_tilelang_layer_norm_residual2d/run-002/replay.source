@@ -1,0 +1,51 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    const float* p1,
+    float* p2,
+    float* p3,
+    const float* p4,
+    float* p5,
+    const float* p6,
+    int p7) {
+  __shared__ float reduction[64];
+
+  const int v14 = static_cast<int>(blockIdx.x);
+  const int v15 = static_cast<int>(threadIdx.x);
+  const int element = v14 * 64 + v15;
+
+  const float v0 = p1[element] + p4[element];
+  reduction[v15] = __fadd_rn(0.0f, v0);
+  __syncthreads();
+
+  for (int offset = 32; offset != 0; offset >>= 1) {
+    if (v15 < offset) {
+      reduction[v15] = reduction[v15] + reduction[v15 + offset];
+    }
+    __syncthreads();
+  }
+
+  const float t5 = reduction[0] * 0.015625f;
+  p2[v14] = t5;
+  const float v4 = v0 - t5;
+  const float v5 = v4 * v4;
+
+  __syncthreads();
+  reduction[v15] = __fadd_rn(0.0f, v5);
+  __syncthreads();
+
+  for (int offset = 32; offset != 0; offset >>= 1) {
+    if (v15 < offset) {
+      reduction[v15] = reduction[v15] + reduction[v15 + offset];
+    }
+    __syncthreads();
+  }
+
+  const float v7 = reduction[0] * 0.015625f;
+  const float v9 = v7 + 1.0e-5f;
+  const float t6 = rsqrtf(v9);
+  p5[v14] = t6;
+
+  const float v11 = v4 * t6;
+  const float v12 = v11 * p6[v15];
+  p3[element] = v12 + p0[v15];
+}

@@ -1,0 +1,33 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, 64), "float32"),
+    p1: T.Tensor((64,), "float32"),
+    p2: T.Tensor((X0, 64), "float32"),
+    p3: T.Tensor((X0,), "float32"),
+):
+    with T.Kernel(X0, threads=c0) as v9:
+        row = T.alloc_fragment((64,), "float32")
+        squared = T.alloc_fragment((64,), "float32")
+        reduced = T.alloc_fragment((1,), "float32")
+
+        T.copy(p0[v9, :], row)
+        for v10 in T.Parallel(64):
+            squared[v10] = row[v10] * row[v10]
+
+        T.reduce_sum(squared, reduced, dim=0)
+        inv_rms = T.float32(
+            T.rsqrt(
+                reduced[0] * T.float32(0.015625)
+                + T.float32(0.00001)
+            )
+        )
+        p3[v9] = inv_rms
+
+        for v10 in T.Parallel(64):
+            row_scale = T.float32(p1[v10])
+            p2[v9, v10] = row[v10] * inv_rms * row_scale

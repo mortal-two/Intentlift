@@ -1,0 +1,47 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, 64), T.float32),
+    p1: T.Tensor((X0, 64), T.float32),
+    p2: T.Tensor((64,), T.float32),
+    p3: T.Tensor((64,), T.float32),
+    p4: T.Tensor((X0, 64), T.float32),
+    p5: T.Tensor((X0,), T.float32),
+    p6: T.Tensor((X0,), T.float32),
+):
+    with T.Kernel(X0, threads=c0) as (v14,):
+        t0_fragment = T.alloc_fragment((64,), T.float32)
+        t1_fragment = T.alloc_fragment((64,), T.float32)
+        v0_fragment = T.alloc_fragment((64,), T.float32)
+        v1_fragment = T.alloc_fragment((1,), T.float32)
+        v4_fragment = T.alloc_fragment((64,), T.float32)
+        v5_fragment = T.alloc_fragment((64,), T.float32)
+        v6_fragment = T.alloc_fragment((1,), T.float32)
+
+        T.copy(p0[v14, 0], t0_fragment)
+        T.copy(p1[v14, 0], t1_fragment)
+        for v15 in T.Parallel(64):
+            v0_fragment[v15] = t0_fragment[v15] + t1_fragment[v15]
+
+        T.reduce_sum(v0_fragment, v1_fragment, dim=0)
+        t5_scalar = T.float32(v1_fragment[0] * T.float32(0.015625))
+        p5[v14] = t5_scalar
+
+        for v15 in T.Parallel(64):
+            v4_fragment[v15] = v0_fragment[v15] - t5_scalar
+            v5_fragment[v15] = v4_fragment[v15] * v4_fragment[v15]
+
+        T.reduce_sum(v5_fragment, v6_fragment, dim=0)
+        t6_scalar = T.float32(
+            T.rsqrt(v6_fragment[0] * T.float32(0.015625) + T.float32(1e-05))
+        )
+        p6[v14] = t6_scalar
+
+        for v15 in T.Parallel(64):
+            p4[v14, v15] = (
+                v4_fragment[v15] * t6_scalar * p2[v15] + p3[v15]
+            )

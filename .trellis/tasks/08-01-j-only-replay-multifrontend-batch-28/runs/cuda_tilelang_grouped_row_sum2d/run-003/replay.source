@@ -1,0 +1,51 @@
+extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
+    const int m = static_cast<int>(blockIdx.x);
+    const int g = static_cast<int>(blockIdx.y);
+    const int c = static_cast<int>(threadIdx.x);
+
+    __shared__ float reduction_values[64];
+
+    if (c < 64) {
+        float value = 0.0f;
+        const float input_value = p0[m * 64 + c];
+        const int group = c / 4;
+        const float coefficient = (group == g) ? 1.0f : 0.0f;
+        value = value + input_value * coefficient;
+        reduction_values[c] = value;
+    }
+    __syncthreads();
+
+    if (c < 32) {
+        reduction_values[c] = reduction_values[c] + reduction_values[c + 32];
+    }
+    __syncthreads();
+
+    if (c < 16) {
+        reduction_values[c] = reduction_values[c] + reduction_values[c + 16];
+    }
+    __syncthreads();
+
+    if (c < 8) {
+        reduction_values[c] = reduction_values[c] + reduction_values[c + 8];
+    }
+    __syncthreads();
+
+    if (c < 4) {
+        reduction_values[c] = reduction_values[c] + reduction_values[c + 4];
+    }
+    __syncthreads();
+
+    if (c < 2) {
+        reduction_values[c] = reduction_values[c] + reduction_values[c + 2];
+    }
+    __syncthreads();
+
+    if (c < 1) {
+        reduction_values[c] = reduction_values[c] + reduction_values[c + 1];
+    }
+    __syncthreads();
+
+    if (c == 0) {
+        p1[m * 16 + g] = reduction_values[0];
+    }
+}

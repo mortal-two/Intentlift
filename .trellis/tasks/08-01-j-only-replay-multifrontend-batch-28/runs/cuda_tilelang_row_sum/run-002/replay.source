@@ -1,0 +1,13 @@
+extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
+    unsigned int v1 = blockIdx.x;
+    unsigned int v2 = threadIdx.x % 16u;
+
+    float value = 0.0f;
+    value += p0[v1 * 16u + v2];
+    value += __shfl_xor_sync(0xffffffffu, value, 8);
+    value += __shfl_xor_sync(0xffffffffu, value, 4);
+    value += __shfl_xor_sync(0xffffffffu, value, 2);
+    value += __shfl_xor_sync(0xffffffffu, value, 1);
+
+    p1[v1] = value;
+}

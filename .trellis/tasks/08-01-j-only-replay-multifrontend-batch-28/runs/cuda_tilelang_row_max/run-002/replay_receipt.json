@@ -1,0 +1,30 @@
+{
+  "backend_protocol": "openai.codex-cli.intentir-replay.v76",
+  "cli_turns": 1,
+  "context_rollover_input_tokens": 0,
+  "episode_wall_time_limit_seconds": 7200.0,
+  "excluded_dependencies": [
+    "pi",
+    "Source",
+    "Harness valuation",
+    "Gate observation",
+    "prior Replay"
+  ],
+  "formal_compile_recheck": true,
+  "formal_ingress_protocol": "intentir.scrc.replay-check.v17",
+  "fresh_session": true,
+  "model_segments_lower_bound": 1,
+  "pi_visible_to_replay": false,
+  "replay_input_protocol": "intentir.scrc.replay-input.v4",
+  "retrieval_trace": [],
+  "thread_id": "019fbcb9-7d5d-75c0-92db-eb9068614f43",
+  "thread_ids": [
+    "019fbcb9-7d5d-75c0-92db-eb9068614f43"
+  ],
+  "tool_actions": 0,
+  "visible_packet_components": [
+    "c",
+    "j",
+    "u_f"
+  ]
+}

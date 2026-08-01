@@ -1,0 +1,66 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    float* p1,
+    float* p2,
+    const float* p3,
+    const float* p4,
+    float* p5,
+    int p6) {
+  const int n = static_cast<int>(blockIdx.x);
+  const int c = static_cast<int>(threadIdx.x);
+  const bool active = c < 64;
+
+  float values[16];
+  float lane_sum = 0.0f;
+  float lane_square_sum = 0.0f;
+
+  if (active) {
+    const int input_base = (n * 64 + c) * 16;
+    for (int h = 0; h < 16; ++h) {
+      const float value = p4[input_base + h];
+      values[h] = value;
+      lane_sum = __fadd_rn(lane_sum, value);
+      const float square = __fmul_rn(value, value);
+      lane_square_sum = __fadd_rn(lane_square_sum, square);
+    }
+  }
+
+  lane_sum = __fadd_rn(0.0f, lane_sum);
+  lane_square_sum = __fadd_rn(0.0f, lane_square_sum);
+
+  for (int offset = 8; offset > 0; offset >>= 1) {
+    lane_sum = __fadd_rn(
+        lane_sum, __shfl_xor_sync(0xffffffffu, lane_sum, offset));
+    lane_square_sum = __fadd_rn(
+        lane_square_sum,
+        __shfl_xor_sync(0xffffffffu, lane_square_sum, offset));
+  }
+
+  if (active) {
+    const int group = c >> 4;
+    const float mean = __fmul_rn(lane_sum, 0.00390625f);
+    const float second_moment =
+        __fmul_rn(lane_square_sum, 0.00390625f);
+    const float mean_square = __fmul_rn(mean, mean);
+    const float variance = __fsub_rn(second_moment, mean_square);
+    const float variance_with_epsilon = __fadd_rn(variance, 1.0e-5f);
+    const float inverse_standard_deviation = rsqrtf(variance_with_epsilon);
+
+    if ((c & 15) == 0) {
+      const int reduced_index = n * 4 + group;
+      p1[reduced_index] = mean;
+      p2[reduced_index] = inverse_standard_deviation;
+    }
+
+    const float scale = p3[c];
+    const float bias = p0[c];
+    const int output_base = (n * 64 + c) * 16;
+    for (int h = 0; h < 16; ++h) {
+      const float centered = __fsub_rn(values[h], mean);
+      const float normalized =
+          __fmul_rn(centered, inverse_standard_deviation);
+      const float scaled = __fmul_rn(normalized, scale);
+      p5[output_base + h] = __fadd_rn(scaled, bias);
+    }
+  }
+}

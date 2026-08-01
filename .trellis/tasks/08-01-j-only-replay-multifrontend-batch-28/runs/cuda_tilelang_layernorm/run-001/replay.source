@@ -1,0 +1,48 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    const float* p1,
+    float* p2,
+    float* p3,
+    float* p4,
+    const float* p5,
+    int p6) {
+  const unsigned int row = blockIdx.x;
+  const unsigned int lane = threadIdx.x % 16u;
+  const unsigned int element = row * 16u + lane;
+
+  const float x = p1[element];
+
+  float sum = __fadd_rn(0.0f, x);
+  sum = __fadd_rn(sum, __shfl_xor_sync(0xffffffffu, sum, 8));
+  sum = __fadd_rn(sum, __shfl_xor_sync(0xffffffffu, sum, 4));
+  sum = __fadd_rn(sum, __shfl_xor_sync(0xffffffffu, sum, 2));
+  sum = __fadd_rn(sum, __shfl_xor_sync(0xffffffffu, sum, 1));
+
+  const float mean = __fmul_rn(sum, 0.0625f);
+  p2[row] = mean;
+
+  const float centered = __fsub_rn(x, mean);
+  const float squared = __fmul_rn(centered, centered);
+
+  float variance_sum = __fadd_rn(0.0f, squared);
+  variance_sum = __fadd_rn(
+      variance_sum,
+      __shfl_xor_sync(0xffffffffu, variance_sum, 8));
+  variance_sum = __fadd_rn(
+      variance_sum,
+      __shfl_xor_sync(0xffffffffu, variance_sum, 4));
+  variance_sum = __fadd_rn(
+      variance_sum,
+      __shfl_xor_sync(0xffffffffu, variance_sum, 2));
+  variance_sum = __fadd_rn(
+      variance_sum,
+      __shfl_xor_sync(0xffffffffu, variance_sum, 1));
+
+  const float variance = __fmul_rn(variance_sum, 0.0625f);
+  const float inverse_stddev = rsqrtf(__fadd_rn(variance, 1.0e-5f));
+  p4[row] = inverse_stddev;
+
+  const float normalized = __fmul_rn(centered, inverse_stddev);
+  const float scaled = __fmul_rn(normalized, p5[lane]);
+  p3[element] = __fadd_rn(scaled, p0[lane]);
+}

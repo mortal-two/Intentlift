@@ -1,0 +1,49 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, 64, 16), "float32"),
+    p1: T.Tensor((X0, 64, 16), "float32"),
+    p2: T.Tensor((64,), "float32"),
+    p3: T.Tensor((64,), "float32"),
+    p4: T.Tensor((X0, 4), "float32"),
+    p5: T.Tensor((X0, 4), "float32"),
+):
+    with T.Kernel(X0, 4, threads=c0) as (n, g):
+        values = T.alloc_fragment((16, 16), "float32")
+        squares = T.alloc_fragment((16, 16), "float32")
+        row_sums = T.alloc_fragment((16,), "float32")
+        row_square_sums = T.alloc_fragment((16,), "float32")
+        total = T.alloc_fragment((1,), "float32")
+        square_total = T.alloc_fragment((1,), "float32")
+
+        T.copy(p0[n, g * 16, 0], values)
+
+        for i, h in T.Parallel(16, 16):
+            squares[i, h] = values[i, h] * values[i, h]
+
+        T.reduce_sum(values, row_sums, dim=1)
+        T.reduce_sum(row_sums, total, dim=0)
+        T.reduce_sum(squares, row_square_sums, dim=1)
+        T.reduce_sum(row_square_sums, square_total, dim=0)
+
+        mean = total[0] * T.float32(0.00390625)
+        p4[n, g] = mean
+        mean_square = mean * mean
+        variance = square_total[0] * T.float32(0.00390625) - mean_square
+        adjusted_variance = variance + T.float32(0.00001)
+        inverse_stddev = T.rsqrt(adjusted_variance)
+        p5[n, g] = inverse_stddev
+
+        for i in T.Parallel(16):
+            channel = g * 16 + i
+            scale = T.float32(p2[channel])
+            bias = T.float32(p3[channel])
+            for h in T.serial(16):
+                centered = values[i, h] - mean
+                normalized = centered * inverse_stddev
+                scaled = normalized * scale
+                p1[n, channel, h] = scaled + bias

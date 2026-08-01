@@ -1,0 +1,26 @@
+{
+  "all_j_only": true,
+  "all_typecheck_passed": true,
+  "case_count": 1,
+  "cases": [
+    {
+      "case": "cuda:tilelang_groupnorm",
+      "cohort_memberships": [
+        "g2_reduction_statistics_normalization",
+        "g6_fusion_composition"
+      ],
+      "diagnostics": [],
+      "frontend": "cuda",
+      "lift_agent_calls": 0,
+      "packet_root": [
+        "c",
+        "j",
+        "u_f"
+      ],
+      "pi_visible_to_replay": false,
+      "typecheck": "pass"
+    }
+  ],
+  "lift_agent_calls": 0,
+  "protocol": "intentir.experiment.manual-batch-preflight.v1"
+}

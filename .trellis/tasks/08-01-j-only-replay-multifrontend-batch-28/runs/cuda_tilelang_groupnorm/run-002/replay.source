@@ -1,0 +1,64 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    float* p1,
+    float* p2,
+    const float* p3,
+    const float* p4,
+    float* p5,
+    int p6) {
+  const int v23 = static_cast<int>(blockIdx.x);
+  const int v24 = static_cast<int>(threadIdx.x);
+  const int v26 = v24 / 16;
+
+  float input_values[16];
+  float channel_sum = 0.0f;
+  float channel_square_sum = 0.0f;
+
+  for (int v25 = 0; v25 < 16; ++v25) {
+    const int input_offset = (v23 * 64 + v24) * 16 + v25;
+    const float input_value = p4[input_offset];
+    input_values[v25] = input_value;
+    channel_sum += input_value;
+    const float input_square = input_value * input_value;
+    channel_square_sum += input_square;
+  }
+
+  float group_sum = 0.0f;
+  group_sum += channel_sum;
+  group_sum += __shfl_xor_sync(0xffffffffu, group_sum, 8);
+  group_sum += __shfl_xor_sync(0xffffffffu, group_sum, 4);
+  group_sum += __shfl_xor_sync(0xffffffffu, group_sum, 2);
+  group_sum += __shfl_xor_sync(0xffffffffu, group_sum, 1);
+
+  float group_square_sum = 0.0f;
+  group_square_sum += channel_square_sum;
+  group_square_sum +=
+      __shfl_xor_sync(0xffffffffu, group_square_sum, 8);
+  group_square_sum +=
+      __shfl_xor_sync(0xffffffffu, group_square_sum, 4);
+  group_square_sum +=
+      __shfl_xor_sync(0xffffffffu, group_square_sum, 2);
+  group_square_sum +=
+      __shfl_xor_sync(0xffffffffu, group_square_sum, 1);
+
+  const float group_mean = group_sum * 0.00390625f;
+  const int group_offset = v23 * 4 + v26;
+  p1[group_offset] = group_mean;
+
+  const float group_mean_square = group_mean * group_mean;
+  const float group_square_mean = group_square_sum * 0.00390625f;
+  const float group_variance = group_square_mean - group_mean_square;
+  const float group_rstd = rsqrtf(group_variance + 1.0e-5f);
+  p2[group_offset] = group_rstd;
+
+  const float scale = p3[v24];
+  const float bias = p0[v24];
+  for (int v25 = 0; v25 < 16; ++v25) {
+    const float centered = input_values[v25] - group_mean;
+    const float normalized = centered * group_rstd;
+    const float scaled = normalized * scale;
+    const float result = scaled + bias;
+    const int output_offset = (v23 * 64 + v24) * 16 + v25;
+    p5[output_offset] = result;
+  }
+}

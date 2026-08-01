@@ -1,0 +1,32 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "tilelang:softmax_inner",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "b06bf5d536c171c7887915c822428a0dd66a6bc01ce021eafd51d672bd9619e7",
+  "dimensions": {
+    "M": 16
+  },
+  "factory_kwargs": {
+    "n": 16,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "M",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 521851713,
+  "source_sha256": "b282cd583cae3bf5f3b6505c1831700d122feef94e2d3de9b4c163286ec52ef7"
+}

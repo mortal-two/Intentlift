@@ -1,0 +1,37 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    const float* p1,
+    float* p2,
+    const float* p3,
+    float* p4,
+    const float* p5,
+    int p6) {
+  const unsigned int row = blockIdx.x;
+  const unsigned int column = threadIdx.x;
+  const unsigned long long element =
+      static_cast<unsigned long long>(row) * 64ull +
+      static_cast<unsigned long long>(column);
+
+  const float sum_inputs = p1[element] + p3[element];
+  const float shifted = sum_inputs + p0[column];
+  const float squared = shifted * shifted;
+
+  float reduction = 0.0f;
+  reduction += squared;
+  reduction += __shfl_xor_sync(0xffffffffu, reduction, 16);
+  reduction += __shfl_xor_sync(0xffffffffu, reduction, 8);
+  reduction += __shfl_xor_sync(0xffffffffu, reduction, 4);
+  reduction += __shfl_xor_sync(0xffffffffu, reduction, 2);
+  reduction += __shfl_xor_sync(0xffffffffu, reduction, 1);
+
+  __shared__ float warp_sums[2];
+  if ((column & 31u) == 0u) {
+    warp_sums[column >> 5] = reduction;
+  }
+  __syncthreads();
+
+  const float reduced = warp_sums[0] + warp_sums[1];
+  const float normalized = rsqrtf(reduced * 0.015625f + 1.0e-5f);
+  p4[row] = normalized;
+  p2[element] = (shifted * normalized) * p5[column];
+}

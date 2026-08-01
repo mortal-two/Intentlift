@@ -1,0 +1,46 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    const float* p1,
+    float* p2,
+    float* p3,
+    float* p4,
+    const float* p5,
+    int p6) {
+  const int row = static_cast<int>(blockIdx.x);
+  const int lane = static_cast<int>(threadIdx.x) % 16;
+  const int element = row * 16 + lane;
+
+  const float x = p1[element];
+
+  float sum = 0.0f;
+  sum = sum + x;
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 8);
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 4);
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 2);
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 1);
+
+  const float mean = sum * 0.0625f;
+  p2[row] = mean;
+
+  const float centered = x - mean;
+  const float squared = centered * centered;
+
+  float variance_sum = 0.0f;
+  variance_sum = variance_sum + squared;
+  variance_sum = variance_sum +
+                 __shfl_xor_sync(0xffffffffu, variance_sum, 8);
+  variance_sum = variance_sum +
+                 __shfl_xor_sync(0xffffffffu, variance_sum, 4);
+  variance_sum = variance_sum +
+                 __shfl_xor_sync(0xffffffffu, variance_sum, 2);
+  variance_sum = variance_sum +
+                 __shfl_xor_sync(0xffffffffu, variance_sum, 1);
+
+  const float variance = variance_sum * 0.0625f;
+  const float inverse_stddev = rsqrtf(variance + 1.0e-5f);
+  p4[row] = inverse_stddev;
+
+  const float normalized = centered * inverse_stddev;
+  const float scaled = normalized * p5[lane];
+  p3[element] = scaled + p0[lane];
+}

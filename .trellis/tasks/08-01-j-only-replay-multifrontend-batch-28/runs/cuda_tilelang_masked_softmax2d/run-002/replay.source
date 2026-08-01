@@ -1,0 +1,45 @@
+extern "C" __global__ void scrc_k0(const float* p0,
+                                    const signed char* p1,
+                                    float* p2,
+                                    int p3) {
+    const unsigned int row = blockIdx.x;
+    const unsigned int column = threadIdx.x;
+    const unsigned long long index =
+        static_cast<unsigned long long>(row) * 64ull + column;
+
+    const bool mask_i1 = p1[column] != 0;
+    const float mask_f32 = static_cast<float>(mask_i1);
+    const float inverse_mask = __fsub_rn(1.0f, mask_f32);
+    const float selected = __fmul_rn(p0[index], mask_f32);
+    const float penalty = __fmul_rn(-1000000000.0f, inverse_mask);
+    const float logit = __fadd_rn(selected, penalty);
+
+    __shared__ float reduction[64];
+    const float negative_infinity = -__int_as_float(0x7f800000);
+    reduction[column] = fmaxf(negative_infinity, logit);
+    __syncthreads();
+
+    for (unsigned int offset = 32; offset != 0; offset >>= 1) {
+        if (column < offset) {
+            reduction[column] =
+                fmaxf(reduction[column], reduction[column + offset]);
+        }
+        __syncthreads();
+    }
+
+    const float centered = __fsub_rn(logit, reduction[0]);
+    const float numerator = expf(centered);
+
+    reduction[column] = __fadd_rn(0.0f, numerator);
+    __syncthreads();
+
+    for (unsigned int offset = 32; offset != 0; offset >>= 1) {
+        if (column < offset) {
+            reduction[column] =
+                __fadd_rn(reduction[column], reduction[column + offset]);
+        }
+        __syncthreads();
+    }
+
+    p2[index] = __fdiv_rn(numerator, reduction[0]);
+}

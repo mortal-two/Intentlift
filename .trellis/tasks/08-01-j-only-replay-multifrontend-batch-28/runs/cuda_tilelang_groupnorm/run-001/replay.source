@@ -1,0 +1,51 @@
+extern "C" __global__ void scrc_k0(
+    const float* p0,
+    float* p1,
+    float* p2,
+    const float* p3,
+    const float* p4,
+    float* p5,
+    int p6) {
+  int n = (int)blockIdx.x;
+  int c = (int)threadIdx.x;
+  int lane = c & 15;
+  int g = c >> 4;
+
+  float values[16];
+  float lane_sum = 0.0f;
+  float lane_sq_sum = 0.0f;
+  for (int h = 0; h < 16; ++h) {
+    float x = p4[((n * 64 + c) * 16) + h];
+    values[h] = x;
+    lane_sum = lane_sum + x;
+    lane_sq_sum = lane_sq_sum + (x * x);
+  }
+
+  float sum = 0.0f;
+  sum = sum + lane_sum;
+  float sq_sum = 0.0f;
+  sq_sum = sq_sum + lane_sq_sum;
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 1);
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 2);
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 4);
+  sum = sum + __shfl_xor_sync(0xffffffffu, sum, 8);
+  sq_sum = sq_sum + __shfl_xor_sync(0xffffffffu, sq_sum, 1);
+  sq_sum = sq_sum + __shfl_xor_sync(0xffffffffu, sq_sum, 2);
+  sq_sum = sq_sum + __shfl_xor_sync(0xffffffffu, sq_sum, 4);
+  sq_sum = sq_sum + __shfl_xor_sync(0xffffffffu, sq_sum, 8);
+
+  float mean = sum * 0.00390625f;
+  float mean_sq = sq_sum * 0.00390625f;
+  float variance = mean_sq - (mean * mean);
+  float inv_std = rsqrtf(variance + 1.0e-5f);
+
+  p1[n * 4 + g] = mean;
+  p2[n * 4 + g] = inv_std;
+
+  float scale = p3[c];
+  float bias = p0[c];
+  for (int h = 0; h < 16; ++h) {
+    float x = values[h];
+    p5[((n * 64 + c) * 16) + h] = ((x - mean) * inv_std * scale) + bias;
+  }
+}

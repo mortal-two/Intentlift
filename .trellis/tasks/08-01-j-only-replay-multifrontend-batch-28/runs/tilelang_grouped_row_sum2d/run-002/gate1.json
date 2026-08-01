@@ -1,0 +1,1534 @@
+{
+  "artifact_digest": "c79edd6bf24acd0826d06eb7bde3484e0ff8fae6785fa8cb9fba5b042612996b",
+  "j_necessity_status": "inconclusive",
+  "llm_calls": {
+    "masked_j": 0,
+    "normal": 1
+  },
+  "masked_j": null,
+  "masked_j_isolation": {
+    "fresh_session_evidence": null,
+    "independent_writer": null,
+    "separate_generate_call": null
+  },
+  "normal": {
+    "comparison": {
+      "diagnostic_passes": {
+        "interface": true,
+        "ptx.address_coordinate_folds": false,
+        "ptx.collectives": false,
+        "ptx.control_flow": true,
+        "ptx.coordinate_uses": true,
+        "ptx.interface": true,
+        "ptx.memory_effects": false,
+        "ptx.raw_instruction_topology": false,
+        "ptx.raw_memory_effects": false,
+        "ptx.raw_opcode_multiset": false,
+        "ptx.schema": true,
+        "ptx.target": true,
+        "ptx.value_operations": false,
+        "schema": true,
+        "tir_operations": false,
+        "tir_structure": false,
+        "tir_topology": false
+      },
+      "differences": [
+        {
+          "category": "tir_structure",
+          "message": "TileLang tir_structure differs between Source and Replay",
+          "replay": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.y'), Constant(value=16)], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=128)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Constant(value=0)], ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Name(id='v4', ctx=Load())], ctx=Load()), ctx=Load())], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=64)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Assign(targets=[Name(id='v9', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=64)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Assign(targets=[Name(id='v10', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=1)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='copy', ctx=Load()), args=[Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='region', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Constant(value=0)], ctx=Load()), ctx=Load()), Constant(value=1), Constant(value=1), Constant(value=64)], keywords=[]), Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='region', ctx=Load()), args=[Subscript(value=Name(id='v8', ctx=Load()), slice=Constant(value=0), ctx=Load()), Constant(value=2), Constant(value=64)], keywords=[])], keywords=[])), For(target=Name(id='v11', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=64)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v9', ctx=Load()), slice=Name(id='v11', ctx=Load()), ctx=Store())], value=BinOp(left=Subscript(value=Name(id='v8', ctx=Load()), slice=Name(id='v11', ctx=Load()), ctx=Load()), op=Mult(), right=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='Cast', ctx=Load()), args=[Constant(value='float32'), Compare(left=BinOp(left=Name(id='v11', ctx=Load()), op=FloorDiv(), right=Constant(value=4)), ops=[Eq()], comparators=[Name(id='v4', ctx=Load())])], keywords=[])))], orelse=[]), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reduce', ctx=Load()), args=[Subscript(value=Name(id='v9', ctx=Load()), slice=Slice(lower=Constant(value=0), upper=Constant(value=64)), ctx=Load()), Subscript(value=Name(id='v10', ctx=Load()), slice=Constant(value=0), ctx=Load()), Constant(value='sum'), Constant(value=0), Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='bool', ctx=Load()), args=[Constant(value=True)], keywords=[])], keywords=[])), Assign(targets=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Name(id='v4', ctx=Load())], ctx=Load()), ctx=Store())], value=Subscript(value=Name(id='v10', ctx=Load()), slice=Constant(value=0), ctx=Load()))])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])",
+          "source": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Constant(value=16)], keywords=[])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.y'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=128)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), BinOp(left=Name(id='v3', ctx=Load()), op=Mult(), right=Constant(value=4))], ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v3', ctx=Load())], ctx=Load()), ctx=Load())], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=4)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Assign(targets=[Name(id='v9', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=1)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='copy', ctx=Load()), args=[Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='region', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), BinOp(left=Name(id='v3', ctx=Load()), op=Mult(), right=Constant(value=4))], ctx=Load()), ctx=Load()), Constant(value=1), Constant(value=1), Constant(value=4)], keywords=[]), Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='region', ctx=Load()), args=[Subscript(value=Name(id='v8', ctx=Load()), slice=Constant(value=0), ctx=Load()), Constant(value=2), Constant(value=4)], keywords=[])], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reduce', ctx=Load()), args=[Subscript(value=Name(id='v8', ctx=Load()), slice=Slice(lower=Constant(value=0), upper=Constant(value=4)), ctx=Load()), Subscript(value=Name(id='v9', ctx=Load()), slice=Constant(value=0), ctx=Load()), Constant(value='sum'), Constant(value=0), Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='bool', ctx=Load()), args=[Constant(value=True)], keywords=[])], keywords=[])), Assign(targets=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v3', ctx=Load())], ctx=Load()), ctx=Store())], value=Subscript(value=Name(id='v9', ctx=Load()), slice=Constant(value=0), ctx=Load()))])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+        },
+        {
+          "category": "tir_topology",
+          "message": "TileLang tir_topology differs between Source and Replay",
+          "replay": [
+            "T.prim_func",
+            "T.handle",
+            "T.handle",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.block",
+            "T.reads",
+            "T.writes",
+            "T.alloc_buffer",
+            "T.alloc_buffer",
+            "T.alloc_buffer",
+            "T.copy",
+            "T.region",
+            "T.region",
+            "control.for",
+            "T.Cast",
+            "T.reduce",
+            "T.bool"
+          ],
+          "source": [
+            "T.prim_func",
+            "T.handle",
+            "T.handle",
+            "T.match_buffer",
+            "T.match_buffer",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.launch_thread",
+            "T.block",
+            "T.reads",
+            "T.writes",
+            "T.alloc_buffer",
+            "T.alloc_buffer",
+            "T.copy",
+            "T.region",
+            "T.region",
+            "T.reduce",
+            "T.bool"
+          ]
+        },
+        {
+          "category": "tir_operations",
+          "message": "TileLang tir_operations differs between Source and Replay",
+          "replay": [
+            [
+              "T.Cast",
+              1
+            ],
+            [
+              "T.alloc_buffer",
+              3
+            ],
+            [
+              "T.block",
+              1
+            ],
+            [
+              "T.bool",
+              1
+            ],
+            [
+              "T.copy",
+              1
+            ],
+            [
+              "T.handle",
+              2
+            ],
+            [
+              "T.launch_thread",
+              5
+            ],
+            [
+              "T.match_buffer",
+              2
+            ],
+            [
+              "T.prim_func",
+              1
+            ],
+            [
+              "T.reads",
+              1
+            ],
+            [
+              "T.reduce",
+              1
+            ],
+            [
+              "T.region",
+              2
+            ],
+            [
+              "T.writes",
+              1
+            ],
+            [
+              "control.for",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "T.alloc_buffer",
+              2
+            ],
+            [
+              "T.block",
+              1
+            ],
+            [
+              "T.bool",
+              1
+            ],
+            [
+              "T.copy",
+              1
+            ],
+            [
+              "T.handle",
+              2
+            ],
+            [
+              "T.launch_thread",
+              5
+            ],
+            [
+              "T.match_buffer",
+              2
+            ],
+            [
+              "T.prim_func",
+              1
+            ],
+            [
+              "T.reads",
+              1
+            ],
+            [
+              "T.reduce",
+              1
+            ],
+            [
+              "T.region",
+              2
+            ],
+            [
+              "T.writes",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.value_operations",
+          "message": "PTX value_operations differs between Source and Replay",
+          "replay": [
+            [
+              "add.f32",
+              6
+            ],
+            [
+              "and.b32",
+              1
+            ],
+            [
+              "fma.rn.f32",
+              1
+            ],
+            [
+              "ld.global.b32",
+              1
+            ],
+            [
+              "ld.shared.b32",
+              1
+            ],
+            [
+              "mov.b32",
+              10
+            ],
+            [
+              "mov.u32",
+              2
+            ],
+            [
+              "selp.f32",
+              1
+            ],
+            [
+              "setp.eq.s32",
+              1
+            ],
+            [
+              "shfl.sync.bfly.b32",
+              5
+            ],
+            [
+              "shr.u32",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "add.f32",
+              3
+            ],
+            [
+              "ld.global.b32",
+              1
+            ],
+            [
+              "mov.b32",
+              4
+            ],
+            [
+              "shfl.sync.bfly.b32",
+              2
+            ]
+          ]
+        },
+        {
+          "category": "ptx.memory_effects",
+          "message": "PTX memory_effects differs between Source and Replay",
+          "replay": [
+            [
+              "ld.global.b32",
+              1
+            ],
+            [
+              "ld.param.b64",
+              2
+            ],
+            [
+              "ld.shared.b32",
+              1
+            ],
+            [
+              "st.global.b32",
+              1
+            ],
+            [
+              "st.shared.b32",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "ld.global.b32",
+              1
+            ],
+            [
+              "ld.param.b64",
+              2
+            ],
+            [
+              "st.global.b32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.address_coordinate_folds",
+          "message": "PTX address_coordinate_folds differs between Source and Replay",
+          "replay": [
+            [
+              "ld.global.b32:%tid.x:cyclic:64",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "ld.global.b32:%tid.x:cyclic:4",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.collectives",
+          "message": "PTX collectives differs between Source and Replay",
+          "replay": [
+            "barrier.cta",
+            "barrier.cta",
+            "shuffle",
+            "shuffle",
+            "shuffle",
+            "shuffle",
+            "shuffle"
+          ],
+          "source": [
+            "shuffle",
+            "shuffle"
+          ]
+        },
+        {
+          "category": "ptx.raw_instruction_topology",
+          "message": "PTX raw_instruction_topology differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "cvta.to.global.u64 %b642,%b641;",
+            "cvta.to.global.u64 %b643,%b640;",
+            "mov.u32 %b320,%ctaid.x;",
+            "mul.wide.u32 %b644,%b320,64;",
+            "mov.u32 %b321,%tid.x;",
+            "and.b32 %b322,%b321,63;",
+            "cvt.u64.u32 %b645,%b322;",
+            "or.b64 %b646,%b644,%b645;",
+            "shl.b64 %b647,%b646,2;",
+            "add.s64 %b648,%b643,%b647;",
+            "ld.global.nc.f32 %f320,[%b648];",
+            "shr.u32 %b323,%b321,2;",
+            "and.b32 %b324,%b323,15;",
+            "mov.u32 %b325,%ctaid.y;",
+            "setp.eq.s32 %pred0,%b324,%b325;",
+            "selp.f32 %f321,0f3F800000,0f00000000,%pred0;",
+            "fma.rn.f32 %f322,%f320,%f321,0f00000000;",
+            "mov.b32 %b326,1;",
+            "mov.b32 %b327,128;",
+            "bar.sync %b326,%b327;",
+            "shl.b32 %b328,%b321,2;",
+            "mov.u32 %b329,workspace;",
+            "add.s32 %b3210,%b329,%b328;",
+            "st.shared.f32 [%b3210],%f322;",
+            "mov.b32 %b3211,2;",
+            "bar.sync %b3211,%b327;",
+            "xor.b32 %b3212,%b328,128;",
+            "add.s32 %b3213,%b329,%b3212;",
+            "ld.shared.f32 %f323,[%b3213];",
+            "add.f32 %f324,%f322,%f323;",
+            "mov.b32 %b3214,%f324;",
+            "shfl.sync.bfly.b32 %b3215|%pred1,%b3214,16,31,-1;",
+            "mov.b32 %f325,%b3215;",
+            "add.f32 %f326,%f324,%f325;",
+            "mov.b32 %b3216,%f326;",
+            "shfl.sync.bfly.b32 %b3217|%pred2,%b3216,8,31,-1;",
+            "mov.b32 %f327,%b3217;",
+            "add.f32 %f328,%f326,%f327;",
+            "mov.b32 %b3218,%f328;",
+            "shfl.sync.bfly.b32 %b3219|%pred3,%b3218,4,31,-1;",
+            "mov.b32 %f329,%b3219;",
+            "add.f32 %f3210,%f328,%f329;",
+            "mov.b32 %b3220,%f3210;",
+            "shfl.sync.bfly.b32 %b3221|%pred4,%b3220,2,31,-1;",
+            "mov.b32 %f3211,%b3221;",
+            "add.f32 %f3212,%f3210,%f3211;",
+            "mov.b32 %b3222,%f3212;",
+            "shfl.sync.bfly.b32 %b3223|%pred5,%b3222,1,31,-1;",
+            "mov.b32 %f3213,%b3223;",
+            "add.f32 %f3214,%f3212,%f3213;",
+            "mul.wide.u32 %b649,%b320,16;",
+            "cvt.u64.u32 %b6410,%b325;",
+            "add.s64 %b6411,%b649,%b6410;",
+            "shl.b64 %b6412,%b6411,2;",
+            "add.s64 %b6413,%b642,%b6412;",
+            "st.global.f32 [%b6413],%f3214;",
+            "ret;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "cvta.to.global.u64 %b642,%b641;",
+            "cvta.to.global.u64 %b643,%b640;",
+            "mov.u32 %b320,%ctaid.y;",
+            "shl.b32 %b321,%b320,6;",
+            "cvt.u64.u32 %b644,%b321;",
+            "mov.u32 %b322,%ctaid.x;",
+            "mul.wide.u32 %b645,%b322,4;",
+            "add.s64 %b646,%b645,%b644;",
+            "mov.u32 %b323,%tid.x;",
+            "and.b32 %b324,%b323,3;",
+            "cvt.u64.u32 %b647,%b324;",
+            "or.b64 %b648,%b646,%b647;",
+            "shl.b64 %b649,%b648,2;",
+            "add.s64 %b6410,%b643,%b649;",
+            "ld.global.nc.f32 %f320,[%b6410];",
+            "add.f32 %f321,%f320,0f00000000;",
+            "mov.b32 %b325,%f321;",
+            "shfl.sync.bfly.b32 %b326|%pred0,%b325,2,31,-1;",
+            "mov.b32 %f322,%b326;",
+            "add.f32 %f323,%f321,%f322;",
+            "mov.b32 %b327,%f323;",
+            "shfl.sync.bfly.b32 %b328|%pred1,%b327,1,31,-1;",
+            "mov.b32 %f324,%b328;",
+            "add.f32 %f325,%f323,%f324;",
+            "shl.b32 %b329,%b320,4;",
+            "add.s32 %b3210,%b329,%b322;",
+            "mul.wide.u32 %b6411,%b3210,4;",
+            "add.s64 %b6412,%b642,%b6411;",
+            "st.global.f32 [%b6412],%f325;",
+            "ret;"
+          ]
+        },
+        {
+          "category": "ptx.raw_opcode_multiset",
+          "message": "PTX raw_opcode_multiset differs between Source and Replay",
+          "replay": [
+            [
+              "add.f32",
+              6
+            ],
+            [
+              "add.s32",
+              2
+            ],
+            [
+              "add.s64",
+              3
+            ],
+            [
+              "and.b32",
+              2
+            ],
+            [
+              "bar.sync",
+              2
+            ],
+            [
+              "cvt.u64.u32",
+              2
+            ],
+            [
+              "cvta.to.global.u64",
+              2
+            ],
+            [
+              "fma.rn.f32",
+              1
+            ],
+            [
+              "ld.global.nc.f32",
+              1
+            ],
+            [
+              "ld.param.u64",
+              2
+            ],
+            [
+              "ld.shared.f32",
+              1
+            ],
+            [
+              "mov.b32",
+              13
+            ],
+            [
+              "mov.u32",
+              4
+            ],
+            [
+              "mul.wide.u32",
+              2
+            ],
+            [
+              "or.b64",
+              1
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "selp.f32",
+              1
+            ],
+            [
+              "setp.eq.s32",
+              1
+            ],
+            [
+              "shfl.sync.bfly.b32",
+              5
+            ],
+            [
+              "shl.b32",
+              1
+            ],
+            [
+              "shl.b64",
+              2
+            ],
+            [
+              "shr.u32",
+              1
+            ],
+            [
+              "st.global.f32",
+              1
+            ],
+            [
+              "st.shared.f32",
+              1
+            ],
+            [
+              "xor.b32",
+              1
+            ]
+          ],
+          "source": [
+            [
+              "add.f32",
+              3
+            ],
+            [
+              "add.s32",
+              1
+            ],
+            [
+              "add.s64",
+              3
+            ],
+            [
+              "and.b32",
+              1
+            ],
+            [
+              "cvt.u64.u32",
+              2
+            ],
+            [
+              "cvta.to.global.u64",
+              2
+            ],
+            [
+              "ld.global.nc.f32",
+              1
+            ],
+            [
+              "ld.param.u64",
+              2
+            ],
+            [
+              "mov.b32",
+              4
+            ],
+            [
+              "mov.u32",
+              3
+            ],
+            [
+              "mul.wide.u32",
+              2
+            ],
+            [
+              "or.b64",
+              1
+            ],
+            [
+              "ret;",
+              1
+            ],
+            [
+              "shfl.sync.bfly.b32",
+              2
+            ],
+            [
+              "shl.b32",
+              2
+            ],
+            [
+              "shl.b64",
+              1
+            ],
+            [
+              "st.global.f32",
+              1
+            ]
+          ]
+        },
+        {
+          "category": "ptx.raw_memory_effects",
+          "message": "PTX raw_memory_effects differs between Source and Replay",
+          "replay": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.global.nc.f32 %f320,[%b648];",
+            "st.shared.f32 [%b3210],%f322;",
+            "ld.shared.f32 %f323,[%b3213];",
+            "st.global.f32 [%b6413],%f3214;"
+          ],
+          "source": [
+            "ld.param.u64 %b640,[param0];",
+            "ld.param.u64 %b641,[param1];",
+            "ld.global.nc.f32 %f320,[%b6410];",
+            "st.global.f32 [%b6412],%f325;"
+          ]
+        }
+      ],
+      "hard_pass": true,
+      "hard_passes": {
+        "interface": true,
+        "j_semantic_families": true,
+        "memory_effect_kinds": true,
+        "program_coordinates": true,
+        "schedule": true,
+        "schema": true,
+        "target": true
+      },
+      "primary_difference_category": null,
+      "replay_digest": "6c98078bc67eb5b8871601197ac2e717ea0788db09c93a2a16c1e482f1aff579",
+      "source_digest": "46067976d759abff3f3971a8bdb3d16d924cfd9a1b41acab92f39819c708c9e0"
+    },
+    "compile": {
+      "cache_key": "6098f5be183ef7432067cdd088c02a2a77fcdb684dbea9cff0438214421fd05f",
+      "compiler": {
+        "name": "tilelang",
+        "version": "0.1.8"
+      },
+      "cuda": "#include <tl_templates/cuda/gemm.h>\n#include <tl_templates/cuda/copy.h>\n#include <tl_templates/cuda/reduce.h>\n#include <tl_templates/cuda/ldsm.h>\n#include <tl_templates/cuda/threadblock_swizzle.h>\n#include <tl_templates/cuda/debug.h>\n#ifdef ENABLE_BF16\n#include <tl_templates/cuda/cuda_bf16_fallbacks.cuh>\n#endif\n\nextern \"C\" __global__ void scrc_k0_kernel(const float* __restrict__ p0, float* __restrict__ p1, int x0);\nextern \"C\" __global__ void __launch_bounds__(128, 1) scrc_k0_kernel(const float* __restrict__ p0, float* __restrict__ p1, int x0) {\n  float input_fragment[1];\n  float product_fragment[1];\n  float result_fragment[1];\n  extern __shared__ __align__(1024) float workspace[];\n  input_fragment[0] = p0[((((int64_t)((int)blockIdx.x)) * (int64_t)64) + (((int64_t)((int)threadIdx.x)) & (int64_t)63))];\n  product_fragment[0] = (input_fragment[0] * ((float)(((((int)threadIdx.x) & 63) >> 2) == ((int)blockIdx.y))));\n  result_fragment[0] = 0x0p+0f/*0.000000e+00*/;\n  result_fragment[0] = (result_fragment[0] + product_fragment[0]);\n  result_fragment[0] = tl::AllReduce<tl::SumOp, 64, 1, 0, tl::NamedBarrier<128>>::run(result_fragment[0], (&(workspace[0])));\n  p1[((((int64_t)((int)blockIdx.x)) * (int64_t)16) + ((int64_t)((int)blockIdx.y)))] = result_fragment[0];\n}\n\n",
+      "diagnostic": "",
+      "elapsed_ms": 7711.571369087324,
+      "interface": {
+        "parameters": [
+          {
+            "dtype": "float32",
+            "kind": "pointer",
+            "mode": "input",
+            "name": "p0",
+            "rank": 2,
+            "shape": [
+              "x0",
+              64
+            ]
+          },
+          {
+            "dtype": "float32",
+            "kind": "pointer",
+            "mode": "output",
+            "name": "p1",
+            "rank": 2,
+            "shape": [
+              "x0",
+              16
+            ]
+          }
+        ]
+      },
+      "ok": true,
+      "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120a\n.address_size 64\n\n\t// .globl\tscrc_k0_kernel\n.global .align 1 .b8 _ZN45_INTERNAL_cc7e9c4b_14_tvm_kernels_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_cc7e9c4b_14_tvm_kernels_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN45_INTERNAL_cc7e9c4b_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_cc7e9c4b_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_cc7e9c4b_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_cc7e9c4b_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_cc7e9c4b_14_tvm_kernels_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_cc7e9c4b_14_tvm_kernels_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_cc7e9c4b_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_cc7e9c4b_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n.extern .shared .align 1024 .b8 workspace[];\n\n.visible .entry scrc_k0_kernel(\n\t.param .u64 scrc_k0_kernel_param_0,\n\t.param .u64 scrc_k0_kernel_param_1,\n\t.param .u32 scrc_k0_kernel_param_2\n)\n.maxntid 128, 1, 1\n.minnctapersm 1\n{\n\t.reg .pred \t%p<7>;\n\t.reg .b32 \t%r<26>;\n\t.reg .f32 \t%f<16>;\n\t.reg .b64 \t%rd<15>;\n\t.loc\t1 12 0\n\n\tld.param.u64 \t%rd1, [scrc_k0_kernel_param_0];\n\tld.param.u64 \t%rd2, [scrc_k0_kernel_param_1];\n\t.loc\t1 17 3\n\tcvta.to.global.u64 \t%rd3, %rd2;\n\tcvta.to.global.u64 \t%rd4, %rd1;\n\tmov.u32 \t%r5, %ctaid.x;\n\tmul.wide.u32 \t%rd5, %r5, 64;\n\tmov.u32 \t%r6, %tid.x;\n\tand.b32  \t%r7, %r6, 63;\n\tcvt.u64.u32 \t%rd6, %r7;\n\tor.b64  \t%rd7, %rd5, %rd6;\n\tshl.b64 \t%rd8, %rd7, 2;\n\tadd.s64 \t%rd9, %rd4, %rd8;\n\tld.global.nc.f32 \t%f1, [%rd9];\n\t.loc\t1 18 3\n\tshr.u32 \t%r8, %r6, 2;\n\tand.b32  \t%r9, %r8, 15;\n\tmov.u32 \t%r10, %ctaid.y;\n\tsetp.eq.s32 \t%p1, %r9, %r10;\n\tselp.f32 \t%f2, 0f3F800000, 0f00000000, %p1;\n\t.loc\t1 20 3\n\tfma.rn.f32 \t%f3, %f1, %f2, 0f00000000;\n\t.loc\t1 21 3\n\t.loc\t2 126 7, function_name $L__info_string0, inlined_at 1 21 3\n\t.loc\t2 134 7, function_name $L__info_string1, inlined_at 2 126 7\n\t.loc\t2 93 5, function_name $L__info_string2, inlined_at 2 134 7\n\tmov.b32 \t%r1, 1;\n\tmov.b32 \t%r4, 128;\n\t// begin inline asm\n\tbar.sync %r1, %r4;\n\t// end inline asm\n\t.loc\t2 135 7, function_name $L__info_string1, inlined_at 2 126 7\n\tshl.b32 \t%r11, %r6, 2;\n\tmov.u32 \t%r12, workspace;\n\tadd.s32 \t%r13, %r12, %r11;\n\tst.shared.f32 \t[%r13], %f3;\n\tmov.b32 \t%r3, 2;\n\t.loc\t2 136 7, function_name $L__info_string1, inlined_at 2 126 7\n\t.loc\t2 93 5, function_name $L__info_string3, inlined_at 2 136 7\n\t// begin inline asm\n\tbar.sync %r3, %r4;\n\t// end inline asm\n\t.loc\t2 137 7, function_name $L__info_string1, inlined_at 2 126 7\n\txor.b32  \t%r14, %r11, 128;\n\tadd.s32 \t%r15, %r12, %r14;\n\t.loc\t2 137 7, function_name $L__info_string1, inlined_at 2 126 7\n\t.loc\t2 31 5, function_name $L__info_string4, inlined_at 2 137 7\n\tld.shared.f32 \t%f4, [%r15];\n\tadd.f32 \t%f5, %f3, %f4;\n\t.loc\t2 144 14, function_name $L__info_string1, inlined_at 2 126 7\n\t.loc\t2 126 7, function_name $L__info_string5, inlined_at 2 144 14\n\t.loc\t2 139 7, function_name $L__info_string6, inlined_at 2 126 7\n\t.loc\t3 684 3, function_name $L__info_string7, inlined_at 2 139 7\n\t.loc\t4 449 9, function_name $L__info_string8, inlined_at 3 684 3\n\tmov.b32 \t%r16, %f5;\n\tshfl.sync.bfly.b32\t%r17|%p2, %r16, 16, 31, -1;\n\t.loc\t4 450 2, function_name $L__info_string8, inlined_at 3 684 3\n\tmov.b32 \t%f6, %r17;\n\t.loc\t2 139 7, function_name $L__info_string6, inlined_at 2 126 7\n\t.loc\t2 31 5, function_name $L__info_string4, inlined_at 2 139 7\n\tadd.f32 \t%f7, %f5, %f6;\n\t.loc\t2 144 14, function_name $L__info_string6, inlined_at 2 126 7\n\t.loc\t2 126 7, function_name $L__info_string9, inlined_at 2 144 14\n\t.loc\t2 139 7, function_name $L__info_string10, inlined_at 2 126 7\n\t.loc\t3 684 3, function_name $L__info_string7, inlined_at 2 139 7\n\t.loc\t4 449 9, function_name $L__info_string8, inlined_at 3 684 3\n\tmov.b32 \t%r18, %f7;\n\tshfl.sync.bfly.b32\t%r19|%p3, %r18, 8, 31, -1;\n\t.loc\t4 450 2, function_name $L__info_string8, inlined_at 3 684 3\n\tmov.b32 \t%f8, %r19;\n\t.loc\t2 139 7, function_name $L__info_string10, inlined_at 2 126 7\n\t.loc\t2 31 5, function_name $L__info_string4, inlined_at 2 139 7\n\tadd.f32 \t%f9, %f7, %f8;\n\t.loc\t2 144 14, function_name $L__info_string10, inlined_at 2 126 7\n\t.loc\t2 126 7, function_name $L__info_string11, inlined_at 2 144 14\n\t.loc\t2 139 7, function_name $L__info_string12, inlined_at 2 126 7\n\t.loc\t3 684 3, function_name $L__info_string7, inlined_at 2 139 7\n\t.loc\t4 449 9, function_name $L__info_string8, inlined_at 3 684 3\n\tmov.b32 \t%r20, %f9;\n\tshfl.sync.bfly.b32\t%r21|%p4, %r20, 4, 31, -1;\n\t.loc\t4 450 2, function_name $L__info_string8, inlined_at 3 684 3\n\tmov.b32 \t%f10, %r21;\n\t.loc\t2 139 7, function_name $L__info_string12, inlined_at 2 126 7\n\t.loc\t2 31 5, function_name $L__info_string4, inlined_at 2 139 7\n\tadd.f32 \t%f11, %f9, %f10;\n\t.loc\t2 144 14, function_name $L__info_string12, inlined_at 2 126 7\n\t.loc\t2 126 7, function_name $L__info_string13, inlined_at 2 144 14\n\t.loc\t2 139 7, function_name $L__info_string14, inlined_at 2 126 7\n\t.loc\t3 684 3, function_name $L__info_string7, inlined_at 2 139 7\n\t.loc\t4 449 9, function_name $L__info_string8, inlined_at 3 684 3\n\tmov.b32 \t%r22, %f11;\n\tshfl.sync.bfly.b32\t%r23|%p5, %r22, 2, 31, -1;\n\t.loc\t4 450 2, function_name $L__info_string8, inlined_at 3 684 3\n\tmov.b32 \t%f12, %r23;\n\t.loc\t2 139 7, function_name $L__info_string14, inlined_at 2 126 7\n\t.loc\t2 31 5, function_name $L__info_string4, inlined_at 2 139 7\n\tadd.f32 \t%f13, %f11, %f12;\n\t.loc\t2 144 14, function_name $L__info_string14, inlined_at 2 126 7\n\t.loc\t2 126 7, function_name $L__info_string15, inlined_at 2 144 14\n\t.loc\t2 139 7, function_name $L__info_string16, inlined_at 2 126 7\n\t.loc\t3 684 3, function_name $L__info_string7, inlined_at 2 139 7\n\t.loc\t4 449 9, function_name $L__info_string8, inlined_at 3 684 3\n\tmov.b32 \t%r24, %f13;\n\tshfl.sync.bfly.b32\t%r25|%p6, %r24, 1, 31, -1;\n\t.loc\t4 450 2, function_name $L__info_string8, inlined_at 3 684 3\n\tmov.b32 \t%f14, %r25;\n\t.loc\t2 139 7, function_name $L__info_string16, inlined_at 2 126 7\n\t.loc\t2 31 5, function_name $L__info_string4, inlined_at 2 139 7\n\tadd.f32 \t%f15, %f13, %f14;\n\t.loc\t1 22 3\n\tmul.wide.u32 \t%rd10, %r5, 16;\n\tcvt.u64.u32 \t%rd11, %r10;\n\tadd.s64 \t%rd12, %rd10, %rd11;\n\tshl.b64 \t%rd13, %rd12, 2;\n\tadd.s64 \t%rd14, %rd3, %rd13;\n\tst.global.f32 \t[%rd14], %f15;\n\t.loc\t1 23 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/tmpntrnr1r8/tvm_kernels.cu\"\n\t.file\t2 \"/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/../src/tl_templates/cuda/reduce.h\"\n\t.file\t3 \"/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/../src/tl_templates/cuda/common.h\"\n\t.file\t4 \"/usr/local/cuda/include/sm_30_intrinsics.hpp\"\n\t.section\t.debug_str\n\t{\n$L__info_string0:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 54\n.b8 52\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 51\n.b8 114\n.b8 117\n.b8 110\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string1:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 54\n.b8 52\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 49\n.b8 54\n.b8 98\n.b8 117\n.b8 116\n.b8 116\n.b8 101\n.b8 114\n.b8 102\n.b8 108\n.b8 121\n.b8 95\n.b8 114\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string2:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 52\n.b8 115\n.b8 121\n.b8 110\n.b8 99\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 69\n.b8 69\n.b8 118\n.b8 118\n.b8 0\n$L__info_string3:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 52\n.b8 115\n.b8 121\n.b8 110\n.b8 99\n.b8 73\n.b8 76\n.b8 105\n.b8 50\n.b8 69\n.b8 69\n.b8 69\n.b8 118\n.b8 118\n.b8 0\n$L__info_string4:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 99\n.b8 108\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 82\n.b8 75\n.b8 83\n.b8 50\n.b8 95\n.b8 83\n.b8 52\n.b8 95\n.b8 0\n$L__info_string5:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 51\n.b8 50\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 51\n.b8 114\n.b8 117\n.b8 110\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string6:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 51\n.b8 50\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 49\n.b8 54\n.b8 98\n.b8 117\n.b8 116\n.b8 116\n.b8 101\n.b8 114\n.b8 102\n.b8 108\n.b8 121\n.b8 95\n.b8 114\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string7:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 49\n.b8 51\n.b8 115\n.b8 104\n.b8 102\n.b8 108\n.b8 95\n.b8 120\n.b8 111\n.b8 114\n.b8 95\n.b8 115\n.b8 121\n.b8 110\n.b8 99\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 106\n.b8 83\n.b8 49\n.b8 95\n.b8 105\n.b8 0\n$L__info_string8:\n.b8 95\n.b8 90\n.b8 78\n.b8 52\n.b8 53\n.b8 95\n.b8 73\n.b8 78\n.b8 84\n.b8 69\n.b8 82\n.b8 78\n.b8 65\n.b8 76\n.b8 95\n.b8 99\n.b8 99\n.b8 55\n.b8 101\n.b8 57\n.b8 99\n.b8 52\n.b8 98\n.b8 95\n.b8 49\n.b8 52\n.b8 95\n.b8 116\n.b8 118\n.b8 109\n.b8 95\n.b8 107\n.b8 101\n.b8 114\n.b8 110\n.b8 101\n.b8 108\n.b8 115\n.b8 95\n.b8 99\n.b8 117\n.b8 95\n.b8 49\n.b8 98\n.b8 54\n.b8 51\n.b8 101\n.b8 48\n.b8 56\n.b8 53\n.b8 49\n.b8 53\n.b8 95\n.b8 95\n.b8 115\n.b8 104\n.b8 102\n.b8 108\n.b8 95\n.b8 120\n.b8 111\n.b8 114\n.b8 95\n.b8 115\n.b8 121\n.b8 110\n.b8 99\n.b8 69\n.b8 106\n.b8 102\n.b8 105\n.b8 105\n.b8 0\n$L__info_string9:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 54\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 51\n.b8 114\n.b8 117\n.b8 110\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string10:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 54\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 49\n.b8 54\n.b8 98\n.b8 117\n.b8 116\n.b8 116\n.b8 101\n.b8 114\n.b8 102\n.b8 108\n.b8 121\n.b8 95\n.b8 114\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string11:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 56\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 51\n.b8 114\n.b8 117\n.b8 110\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string12:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 56\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 49\n.b8 54\n.b8 98\n.b8 117\n.b8 116\n.b8 116\n.b8 101\n.b8 114\n.b8 102\n.b8 108\n.b8 121\n.b8 95\n.b8 114\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string13:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 52\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 51\n.b8 114\n.b8 117\n.b8 110\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string14:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 52\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 49\n.b8 54\n.b8 98\n.b8 117\n.b8 116\n.b8 116\n.b8 101\n.b8 114\n.b8 102\n.b8 108\n.b8 121\n.b8 95\n.b8 114\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string15:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 50\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 51\n.b8 114\n.b8 117\n.b8 110\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string16:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 50\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 49\n.b8 54\n.b8 98\n.b8 117\n.b8 116\n.b8 116\n.b8 101\n.b8 114\n.b8 102\n.b8 108\n.b8 121\n.b8 95\n.b8 114\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n\t}\n",
+      "target": {
+        "name": "cuda"
+      },
+      "tir": "# from tvm.script import tir as T\n\n@T.prim_func\ndef scrc_k0(p0_handle: T.handle, p1_handle: T.handle):\n    x0 = T.int32()\n    p0 = T.match_buffer(p0_handle, (x0, 64), strides=(64, 1))\n    p1 = T.match_buffer(p1_handle, (x0, 16), strides=(16, 1))\n    # with T.block(\"root\"):\n    bx = T.launch_thread(\"blockIdx.x\", x0)\n    by = T.launch_thread(\"blockIdx.y\", 16)\n    tx = T.launch_thread(\"threadIdx.x\", 128)\n    ty = T.launch_thread(\"threadIdx.y\", 1)\n    tz = T.launch_thread(\"threadIdx.z\", 1)\n    with T.block(\"tilelang_root\"):\n        T.reads(p0[bx, 0])\n        T.writes(p1[bx, by])\n        input_fragment = T.alloc_buffer((64,), scope=\"local.fragment\")\n        product_fragment = T.alloc_buffer((64,), scope=\"local.fragment\")\n        result_fragment = T.alloc_buffer((1,), scope=\"local.fragment\")\n        T.copy(T.region(p0[bx, 0], 1, 1, 64), T.region(input_fragment[0], 2, 64))\n        for v8 in T.parallel(64):\n            product_fragment[v8] = input_fragment[v8] * T.Cast(\"float32\", v8 // 4 == by)\n        T.reduce(product_fragment[0:64], result_fragment[0], \"sum\", 0, T.bool(True))\n        p1[bx, by] = result_fragment[0]"
+    },
+    "diagnostic": null,
+    "fingerprint": {
+      "digest": "6c98078bc67eb5b8871601197ac2e717ea0788db09c93a2a16c1e482f1aff579",
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":1,\"rank\":2}]"
+        ]
+      ],
+      "program_coordinates": [
+        "blockIdx.x",
+        "blockIdx.y"
+      ],
+      "ptx": {
+        "collectives": [
+          "barrier.cta",
+          "barrier.cta",
+          "shuffle",
+          "shuffle",
+          "shuffle",
+          "shuffle",
+          "shuffle"
+        ],
+        "control_flow": [
+          "ret;"
+        ],
+        "coordinate_uses": [
+          "%ctaid.x",
+          "%ctaid.y",
+          "%tid.x"
+        ],
+        "digest": "de930c8514f49c92463bf1f52d38867985f7b980942c7e824df616a093ff2d60",
+        "instructions": [
+          "ld.param.u64 %b640,[param0];",
+          "ld.param.u64 %b641,[param1];",
+          "cvta.to.global.u64 %b642,%b641;",
+          "cvta.to.global.u64 %b643,%b640;",
+          "mov.u32 %b320,%ctaid.x;",
+          "mul.wide.u32 %b644,%b320,64;",
+          "mov.u32 %b321,%tid.x;",
+          "and.b32 %b322,%b321,63;",
+          "cvt.u64.u32 %b645,%b322;",
+          "or.b64 %b646,%b644,%b645;",
+          "shl.b64 %b647,%b646,2;",
+          "add.s64 %b648,%b643,%b647;",
+          "ld.global.nc.f32 %f320,[%b648];",
+          "shr.u32 %b323,%b321,2;",
+          "and.b32 %b324,%b323,15;",
+          "mov.u32 %b325,%ctaid.y;",
+          "setp.eq.s32 %pred0,%b324,%b325;",
+          "selp.f32 %f321,0f3F800000,0f00000000,%pred0;",
+          "fma.rn.f32 %f322,%f320,%f321,0f00000000;",
+          "mov.b32 %b326,1;",
+          "mov.b32 %b327,128;",
+          "bar.sync %b326,%b327;",
+          "shl.b32 %b328,%b321,2;",
+          "mov.u32 %b329,workspace;",
+          "add.s32 %b3210,%b329,%b328;",
+          "st.shared.f32 [%b3210],%f322;",
+          "mov.b32 %b3211,2;",
+          "bar.sync %b3211,%b327;",
+          "xor.b32 %b3212,%b328,128;",
+          "add.s32 %b3213,%b329,%b3212;",
+          "ld.shared.f32 %f323,[%b3213];",
+          "add.f32 %f324,%f322,%f323;",
+          "mov.b32 %b3214,%f324;",
+          "shfl.sync.bfly.b32 %b3215|%pred1,%b3214,16,31,-1;",
+          "mov.b32 %f325,%b3215;",
+          "add.f32 %f326,%f324,%f325;",
+          "mov.b32 %b3216,%f326;",
+          "shfl.sync.bfly.b32 %b3217|%pred2,%b3216,8,31,-1;",
+          "mov.b32 %f327,%b3217;",
+          "add.f32 %f328,%f326,%f327;",
+          "mov.b32 %b3218,%f328;",
+          "shfl.sync.bfly.b32 %b3219|%pred3,%b3218,4,31,-1;",
+          "mov.b32 %f329,%b3219;",
+          "add.f32 %f3210,%f328,%f329;",
+          "mov.b32 %b3220,%f3210;",
+          "shfl.sync.bfly.b32 %b3221|%pred4,%b3220,2,31,-1;",
+          "mov.b32 %f3211,%b3221;",
+          "add.f32 %f3212,%f3210,%f3211;",
+          "mov.b32 %b3222,%f3212;",
+          "shfl.sync.bfly.b32 %b3223|%pred5,%b3222,1,31,-1;",
+          "mov.b32 %f3213,%b3223;",
+          "add.f32 %f3214,%f3212,%f3213;",
+          "mul.wide.u32 %b649,%b320,16;",
+          "cvt.u64.u32 %b6410,%b325;",
+          "add.s64 %b6411,%b649,%b6410;",
+          "shl.b64 %b6412,%b6411,2;",
+          "add.s64 %b6413,%b642,%b6412;",
+          "st.global.f32 [%b6413],%f3214;",
+          "ret;"
+        ],
+        "interface": [
+          [
+            "parameters",
+            "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":1,\"rank\":2}]",
+            null
+          ],
+          [
+            "ptx_abi",
+            "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+            null
+          ]
+        ],
+        "memory_effects": [
+          "ld.param.u64 %b640,[param0];",
+          "ld.param.u64 %b641,[param1];",
+          "ld.global.nc.f32 %f320,[%b648];",
+          "st.shared.f32 [%b3210],%f322;",
+          "ld.shared.f32 %f323,[%b3213];",
+          "st.global.f32 [%b6413],%f3214;"
+        ],
+        "opcode_multiset": [
+          [
+            "add.f32",
+            6
+          ],
+          [
+            "add.s32",
+            2
+          ],
+          [
+            "add.s64",
+            3
+          ],
+          [
+            "and.b32",
+            2
+          ],
+          [
+            "bar.sync",
+            2
+          ],
+          [
+            "cvt.u64.u32",
+            2
+          ],
+          [
+            "cvta.to.global.u64",
+            2
+          ],
+          [
+            "fma.rn.f32",
+            1
+          ],
+          [
+            "ld.global.nc.f32",
+            1
+          ],
+          [
+            "ld.param.u64",
+            2
+          ],
+          [
+            "ld.shared.f32",
+            1
+          ],
+          [
+            "mov.b32",
+            13
+          ],
+          [
+            "mov.u32",
+            4
+          ],
+          [
+            "mul.wide.u32",
+            2
+          ],
+          [
+            "or.b64",
+            1
+          ],
+          [
+            "ret;",
+            1
+          ],
+          [
+            "selp.f32",
+            1
+          ],
+          [
+            "setp.eq.s32",
+            1
+          ],
+          [
+            "shfl.sync.bfly.b32",
+            5
+          ],
+          [
+            "shl.b32",
+            1
+          ],
+          [
+            "shl.b64",
+            2
+          ],
+          [
+            "shr.u32",
+            1
+          ],
+          [
+            "st.global.f32",
+            1
+          ],
+          [
+            "st.shared.f32",
+            1
+          ],
+          [
+            "xor.b32",
+            1
+          ]
+        ],
+        "schedule_view": [
+          [
+            "c0",
+            "128"
+          ]
+        ],
+        "schema_version": "cuda-ptx-semantic-effects-v7",
+        "semantic_address_coordinate_folds": [
+          [
+            "ld.global.b32:%tid.x:cyclic:64",
+            1
+          ]
+        ],
+        "semantic_memory_effects": [
+          [
+            "ld.global.b32",
+            1
+          ],
+          [
+            "ld.param.b64",
+            2
+          ],
+          [
+            "ld.shared.b32",
+            1
+          ],
+          [
+            "st.global.b32",
+            1
+          ],
+          [
+            "st.shared.b32",
+            1
+          ]
+        ],
+        "semantic_value_opcodes": [
+          [
+            "add.f32",
+            6
+          ],
+          [
+            "and.b32",
+            1
+          ],
+          [
+            "fma.rn.f32",
+            1
+          ],
+          [
+            "ld.global.b32",
+            1
+          ],
+          [
+            "ld.shared.b32",
+            1
+          ],
+          [
+            "mov.b32",
+            10
+          ],
+          [
+            "mov.u32",
+            2
+          ],
+          [
+            "selp.f32",
+            1
+          ],
+          [
+            "setp.eq.s32",
+            1
+          ],
+          [
+            "shfl.sync.bfly.b32",
+            5
+          ],
+          [
+            "shr.u32",
+            1
+          ]
+        ],
+        "target_view": [
+          [
+            "name",
+            "\"cuda\""
+          ]
+        ]
+      },
+      "schedule_view": [
+        [
+          "c0",
+          "128"
+        ]
+      ],
+      "schema_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v6",
+      "semantic_memory_effect_kinds": [
+        "load",
+        "store"
+      ],
+      "semantic_value_families": [
+        "add",
+        "mul"
+      ],
+      "tir_op_multiset": [
+        [
+          "T.Cast",
+          1
+        ],
+        [
+          "T.alloc_buffer",
+          3
+        ],
+        [
+          "T.block",
+          1
+        ],
+        [
+          "T.bool",
+          1
+        ],
+        [
+          "T.copy",
+          1
+        ],
+        [
+          "T.handle",
+          2
+        ],
+        [
+          "T.launch_thread",
+          5
+        ],
+        [
+          "T.match_buffer",
+          2
+        ],
+        [
+          "T.prim_func",
+          1
+        ],
+        [
+          "T.reads",
+          1
+        ],
+        [
+          "T.reduce",
+          1
+        ],
+        [
+          "T.region",
+          2
+        ],
+        [
+          "T.writes",
+          1
+        ],
+        [
+          "control.for",
+          1
+        ]
+      ],
+      "tir_ops": [
+        "T.prim_func",
+        "T.handle",
+        "T.handle",
+        "T.match_buffer",
+        "T.match_buffer",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.launch_thread",
+        "T.block",
+        "T.reads",
+        "T.writes",
+        "T.alloc_buffer",
+        "T.alloc_buffer",
+        "T.alloc_buffer",
+        "T.copy",
+        "T.region",
+        "T.region",
+        "control.for",
+        "T.Cast",
+        "T.reduce",
+        "T.bool"
+      ],
+      "tir_structure": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.y'), Constant(value=16)], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=128)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Constant(value=0)], ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Name(id='v4', ctx=Load())], ctx=Load()), ctx=Load())], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=64)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Assign(targets=[Name(id='v9', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=64)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Assign(targets=[Name(id='v10', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=1)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='copy', ctx=Load()), args=[Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='region', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Constant(value=0)], ctx=Load()), ctx=Load()), Constant(value=1), Constant(value=1), Constant(value=64)], keywords=[]), Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='region', ctx=Load()), args=[Subscript(value=Name(id='v8', ctx=Load()), slice=Constant(value=0), ctx=Load()), Constant(value=2), Constant(value=64)], keywords=[])], keywords=[])), For(target=Name(id='v11', ctx=Store()), iter=Call(func=Name(id='range', ctx=Load()), args=[Constant(value=64)], keywords=[]), body=[Assign(targets=[Subscript(value=Name(id='v9', ctx=Load()), slice=Name(id='v11', ctx=Load()), ctx=Store())], value=BinOp(left=Subscript(value=Name(id='v8', ctx=Load()), slice=Name(id='v11', ctx=Load()), ctx=Load()), op=Mult(), right=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='Cast', ctx=Load()), args=[Constant(value='float32'), Compare(left=BinOp(left=Name(id='v11', ctx=Load()), op=FloorDiv(), right=Constant(value=4)), ops=[Eq()], comparators=[Name(id='v4', ctx=Load())])], keywords=[])))], orelse=[]), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reduce', ctx=Load()), args=[Subscript(value=Name(id='v9', ctx=Load()), slice=Slice(lower=Constant(value=0), upper=Constant(value=64)), ctx=Load()), Subscript(value=Name(id='v10', ctx=Load()), slice=Constant(value=0), ctx=Load()), Constant(value='sum'), Constant(value=0), Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='bool', ctx=Load()), args=[Constant(value=True)], keywords=[])], keywords=[])), Assign(targets=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v3', ctx=Load()), Name(id='v4', ctx=Load())], ctx=Load()), ctx=Store())], value=Subscript(value=Name(id='v10', ctx=Load()), slice=Constant(value=0), ctx=Load()))])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+    },
+    "generation": {
+      "attempts": 1,
+      "context_receipt": {
+        "backend_protocol": "openai.codex-cli.intentir-replay.v76",
+        "cli_turns": 1,
+        "context_rollover_input_tokens": 0,
+        "episode_wall_time_limit_seconds": 7200.0,
+        "excluded_dependencies": [
+          "pi",
+          "Source",
+          "Harness valuation",
+          "Gate observation",
+          "prior Replay"
+        ],
+        "formal_compile_recheck": true,
+        "formal_ingress_protocol": "intentir.scrc.replay-check.v17",
+        "fresh_session": true,
+        "model_segments_lower_bound": 1,
+        "pi_visible_to_replay": false,
+        "replay_input_protocol": "intentir.scrc.replay-input.v4",
+        "retrieval_trace": [],
+        "thread_id": "019fbcb9-8afb-79b0-9cb3-a5b06151916b",
+        "thread_ids": [
+          "019fbcb9-8afb-79b0-9cb3-a5b06151916b"
+        ],
+        "tool_actions": 0,
+        "visible_packet_components": [
+          "c",
+          "j",
+          "u_f"
+        ]
+      },
+      "elapsed_ms": 213243.6241999967,
+      "entry_function_name": null,
+      "function_name": "scrc_k0",
+      "model": "gpt-5.6-sol",
+      "response_id": "019fbcb9-8afb-79b0-9cb3-a5b06151916b",
+      "response_model": "gpt-5.6-sol",
+      "usage": {}
+    },
+    "mode": "normal",
+    "normalization": {
+      "active_rules": [
+        "intentir.gate1.native-jc-semantic-projection.v1"
+      ],
+      "fallback": "raw_exact_comparator_for_unsupported_J_control_or_effects",
+      "frontend": "tilelang",
+      "hard_preservation_check": "passed",
+      "hard_relations": [
+        "interface",
+        "target",
+        "schedule",
+        "program_coordinates",
+        "j_semantic_families",
+        "memory_effect_kinds"
+      ],
+      "idempotence_check": "passed",
+      "observer_profile": "tilelang-tir-semantic-structure-ptx-diagnostic-v6+jc-projection-v1",
+      "peer_observation_visible": false,
+      "pi_used_only_by_gate1": true,
+      "profile_ok": true,
+      "protocol": "intentir.gate1.jc-normalizer.v3",
+      "transformed_occurrences": "projection_only",
+      "unary": true,
+      "unknown_atoms": "hard"
+    },
+    "physical_calls": 1
+  },
+  "normal_fanout": null,
+  "observer_profile": {
+    "canonicalization_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v6+intentir.gate1.native-jc-semantic-projection.v1",
+    "compiler_stage": "tir",
+    "evidence_class": "jc_semantic_projection_with_raw_tir_ptx_diagnostic",
+    "frontend": "tilelang",
+    "profile_id": "tilelang_tir_jc_semantic_projection",
+    "profile_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v6+jc-projection-v1"
+  },
+  "protocol": "intentir.j-only-replay.jc-structural-gate1.v2",
+  "source_compile": {
+    "cache_key": "3d135812aaa883590a6c9140d1a67244d8087ba283760fd7ae3edacc07f08d76",
+    "compiler": {
+      "name": "tilelang",
+      "version": "0.1.8"
+    },
+    "cuda": "#include <tl_templates/cuda/gemm.h>\n#include <tl_templates/cuda/copy.h>\n#include <tl_templates/cuda/reduce.h>\n#include <tl_templates/cuda/ldsm.h>\n#include <tl_templates/cuda/threadblock_swizzle.h>\n#include <tl_templates/cuda/debug.h>\n#ifdef ENABLE_BF16\n#include <tl_templates/cuda/cuda_bf16_fallbacks.cuh>\n#endif\n\nextern \"C\" __global__ void main_kernel(const float* __restrict__ inp, float* __restrict__ out, int M);\nextern \"C\" __global__ void __launch_bounds__(128, 1) main_kernel(const float* __restrict__ inp, float* __restrict__ out, int M) {\n  float vals[1];\n  float sm[1];\n  vals[0] = inp[(((((int64_t)((int)blockIdx.y)) * (int64_t)64) + (((int64_t)((int)blockIdx.x)) * (int64_t)4)) + (((int64_t)((int)threadIdx.x)) & (int64_t)3))];\n  sm[0] = 0x0p+0f/*0.000000e+00*/;\n  sm[0] = (sm[0] + vals[0]);\n  sm[0] = tl::AllReduce<tl::SumOp, 4, 1, 0, tl::NamedBarrier<128>>::run(sm[0]);\n  out[((((int64_t)((int)blockIdx.y)) * (int64_t)16) + ((int64_t)((int)blockIdx.x)))] = sm[0];\n}\n\n",
+    "diagnostic": "",
+    "elapsed_ms": 5191.345902974717,
+    "interface": {
+      "parameters": [
+        {
+          "dtype": "float32",
+          "kind": "pointer",
+          "mode": "input",
+          "name": "inp",
+          "rank": 2,
+          "shape": [
+            "M",
+            64
+          ]
+        },
+        {
+          "dtype": "float32",
+          "kind": "pointer",
+          "mode": "output",
+          "name": "out",
+          "rank": 2,
+          "shape": [
+            "M",
+            16
+          ]
+        }
+      ]
+    },
+    "ok": true,
+    "ptx": "//\n// Generated by NVIDIA NVVM Compiler\n//\n// Compiler Build ID: CL-35404655\n// Cuda compilation tools, release 12.8, V12.8.61\n// Based on NVVM 20.0.0\n//\n\n.version 8.7\n.target sm_120a\n.address_size 64\n\n\t// .globl\tmain_kernel\n.global .align 1 .b8 _ZN45_INTERNAL_c21ad8c2_14_tvm_kernels_cu_1b63e0854cute7productE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_c21ad8c2_14_tvm_kernels_cu_1b63e0854cute1_E[1];\n.global .align 1 .b8 _ZN45_INTERNAL_c21ad8c2_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo5beginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_c21ad8c2_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo3endE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_c21ad8c2_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo6cbeginE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_c21ad8c2_14_tvm_kernels_cu_1b63e0854cuda3std3__45__cpo4cendE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_c21ad8c2_14_tvm_kernels_cu_1b63e0854cuda3std3__419piecewise_constructE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_c21ad8c2_14_tvm_kernels_cu_1b63e0854cuda3std3__48in_placeE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_c21ad8c2_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo4swapE[1];\n.global .align 1 .b8 _ZN45_INTERNAL_c21ad8c2_14_tvm_kernels_cu_1b63e0854cuda3std6ranges3__45__cpo9iter_moveE[1];\n\n.visible .entry main_kernel(\n\t.param .u64 main_kernel_param_0,\n\t.param .u64 main_kernel_param_1,\n\t.param .u32 main_kernel_param_2\n)\n.maxntid 128, 1, 1\n.minnctapersm 1\n{\n\t.reg .pred \t%p<3>;\n\t.reg .b32 \t%r<12>;\n\t.reg .f32 \t%f<7>;\n\t.reg .b64 \t%rd<14>;\n\t.loc\t1 12 0\n\n\tld.param.u64 \t%rd1, [main_kernel_param_0];\n\tld.param.u64 \t%rd2, [main_kernel_param_1];\n\t.loc\t1 15 3\n\tcvta.to.global.u64 \t%rd3, %rd2;\n\tcvta.to.global.u64 \t%rd4, %rd1;\n\tmov.u32 \t%r1, %ctaid.y;\n\tshl.b32 \t%r2, %r1, 6;\n\tcvt.u64.u32 \t%rd5, %r2;\n\tmov.u32 \t%r3, %ctaid.x;\n\tmul.wide.u32 \t%rd6, %r3, 4;\n\tadd.s64 \t%rd7, %rd6, %rd5;\n\tmov.u32 \t%r4, %tid.x;\n\tand.b32  \t%r5, %r4, 3;\n\tcvt.u64.u32 \t%rd8, %r5;\n\tor.b64  \t%rd9, %rd7, %rd8;\n\tshl.b64 \t%rd10, %rd9, 2;\n\tadd.s64 \t%rd11, %rd4, %rd10;\n\tld.global.nc.f32 \t%f1, [%rd11];\n\t.loc\t1 17 3\n\tadd.f32 \t%f2, %f1, 0f00000000;\n\t.loc\t1 18 3\n\t.loc\t2 126 7, function_name $L__info_string0, inlined_at 1 18 3\n\t.loc\t2 139 7, function_name $L__info_string1, inlined_at 2 126 7\n\t.loc\t3 684 3, function_name $L__info_string2, inlined_at 2 139 7\n\t.loc\t4 449 9, function_name $L__info_string3, inlined_at 3 684 3\n\tmov.b32 \t%r6, %f2;\n\tshfl.sync.bfly.b32\t%r7|%p1, %r6, 2, 31, -1;\n\t.loc\t4 450 2, function_name $L__info_string3, inlined_at 3 684 3\n\tmov.b32 \t%f3, %r7;\n\t.loc\t2 139 7, function_name $L__info_string1, inlined_at 2 126 7\n\t.loc\t2 31 5, function_name $L__info_string4, inlined_at 2 139 7\n\tadd.f32 \t%f4, %f2, %f3;\n\t.loc\t2 144 14, function_name $L__info_string1, inlined_at 2 126 7\n\t.loc\t2 126 7, function_name $L__info_string5, inlined_at 2 144 14\n\t.loc\t2 139 7, function_name $L__info_string6, inlined_at 2 126 7\n\t.loc\t3 684 3, function_name $L__info_string2, inlined_at 2 139 7\n\t.loc\t4 449 9, function_name $L__info_string3, inlined_at 3 684 3\n\tmov.b32 \t%r8, %f4;\n\tshfl.sync.bfly.b32\t%r9|%p2, %r8, 1, 31, -1;\n\t.loc\t4 450 2, function_name $L__info_string3, inlined_at 3 684 3\n\tmov.b32 \t%f5, %r9;\n\t.loc\t2 139 7, function_name $L__info_string6, inlined_at 2 126 7\n\t.loc\t2 31 5, function_name $L__info_string4, inlined_at 2 139 7\n\tadd.f32 \t%f6, %f4, %f5;\n\t.loc\t1 19 3\n\tshl.b32 \t%r10, %r1, 4;\n\tadd.s32 \t%r11, %r10, %r3;\n\tmul.wide.u32 \t%rd12, %r11, 4;\n\tadd.s64 \t%rd13, %rd3, %rd12;\n\tst.global.f32 \t[%rd13], %f6;\n\t.loc\t1 20 1\n\tret;\n\n}\n\t.file\t1 \"/tmp/tmp3mg__s4n/tvm_kernels.cu\"\n\t.file\t2 \"/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/../src/tl_templates/cuda/reduce.h\"\n\t.file\t3 \"/home/kingdom/.local/lib/python3.10/site-packages/tilelang/3rdparty/../src/tl_templates/cuda/common.h\"\n\t.file\t4 \"/usr/local/cuda/include/sm_30_intrinsics.hpp\"\n\t.section\t.debug_str\n\t{\n$L__info_string0:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 52\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 51\n.b8 114\n.b8 117\n.b8 110\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string1:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 52\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 49\n.b8 54\n.b8 98\n.b8 117\n.b8 116\n.b8 116\n.b8 101\n.b8 114\n.b8 102\n.b8 108\n.b8 121\n.b8 95\n.b8 114\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string2:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 49\n.b8 51\n.b8 115\n.b8 104\n.b8 102\n.b8 108\n.b8 95\n.b8 120\n.b8 111\n.b8 114\n.b8 95\n.b8 115\n.b8 121\n.b8 110\n.b8 99\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 106\n.b8 83\n.b8 49\n.b8 95\n.b8 105\n.b8 0\n$L__info_string3:\n.b8 95\n.b8 90\n.b8 78\n.b8 52\n.b8 53\n.b8 95\n.b8 73\n.b8 78\n.b8 84\n.b8 69\n.b8 82\n.b8 78\n.b8 65\n.b8 76\n.b8 95\n.b8 99\n.b8 50\n.b8 49\n.b8 97\n.b8 100\n.b8 56\n.b8 99\n.b8 50\n.b8 95\n.b8 49\n.b8 52\n.b8 95\n.b8 116\n.b8 118\n.b8 109\n.b8 95\n.b8 107\n.b8 101\n.b8 114\n.b8 110\n.b8 101\n.b8 108\n.b8 115\n.b8 95\n.b8 99\n.b8 117\n.b8 95\n.b8 49\n.b8 98\n.b8 54\n.b8 51\n.b8 101\n.b8 48\n.b8 56\n.b8 53\n.b8 49\n.b8 53\n.b8 95\n.b8 95\n.b8 115\n.b8 104\n.b8 102\n.b8 108\n.b8 95\n.b8 120\n.b8 111\n.b8 114\n.b8 95\n.b8 115\n.b8 121\n.b8 110\n.b8 99\n.b8 69\n.b8 106\n.b8 102\n.b8 105\n.b8 105\n.b8 0\n$L__info_string4:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 99\n.b8 108\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 82\n.b8 75\n.b8 83\n.b8 50\n.b8 95\n.b8 83\n.b8 52\n.b8 95\n.b8 0\n$L__info_string5:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 50\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 51\n.b8 114\n.b8 117\n.b8 110\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n$L__info_string6:\n.b8 95\n.b8 90\n.b8 78\n.b8 50\n.b8 116\n.b8 108\n.b8 57\n.b8 65\n.b8 108\n.b8 108\n.b8 82\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 78\n.b8 83\n.b8 95\n.b8 53\n.b8 83\n.b8 117\n.b8 109\n.b8 79\n.b8 112\n.b8 69\n.b8 76\n.b8 105\n.b8 50\n.b8 69\n.b8 76\n.b8 105\n.b8 49\n.b8 69\n.b8 76\n.b8 105\n.b8 48\n.b8 69\n.b8 78\n.b8 83\n.b8 95\n.b8 49\n.b8 50\n.b8 78\n.b8 97\n.b8 109\n.b8 101\n.b8 100\n.b8 66\n.b8 97\n.b8 114\n.b8 114\n.b8 105\n.b8 101\n.b8 114\n.b8 73\n.b8 76\n.b8 105\n.b8 49\n.b8 50\n.b8 56\n.b8 69\n.b8 69\n.b8 69\n.b8 69\n.b8 49\n.b8 54\n.b8 98\n.b8 117\n.b8 116\n.b8 116\n.b8 101\n.b8 114\n.b8 102\n.b8 108\n.b8 121\n.b8 95\n.b8 114\n.b8 101\n.b8 100\n.b8 117\n.b8 99\n.b8 101\n.b8 73\n.b8 102\n.b8 69\n.b8 69\n.b8 84\n.b8 95\n.b8 83\n.b8 54\n.b8 95\n.b8 80\n.b8 83\n.b8 54\n.b8 95\n.b8 0\n\t}\n",
+    "target": {
+      "name": "cuda"
+    },
+    "tir": "# from tvm.script import tir as T\n\n@T.prim_func\ndef main(inp_handle: T.handle, out_handle: T.handle):\n    M = T.int32()\n    inp = T.match_buffer(inp_handle, (M, 64), strides=(64, 1))\n    out = T.match_buffer(out_handle, (M, 16), strides=(16, 1))\n    # with T.block(\"root\"):\n    bx = T.launch_thread(\"blockIdx.x\", 16)\n    by = T.launch_thread(\"blockIdx.y\", M)\n    tx = T.launch_thread(\"threadIdx.x\", 128)\n    ty = T.launch_thread(\"threadIdx.y\", 1)\n    tz = T.launch_thread(\"threadIdx.z\", 1)\n    with T.block(\"tilelang_root\"):\n        T.reads(inp[by, bx * 4])\n        T.writes(out[by, bx])\n        vals = T.alloc_buffer((4,), scope=\"local.fragment\")\n        sm = T.alloc_buffer((1,), scope=\"local.fragment\")\n        T.copy(T.region(inp[by, bx * 4], 1, 1, 4), T.region(vals[0], 2, 4))\n        T.reduce(vals[0:4], sm[0], \"sum\", 0, T.bool(True))\n        out[by, bx] = sm[0]"
+  },
+  "source_fingerprint": {
+    "digest": "46067976d759abff3f3971a8bdb3d16d924cfd9a1b41acab92f39819c708c9e0",
+    "interface": [
+      [
+        "parameters",
+        "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":1,\"rank\":2}]"
+      ]
+    ],
+    "program_coordinates": [
+      "blockIdx.x",
+      "blockIdx.y"
+    ],
+    "ptx": {
+      "collectives": [
+        "shuffle",
+        "shuffle"
+      ],
+      "control_flow": [
+        "ret;"
+      ],
+      "coordinate_uses": [
+        "%ctaid.x",
+        "%ctaid.y",
+        "%tid.x"
+      ],
+      "digest": "38c9a26725e0d83fca087a9a34dba9a859fd946c5837de8216cec132ca87a523",
+      "instructions": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "cvta.to.global.u64 %b642,%b641;",
+        "cvta.to.global.u64 %b643,%b640;",
+        "mov.u32 %b320,%ctaid.y;",
+        "shl.b32 %b321,%b320,6;",
+        "cvt.u64.u32 %b644,%b321;",
+        "mov.u32 %b322,%ctaid.x;",
+        "mul.wide.u32 %b645,%b322,4;",
+        "add.s64 %b646,%b645,%b644;",
+        "mov.u32 %b323,%tid.x;",
+        "and.b32 %b324,%b323,3;",
+        "cvt.u64.u32 %b647,%b324;",
+        "or.b64 %b648,%b646,%b647;",
+        "shl.b64 %b649,%b648,2;",
+        "add.s64 %b6410,%b643,%b649;",
+        "ld.global.nc.f32 %f320,[%b6410];",
+        "add.f32 %f321,%f320,0f00000000;",
+        "mov.b32 %b325,%f321;",
+        "shfl.sync.bfly.b32 %b326|%pred0,%b325,2,31,-1;",
+        "mov.b32 %f322,%b326;",
+        "add.f32 %f323,%f321,%f322;",
+        "mov.b32 %b327,%f323;",
+        "shfl.sync.bfly.b32 %b328|%pred1,%b327,1,31,-1;",
+        "mov.b32 %f324,%b328;",
+        "add.f32 %f325,%f323,%f324;",
+        "shl.b32 %b329,%b320,4;",
+        "add.s32 %b3210,%b329,%b322;",
+        "mul.wide.u32 %b6411,%b3210,4;",
+        "add.s64 %b6412,%b642,%b6411;",
+        "st.global.f32 [%b6412],%f325;",
+        "ret;"
+      ],
+      "interface": [
+        [
+          "parameters",
+          "[{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"input\",\"position\":0,\"rank\":2},{\"dtype\":\"f32\",\"kind\":\"pointer\",\"mode\":\"output\",\"position\":1,\"rank\":2}]",
+          null
+        ],
+        [
+          "ptx_abi",
+          "[[\"\",\"u64\",null],[\"\",\"u64\",null],[\"\",\"u32\",null]]",
+          null
+        ]
+      ],
+      "memory_effects": [
+        "ld.param.u64 %b640,[param0];",
+        "ld.param.u64 %b641,[param1];",
+        "ld.global.nc.f32 %f320,[%b6410];",
+        "st.global.f32 [%b6412],%f325;"
+      ],
+      "opcode_multiset": [
+        [
+          "add.f32",
+          3
+        ],
+        [
+          "add.s32",
+          1
+        ],
+        [
+          "add.s64",
+          3
+        ],
+        [
+          "and.b32",
+          1
+        ],
+        [
+          "cvt.u64.u32",
+          2
+        ],
+        [
+          "cvta.to.global.u64",
+          2
+        ],
+        [
+          "ld.global.nc.f32",
+          1
+        ],
+        [
+          "ld.param.u64",
+          2
+        ],
+        [
+          "mov.b32",
+          4
+        ],
+        [
+          "mov.u32",
+          3
+        ],
+        [
+          "mul.wide.u32",
+          2
+        ],
+        [
+          "or.b64",
+          1
+        ],
+        [
+          "ret;",
+          1
+        ],
+        [
+          "shfl.sync.bfly.b32",
+          2
+        ],
+        [
+          "shl.b32",
+          2
+        ],
+        [
+          "shl.b64",
+          1
+        ],
+        [
+          "st.global.f32",
+          1
+        ]
+      ],
+      "schedule_view": [
+        [
+          "c0",
+          "128"
+        ]
+      ],
+      "schema_version": "cuda-ptx-semantic-effects-v7",
+      "semantic_address_coordinate_folds": [
+        [
+          "ld.global.b32:%tid.x:cyclic:4",
+          1
+        ]
+      ],
+      "semantic_memory_effects": [
+        [
+          "ld.global.b32",
+          1
+        ],
+        [
+          "ld.param.b64",
+          2
+        ],
+        [
+          "st.global.b32",
+          1
+        ]
+      ],
+      "semantic_value_opcodes": [
+        [
+          "add.f32",
+          3
+        ],
+        [
+          "ld.global.b32",
+          1
+        ],
+        [
+          "mov.b32",
+          4
+        ],
+        [
+          "shfl.sync.bfly.b32",
+          2
+        ]
+      ],
+      "target_view": [
+        [
+          "name",
+          "\"cuda\""
+        ]
+      ]
+    },
+    "schedule_view": [
+      [
+        "c0",
+        "128"
+      ]
+    ],
+    "schema_version": "tilelang-tir-semantic-structure-ptx-diagnostic-v6",
+    "semantic_memory_effect_kinds": [
+      "load",
+      "store"
+    ],
+    "semantic_value_families": [
+      "add",
+      "mul"
+    ],
+    "tir_op_multiset": [
+      [
+        "T.alloc_buffer",
+        2
+      ],
+      [
+        "T.block",
+        1
+      ],
+      [
+        "T.bool",
+        1
+      ],
+      [
+        "T.copy",
+        1
+      ],
+      [
+        "T.handle",
+        2
+      ],
+      [
+        "T.launch_thread",
+        5
+      ],
+      [
+        "T.match_buffer",
+        2
+      ],
+      [
+        "T.prim_func",
+        1
+      ],
+      [
+        "T.reads",
+        1
+      ],
+      [
+        "T.reduce",
+        1
+      ],
+      [
+        "T.region",
+        2
+      ],
+      [
+        "T.writes",
+        1
+      ]
+    ],
+    "tir_ops": [
+      "T.prim_func",
+      "T.handle",
+      "T.handle",
+      "T.match_buffer",
+      "T.match_buffer",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.launch_thread",
+      "T.block",
+      "T.reads",
+      "T.writes",
+      "T.alloc_buffer",
+      "T.alloc_buffer",
+      "T.copy",
+      "T.region",
+      "T.region",
+      "T.reduce",
+      "T.bool"
+    ],
+    "tir_structure": "Module(body=[FunctionDef(name='tir_entry', args=arguments(posonlyargs=[], args=[arg(arg='p0', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load())), arg(arg='p1', annotation=Attribute(value=Name(id='T', ctx=Load()), attr='handle', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[]), body=[Assign(targets=[Name(id='v0', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='int32', ctx=Load()), args=[], keywords=[])), Assign(targets=[Name(id='v1', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p0', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=64)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=64), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v2', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='match_buffer', ctx=Load()), args=[Name(id='p1', ctx=Load()), Tuple(elts=[Name(id='v0', ctx=Load()), Constant(value=16)], ctx=Load())], keywords=[keyword(arg='strides', value=Tuple(elts=[Constant(value=16), Constant(value=1)], ctx=Load()))])), Assign(targets=[Name(id='v3', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.x'), Constant(value=16)], keywords=[])), Assign(targets=[Name(id='v4', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='blockIdx.y'), Name(id='v0', ctx=Load())], keywords=[])), Assign(targets=[Name(id='v5', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.x'), Constant(value=128)], keywords=[])), Assign(targets=[Name(id='v6', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.y'), Constant(value=1)], keywords=[])), Assign(targets=[Name(id='v7', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='launch_thread', ctx=Load()), args=[Constant(value='threadIdx.z'), Constant(value=1)], keywords=[])), With(items=[withitem(context_expr=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='block', ctx=Load()), args=[Constant(value='<block>')], keywords=[]))], body=[Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reads', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), BinOp(left=Name(id='v3', ctx=Load()), op=Mult(), right=Constant(value=4))], ctx=Load()), ctx=Load())], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='writes', ctx=Load()), args=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v3', ctx=Load())], ctx=Load()), ctx=Load())], keywords=[])), Assign(targets=[Name(id='v8', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=4)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Assign(targets=[Name(id='v9', ctx=Store())], value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='alloc_buffer', ctx=Load()), args=[Tuple(elts=[Constant(value=1)], ctx=Load())], keywords=[keyword(arg='scope', value=Constant(value='local.fragment'))])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='copy', ctx=Load()), args=[Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='region', ctx=Load()), args=[Subscript(value=Name(id='v1', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), BinOp(left=Name(id='v3', ctx=Load()), op=Mult(), right=Constant(value=4))], ctx=Load()), ctx=Load()), Constant(value=1), Constant(value=1), Constant(value=4)], keywords=[]), Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='region', ctx=Load()), args=[Subscript(value=Name(id='v8', ctx=Load()), slice=Constant(value=0), ctx=Load()), Constant(value=2), Constant(value=4)], keywords=[])], keywords=[])), Expr(value=Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='reduce', ctx=Load()), args=[Subscript(value=Name(id='v8', ctx=Load()), slice=Slice(lower=Constant(value=0), upper=Constant(value=4)), ctx=Load()), Subscript(value=Name(id='v9', ctx=Load()), slice=Constant(value=0), ctx=Load()), Constant(value='sum'), Constant(value=0), Call(func=Attribute(value=Name(id='T', ctx=Load()), attr='bool', ctx=Load()), args=[Constant(value=True)], keywords=[])], keywords=[])), Assign(targets=[Subscript(value=Name(id='v2', ctx=Load()), slice=Tuple(elts=[Name(id='v4', ctx=Load()), Name(id='v3', ctx=Load())], ctx=Load()), ctx=Store())], value=Subscript(value=Name(id='v9', ctx=Load()), slice=Constant(value=0), ctx=Load()))])], decorator_list=[Attribute(value=Name(id='T', ctx=Load()), attr='prim_func', ctx=Load())])], type_ignores=[])"
+  },
+  "source_normalization": {
+    "active_rules": [
+      "intentir.gate1.native-jc-semantic-projection.v1"
+    ],
+    "fallback": "raw_exact_comparator_for_unsupported_J_control_or_effects",
+    "frontend": "tilelang",
+    "hard_preservation_check": "passed",
+    "hard_relations": [
+      "interface",
+      "target",
+      "schedule",
+      "program_coordinates",
+      "j_semantic_families",
+      "memory_effect_kinds"
+    ],
+    "idempotence_check": "passed",
+    "observer_profile": "tilelang-tir-semantic-structure-ptx-diagnostic-v6+jc-projection-v1",
+    "peer_observation_visible": false,
+    "pi_used_only_by_gate1": true,
+    "profile_ok": true,
+    "protocol": "intentir.gate1.jc-normalizer.v3",
+    "transformed_occurrences": "projection_only",
+    "unary": true,
+    "unknown_atoms": "hard"
+  },
+  "status": "replay_closed"
+}

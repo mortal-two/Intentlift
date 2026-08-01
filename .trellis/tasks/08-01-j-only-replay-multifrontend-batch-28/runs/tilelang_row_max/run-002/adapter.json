@@ -1,0 +1,32 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "tilelang:row_max",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "a9418c9fcfe16cbf021ba67de0f4a3ebcb768b93fc269436cb5ab079ceb051ad",
+  "dimensions": {
+    "M": 16
+  },
+  "factory_kwargs": {
+    "n": 16,
+    "threads": 128
+  },
+  "frontend": "tilelang",
+  "grid": [
+    16,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "M",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {},
+  "seed": 1323730041,
+  "source_sha256": "705da72bbc1d117e874cf369dc1540fef08a15e379203172327a738eef0189c5"
+}

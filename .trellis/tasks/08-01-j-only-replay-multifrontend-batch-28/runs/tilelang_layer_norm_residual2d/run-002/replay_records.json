@@ -1,0 +1,282 @@
+[
+  {
+    "attempts": 1,
+    "backend_protocol": "openai.codex-cli.intentir-replay.v76",
+    "context_receipt": {
+      "backend_protocol": "openai.codex-cli.intentir-replay.v76",
+      "cli_turns": 1,
+      "context_rollover_input_tokens": 0,
+      "episode_wall_time_limit_seconds": 7200.0,
+      "excluded_dependencies": [
+        "pi",
+        "Source",
+        "Harness valuation",
+        "Gate observation",
+        "prior Replay"
+      ],
+      "formal_compile_recheck": true,
+      "formal_ingress_protocol": "intentir.scrc.replay-check.v17",
+      "fresh_session": true,
+      "model_segments_lower_bound": 1,
+      "pi_visible_to_replay": false,
+      "replay_input_protocol": "intentir.scrc.replay-input.v4",
+      "retrieval_trace": [],
+      "thread_id": "019fbcc0-b6f0-73a3-aaef-c8f3d8f7bec8",
+      "thread_ids": [
+        "019fbcc0-b6f0-73a3-aaef-c8f3d8f7bec8"
+      ],
+      "tool_actions": 0,
+      "visible_packet_components": [
+        "c",
+        "j",
+        "u_f"
+      ]
+    },
+    "elapsed_ms": 306592.09380997345,
+    "entry_function_name": null,
+    "function_name": "scrc_k0",
+    "kind": "generation",
+    "model": "gpt-5.6-sol",
+    "physical_provider_calls": 1,
+    "response_id": "019fbcc0-b6f0-73a3-aaef-c8f3d8f7bec8",
+    "response_model": "gpt-5.6-sol",
+    "trajectory": {
+      "accepted_submission_interrupts": [
+        {
+          "elapsed_ms": 306592.09380997345,
+          "recovery": "exact_checkpoint_restored",
+          "thread_id": "019fbcc0-b6f0-73a3-aaef-c8f3d8f7bec8"
+        }
+      ],
+      "backend": "openai.codex-cli.intentir-replay.v76",
+      "diagnostic_ready_interrupts": [],
+      "explicit_submission_accepted": true,
+      "formal_ingress_recheck": true,
+      "fresh_session": true,
+      "isolation": {
+        "input": "read-only",
+        "output_work_tmp": "write-only-scope",
+        "provider_secret_in_tool_env": false,
+        "source_blind": true,
+        "tool_network": "disabled"
+      },
+      "live_checkpoint": [
+        {
+          "accepted": false,
+          "checkpoint_only": true,
+          "replay_bytes": 1289,
+          "status": "fail"
+        },
+        {
+          "accepted": true,
+          "checkpoint_only": true,
+          "replay_bytes": 1289,
+          "status": "pass"
+        },
+        {
+          "accepted": true,
+          "checkpoint_only": true,
+          "replay_bytes": 1264,
+          "status": "pass"
+        }
+      ],
+      "packet_queries": [],
+      "protocol": "intentir.codex-cli.agent-runtime.v5",
+      "replay_check": [
+        {
+          "diagnostics": [
+            {
+              "anonymous_handles": [],
+              "line": 3,
+              "path": "<line:3>",
+              "rule_code": "tilelang_module_binding_requires_uppercase_literal_or_T_dynamic"
+            }
+          ],
+          "status": "fail",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "host_accepted_submission_restore"
+        }
+      ],
+      "replay_compile_check": [
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "live_checkpoint"
+        },
+        {
+          "diagnostics": [],
+          "status": "pass",
+          "trigger": "host_accepted_submission_restore"
+        }
+      ],
+      "replay_input": {
+        "authority": "path and byte-count receipt only; exact source-isolated packet bytes remain in input/packet.json and no code or schedule is generated",
+        "compiler_index_json_bytes": 524,
+        "compiler_index_text_bytes": 342,
+        "excluded_dependencies": [
+          "pi",
+          "Source",
+          "Harness valuation",
+          "Gate observation",
+          "prior Replay"
+        ],
+        "packet_bytes": 9791,
+        "paths": {
+          "compiler_index": "input/compiler-index.intent",
+          "compiler_index_json": "input/compiler-index.json",
+          "frontend": "input/frontend.json",
+          "host_check": "work/host_replay_check.json",
+          "mask_c": "input/mask-c.json",
+          "packet": "input/packet.json",
+          "public_contract": "input/REPLAY_CONTRACT.md",
+          "replay": "output/replay.source",
+          "semantic_program": "input/semantic-program.intent",
+          "semantic_program_json": "input/semantic-program.json",
+          "tool_contract": "input/TOOL.md"
+        },
+        "pi_visible_to_replay": false,
+        "protocol": "intentir.scrc.replay-startup-view.v6",
+        "semantic_program_json_bytes": 12799,
+        "semantic_program_text_bytes": 6666,
+        "visible_packet_components": [
+          "c",
+          "j",
+          "u_f"
+        ]
+      },
+      "replay_ttir_inspections": [],
+      "semantic_queries": [
+        {
+          "query": [
+            "ownership"
+          ]
+        },
+        {
+          "query": [
+            "node",
+            "n0"
+          ]
+        },
+        {
+          "query": [
+            "node",
+            "n1"
+          ]
+        },
+        {
+          "query": [
+            "node",
+            "n6"
+          ]
+        }
+      ],
+      "thread_id": "019fbcc0-b6f0-73a3-aaef-c8f3d8f7bec8",
+      "thread_ids": [
+        "019fbcc0-b6f0-73a3-aaef-c8f3d8f7bec8"
+      ],
+      "timeout_events": [],
+      "tool_bridge": {
+        "authority": "closed allowlisted workspace callbacks; each handler response declares its own authority, and the mailbox transport performs no semantic inference, lowering, repair, Gate, or certification",
+        "calls": 9,
+        "protocol": "intentir.codex-cli.tool-bridge.v3",
+        "receipts": [
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 2.5435880525037646,
+            "result_sha256": "3abac0ab58ec733199e7f67ea3ad226fbecbf91c4d1ee2fc415f67aab5b35571",
+            "status": "fail",
+            "tool": "<invalid>"
+          },
+          {
+            "argument_count": 1,
+            "arguments_sha256": "72540056bc367c3d733316a27d4a0fac55384882254ce828f85a5abf97444c85",
+            "elapsed_ms": 3.6588850198313594,
+            "result_sha256": "d8bd056512834856a59d576bdf24aba6795ca54cc51a6614a4f947f78801ec08",
+            "status": "pass",
+            "tool": "semantic_query"
+          },
+          {
+            "argument_count": 2,
+            "arguments_sha256": "491aa93165ce02660452a9f0f3f5cfe7e1de254b93402c1b1ce0dda8e4d6bf41",
+            "elapsed_ms": 2.3254170082509518,
+            "result_sha256": "f631fddf93827da055792e588371604787c282136fdfacac69d2436e4ed83f3d",
+            "status": "pass",
+            "tool": "semantic_query"
+          },
+          {
+            "argument_count": 2,
+            "arguments_sha256": "1558155d257c9d15ea831c808eb134ebd7dee71f9d6f4dce1d227d7e167ded3b",
+            "elapsed_ms": 2.2408749209716916,
+            "result_sha256": "cf8c79a22c70466c32236fd49baff24bc83c2165fce016b98725bb1ff7cdda7b",
+            "status": "pass",
+            "tool": "semantic_query"
+          },
+          {
+            "argument_count": 2,
+            "arguments_sha256": "682a67de028486e584348110c54a5949d836d9fb1fbbddeed291993e0645d4a5",
+            "elapsed_ms": 2.414050977677107,
+            "result_sha256": "360d7d7cdbc154429f8f1541399ea855f17d9a6cb288d0a2bf43747063fc49ca",
+            "status": "pass",
+            "tool": "semantic_query"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 6.0094359796494246,
+            "result_sha256": "e42a15c269601f96448a6dc40ccb0f4c2a9bcd44b0a4d6f8d3d2dcd7eeadd732",
+            "status": "fail",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 9973.337378934957,
+            "result_sha256": "a311754381bf7347ddacf6c0c01606e88918a09e632126fddc937d3d3e560111",
+            "status": "pass",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 4800.642300979234,
+            "result_sha256": "bdd5adcbcb6ca68ed915698c65718be167a942774c975a0d1d95f36a1163ea44",
+            "status": "pass",
+            "tool": "replay_compile_check"
+          },
+          {
+            "argument_count": 0,
+            "arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "elapsed_ms": 5031.769750989042,
+            "result_sha256": "e5a28eba4de7c9b5d9704a9669108c8c7ee37196ad2ffc7cba020f70740c3d06",
+            "status": "pass",
+            "tool": "submit_replay"
+          }
+        ],
+        "transport": "isolated_workspace_file_mailbox"
+      },
+      "turns": []
+    },
+    "transport_retries": 0,
+    "usage": {}
+  }
+]

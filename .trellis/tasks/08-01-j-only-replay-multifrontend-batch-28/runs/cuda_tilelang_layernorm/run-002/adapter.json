@@ -1,0 +1,31 @@
+{
+  "block": [
+    128,
+    1,
+    1
+  ],
+  "case_id": "cuda:tilelang_layernorm",
+  "cuda_arch": "sm_120",
+  "descriptor_sha256": "254ff8a3038dd0c40f30bbda3c4beeaa8dcb6a826288ca9e0baaff78d7bc363e",
+  "dimensions": {
+    "M": 4
+  },
+  "factory_kwargs": {},
+  "frontend": "cuda",
+  "grid": [
+    4,
+    1,
+    1
+  ],
+  "grid_contract": [
+    "M",
+    "1",
+    "1"
+  ],
+  "protocol": "intentir.scrc.frontend-dataset-harness.v3",
+  "scalar_values": {
+    "M": 4
+  },
+  "seed": 916165068,
+  "source_sha256": "932460612349ba1e9c0bb8fa13ae50b06f5923f5c1856fa10c98f0cf521045e9"
+}

@@ -1,0 +1,17 @@
+{
+  "case": "cuda:tilelang_row_max",
+  "cohort_memberships": [
+    "g2_reduction_statistics_normalization",
+    "g4_attention_masking"
+  ],
+  "diagnostics": [],
+  "frontend": "cuda",
+  "lift_agent_calls": 0,
+  "packet_root": [
+    "c",
+    "j",
+    "u_f"
+  ],
+  "pi_visible_to_replay": false,
+  "typecheck": "pass"
+}

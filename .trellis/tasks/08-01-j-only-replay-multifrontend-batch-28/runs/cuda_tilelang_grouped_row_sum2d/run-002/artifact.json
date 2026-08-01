@@ -1,0 +1,312 @@
+{
+  "c": {
+    "slots": [
+      {
+        "kind": "compiler",
+        "name": "c0",
+        "required": true,
+        "role": "launch_block_x",
+        "value_type": "i32"
+      }
+    ],
+    "values": {
+      "c0": 128
+    }
+  },
+  "j": {
+    "boundary": {
+      "access_guard_relations": [],
+      "accesses": [
+        {
+          "access_id": "a0",
+          "index_expression": "[k0, k1]",
+          "kind": "load",
+          "node_ref": "n6",
+          "tensor": "t0"
+        },
+        {
+          "access_id": "a1",
+          "index_expression": "[k0, k2]",
+          "kind": "store",
+          "node_ref": "n6",
+          "tensor": "t1"
+        }
+      ],
+      "aliases": [],
+      "broadcasts": [
+        {
+          "axes": [
+            0
+          ],
+          "node_ref": "n2",
+          "operand": "vdivisor"
+        },
+        {
+          "axes": [
+            1
+          ],
+          "node_ref": "n4",
+          "operand": "vgroup_of_c"
+        },
+        {
+          "axes": [
+            0
+          ],
+          "node_ref": "n4",
+          "operand": "vg"
+        }
+      ],
+      "consumer_extensions": [],
+      "domains": {
+        "d0": "(0 <= k0) and (k0 < x0)",
+        "d1": "(0 <= k1) and (k1 < 64)",
+        "d2": "(0 <= k2) and (k2 < 16)"
+      },
+      "effects": [
+        {
+          "access_ref": "a0",
+          "effect_id": "e0",
+          "kind": "read",
+          "node_ref": "n6",
+          "target": "t0"
+        },
+        {
+          "access_ref": "a1",
+          "effect_id": "e1",
+          "kind": "write",
+          "node_ref": "n6",
+          "target": "t1"
+        }
+      ],
+      "index_bounds": [],
+      "output_mappings": [],
+      "realization_authorizations": [],
+      "reductions": [],
+      "result_relations": [
+        {
+          "kind": "tolerance",
+          "output": "t1"
+        }
+      ],
+      "updates": []
+    },
+    "dimension_constraints": [
+      "x0 >= 1"
+    ],
+    "dimension_relations": [],
+    "intent": {
+      "intent_function": {
+        "body": [
+          {
+            "attrs": {
+              "dtype": "i32",
+              "n": 64
+            },
+            "op": "iota",
+            "result": "vc",
+            "type": {
+              "dtype": "i32",
+              "shape": [
+                64
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "dtype": "i32",
+              "shape": [],
+              "value": 4
+            },
+            "op": "const",
+            "result": "vdivisor",
+            "type": {
+              "dtype": "i32",
+              "shape": []
+            }
+          },
+          {
+            "attrs": {
+              "fn": "div"
+            },
+            "op": "map_binary",
+            "operands": [
+              "vc",
+              "vdivisor"
+            ],
+            "result": "vgroup_of_c",
+            "type": {
+              "dtype": "i32",
+              "shape": [
+                64
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "dtype": "i32",
+              "n": 16
+            },
+            "op": "iota",
+            "result": "vg",
+            "type": {
+              "dtype": "i32",
+              "shape": [
+                16
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "fn": "eq"
+            },
+            "op": "map_binary",
+            "operands": [
+              "vgroup_of_c",
+              "vg"
+            ],
+            "result": "vselector_i1",
+            "type": {
+              "dtype": "i1",
+              "shape": [
+                64,
+                16
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "to_dtype": "f32"
+            },
+            "op": "cast",
+            "operands": [
+              "vselector_i1"
+            ],
+            "result": "vselector",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                64,
+                16
+              ]
+            }
+          },
+          {
+            "attrs": {
+              "subscripts": "mc,cg->mg"
+            },
+            "op": "contraction",
+            "operands": [
+              "t0",
+              "vselector"
+            ],
+            "result": "t1",
+            "type": {
+              "dtype": "f32",
+              "shape": [
+                "x0",
+                16
+              ]
+            }
+          }
+        ],
+        "inputs": [
+          {
+            "dtype": "f32",
+            "name": "t0",
+            "shape": [
+              "x0",
+              64
+            ]
+          }
+        ],
+        "name": "scrc_j0",
+        "outputs": [
+          {
+            "dtype": "f32",
+            "name": "t1",
+            "shape": [
+              "x0",
+              16
+            ]
+          }
+        ]
+      }
+    },
+    "kernel_id": "scrc_k0",
+    "node_ids": {
+      "n0": "body[0]",
+      "n1": "body[1]",
+      "n2": "body[2]",
+      "n3": "body[3]",
+      "n4": "body[4]",
+      "n5": "body[5]",
+      "n6": "body[6]"
+    },
+    "scopes": [
+      {
+        "captures": [],
+        "definitions": [
+          "t0",
+          "t1",
+          "vc",
+          "vdivisor",
+          "vgroup_of_c",
+          "vg",
+          "vselector_i1",
+          "vselector"
+        ],
+        "effects": [
+          "e0",
+          "e1"
+        ],
+        "kind": "function",
+        "parent_scope": null,
+        "scope_id": "q0"
+      }
+    ],
+    "signature": {
+      "parameters": [
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t0",
+          "mode": "input",
+          "name": "p0",
+          "rank": 2
+        },
+        {
+          "dtype": "f32",
+          "kind": "pointer",
+          "logical_ref": "t1",
+          "mode": "output",
+          "name": "p1",
+          "rank": 2
+        },
+        {
+          "dtype": "i32",
+          "kind": "scalar",
+          "logical_ref": "x0",
+          "mode": "value",
+          "name": "p2",
+          "rank": 0
+        }
+      ]
+    },
+    "storage": [],
+    "value_dimension_relations": []
+  },
+  "pi": {
+    "program_axes": [
+      {
+        "axis": 0,
+        "domain_ref": "d2"
+      },
+      {
+        "axis": 1,
+        "domain_ref": "d0"
+      }
+    ],
+    "schema": "intentir.pi.normalization-witness.v1"
+  },
+  "schema": "intentir.scrc.artifact.v13"
+}

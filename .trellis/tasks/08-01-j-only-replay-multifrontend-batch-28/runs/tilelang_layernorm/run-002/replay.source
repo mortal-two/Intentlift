@@ -1,0 +1,40 @@
+import tilelang.language as T
+
+X0 = T.dynamic("x0")
+
+
+@T.prim_func
+def scrc_k0(
+    p0: T.Tensor((X0, 16), "float32"),
+    p1: T.Tensor((X0, 16), "float32"),
+    p2: T.Tensor((16,), "float32"),
+    p3: T.Tensor((16,), "float32"),
+    p4: T.Tensor((X0,), "float32"),
+    p5: T.Tensor((X0,), "float32"),
+):
+    with T.Kernel(X0, threads=c0) as v13:
+        row = T.alloc_fragment((16,), "float32")
+        row_sum = T.alloc_fragment((1,), "float32")
+        squared = T.alloc_fragment((16,), "float32")
+        squared_sum = T.alloc_fragment((1,), "float32")
+
+        T.copy(p0[v13, 0], row)
+        T.reduce_sum(row, row_sum, dim=0, clear=True)
+        mean: T.float32 = row_sum[0] * T.float32(0.0625)
+        p4[v13] = mean
+
+        for v14 in T.Parallel(16):
+            centered: T.float32 = row[v14] - mean
+            squared[v14] = centered * centered
+
+        T.reduce_sum(squared, squared_sum, dim=0, clear=True)
+        variance: T.float32 = squared_sum[0] * T.float32(0.0625)
+        inverse_stddev: T.float32 = T.rsqrt(variance + T.float32(1e-05))
+        p5[v13] = inverse_stddev
+
+        for v14 in T.Parallel(16):
+            scale: T.float32 = T.float32(p2[v14])
+            bias: T.float32 = T.float32(p3[v14])
+            normalized: T.float32 = (row[v14] - mean) * inverse_stddev
+            scaled: T.float32 = normalized * scale
+            p1[v13, v14] = scaled + bias

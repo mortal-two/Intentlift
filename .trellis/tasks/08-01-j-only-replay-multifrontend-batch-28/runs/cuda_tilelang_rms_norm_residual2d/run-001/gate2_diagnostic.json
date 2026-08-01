@@ -1,0 +1,171 @@
+{
+  "c0": {
+    "c0": 64
+  },
+  "cases": [
+    {
+      "case_id": "finite-hidden-1",
+      "input_digest": "53dfbc1bb6295c91c8c9df05f02dbafd7291d54c7b7bf2a507eef55119a48ecb",
+      "metadata": {
+        "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+        "comparison_policy": {
+          "policy_id": "intentir.gate2.default.v1",
+          "protocol": "intentir.scrc.gate2-q.v1",
+          "tolerances": {
+            "bf16": {
+              "atol": 0.002,
+              "equal_nan": false,
+              "rtol": 0.02
+            },
+            "f16": {
+              "atol": 0.001,
+              "equal_nan": false,
+              "rtol": 0.01
+            },
+            "f32": {
+              "atol": 1e-06,
+              "equal_nan": false,
+              "rtol": 1e-05
+            },
+            "f64": {
+              "atol": 1e-12,
+              "equal_nan": false,
+              "rtol": 1e-12
+            }
+          }
+        },
+        "frontend": "cuda",
+        "protocol": "source_replay_j_three_edges_q_v5",
+        "test_mode": "diagnostic_after_gate1_reject_not_certificate"
+      },
+      "reference": {
+        "error": "ValueError: functional load is not a direct J operand",
+        "leg": "j",
+        "metadata": {},
+        "ok": false,
+        "outputs": {},
+        "unsupported": false
+      },
+      "replay": {
+        "error": "",
+        "leg": "replay",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+          "block": [
+            64,
+            1,
+            1
+          ],
+          "dataset_case_id": "cuda:tilelang_rms_norm_residual2d",
+          "entry": "scrc_k0",
+          "frontend": "cuda",
+          "grid": [
+            16,
+            1,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p2": {
+            "dtype": "float32",
+            "shape": [
+              16,
+              64
+            ]
+          },
+          "output_p4": {
+            "dtype": "float32",
+            "shape": [
+              16
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay_j": null,
+      "source": {
+        "error": "",
+        "leg": "source",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+          "block": [
+            64,
+            1,
+            1
+          ],
+          "dataset_case_id": "cuda:tilelang_rms_norm_residual2d",
+          "entry": "main_kernel",
+          "frontend": "cuda",
+          "grid": [
+            16,
+            1,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p2": {
+            "dtype": "float32",
+            "shape": [
+              16,
+              64
+            ]
+          },
+          "output_p4": {
+            "dtype": "float32",
+            "shape": [
+              16
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "source_j": null,
+      "source_replay": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.7803046107292175,
+            "output": "output_p2",
+            "passed": false,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          },
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.30571556091308594,
+            "output": "output_p4",
+            "passed": false,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": false,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "replay"
+      },
+      "status": "execution_failed"
+    }
+  ],
+  "diagnostic_only": true,
+  "failed_case_ids": [
+    "finite-hidden-1"
+  ],
+  "formal_acceptance": false,
+  "passed": false,
+  "reason": "Gate1 rejected this exact Replay",
+  "status_counts": {
+    "execution_failed": 1
+  },
+  "suite_id": "cuda:tilelang_rms_norm_residual2d"
+}

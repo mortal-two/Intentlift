@@ -1,0 +1,17 @@
+{
+  "case": "tilelang:softmax_inner",
+  "cohort_memberships": [
+    "g2_reduction_statistics_normalization",
+    "g4_attention_masking"
+  ],
+  "diagnostics": [],
+  "frontend": "tilelang",
+  "lift_agent_calls": 0,
+  "packet_root": [
+    "c",
+    "j",
+    "u_f"
+  ],
+  "pi_visible_to_replay": false,
+  "typecheck": "pass"
+}

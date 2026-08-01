@@ -1,0 +1,10 @@
+{
+  "case": "cuda:tilelang_row_sum",
+  "elapsed_ms": 8425.325632095337,
+  "exact_gate1_replay_reused": true,
+  "gate2_feedback_visible_to_replay": false,
+  "one_process_per_case": true,
+  "protocol": "intentir.experiment.gate2-process-isolation.v1",
+  "replay_agent_calls": 0,
+  "start_method": "spawn"
+}

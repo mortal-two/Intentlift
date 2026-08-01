@@ -1,0 +1,342 @@
+{
+  "c0": {
+    "c0": 128
+  },
+  "cases": [
+    {
+      "case_id": "finite-hidden-1",
+      "input_digest": "3c85c1642271a5248d7598042e2c2789460ad7e95e12c13b3b1b0c67288da942",
+      "metadata": {
+        "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+        "comparison_policy": {
+          "policy_id": "intentir.gate2.default.v1",
+          "protocol": "intentir.scrc.gate2-q.v1",
+          "tolerances": {
+            "bf16": {
+              "atol": 0.002,
+              "equal_nan": false,
+              "rtol": 0.02
+            },
+            "f16": {
+              "atol": 0.001,
+              "equal_nan": false,
+              "rtol": 0.01
+            },
+            "f32": {
+              "atol": 1e-06,
+              "equal_nan": false,
+              "rtol": 1e-05
+            },
+            "f64": {
+              "atol": 1e-12,
+              "equal_nan": false,
+              "rtol": 1e-12
+            }
+          }
+        },
+        "frontend": "tilelang",
+        "protocol": "source_replay_j_three_edges_q_v5",
+        "test_mode": "diagnostic_after_gate1_reject_not_certificate"
+      },
+      "reference": {
+        "error": "",
+        "leg": "j",
+        "metadata": {
+          "access_relation_count": 2,
+          "boundary_digest": "589e12e0737232e4892234cb15b4cd0bb0bcc58819c6a79afcc5bb17142136fe",
+          "boundary_profile": "dense_functional_v1",
+          "boundary_projection": {
+            "access_axes": [
+              [
+                "a0",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ],
+              [
+                "a1",
+                [
+                  "k0",
+                  "k2"
+                ]
+              ]
+            ],
+            "access_coordinates": [
+              [
+                "a0",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ],
+              [
+                "a1",
+                [
+                  "k0",
+                  "k2"
+                ]
+              ]
+            ],
+            "access_guard_relations": [],
+            "boundary_digest": "589e12e0737232e4892234cb15b4cd0bb0bcc58819c6a79afcc5bb17142136fe",
+            "broadcast_axes": [
+              [
+                "vgroup_of_c",
+                [
+                  [
+                    "vdivisor",
+                    [
+                      0
+                    ]
+                  ]
+                ]
+              ],
+              [
+                "vselector_i1",
+                [
+                  [
+                    "vg",
+                    [
+                      0
+                    ]
+                  ],
+                  [
+                    "vgroup_of_c",
+                    [
+                      1
+                    ]
+                  ]
+                ]
+              ]
+            ],
+            "concat_store_partitions": [],
+            "conditional_effect_stores": [],
+            "constant_gathers": [],
+            "consumed": [
+              "access:a0",
+              "access:a1",
+              "broadcast:n2:vdivisor",
+              "broadcast:n4:vg",
+              "broadcast:n4:vgroup_of_c",
+              "domain:d0",
+              "domain:d1",
+              "domain:d2",
+              "effect:e0",
+              "effect:e1",
+              "result_relation:t1"
+            ],
+            "consumer_extensions": [],
+            "context_domains": [],
+            "dimension_relations": [],
+            "direct_store_partitions": [],
+            "domains": [
+              [
+                "k0",
+                16
+              ],
+              [
+                "k1",
+                64
+              ],
+              [
+                "k2",
+                16
+              ]
+            ],
+            "erased_fill_count": 0,
+            "index_bounded_gathers": [],
+            "mixed_radix_accesses": [],
+            "predicated_access_count": 0,
+            "predicates": [
+              [
+                "a0",
+                null
+              ],
+              [
+                "a1",
+                null
+              ]
+            ],
+            "profile": "dense_functional_v1",
+            "protocol": "intentir.j-functional-boundary.v22",
+            "proven_index_bounds": [],
+            "runtime_predicate_proofs": [],
+            "value_dimension_relations": []
+          },
+          "broadcast_consumer_count": 2,
+          "domain_relation_count": 3,
+          "effect_relation_count": 2,
+          "erased_fill_count": 0,
+          "execution_evidence": {
+            "access_guard_load_materialization_count": 0,
+            "authority": "canonical_J_only",
+            "conditional_effect_store_count": 0,
+            "effect_if_count": 0,
+            "execution_mode": "full_logical_axis_conservative",
+            "input_count": 1,
+            "logical_loop_step_count": 0,
+            "loop_count": 0,
+            "operation_count": 7,
+            "output_count": 1,
+            "protocol": "intentir.j-structured-cpu-reference.v10",
+            "scan_count": 0,
+            "scatter_count": 0,
+            "value_if_count": 0,
+            "zero_trip_loop_count": 0
+          },
+          "function": "scrc_j0",
+          "index_bounds_count": 0,
+          "j_digest": "b241617abf3457aac179f1b803e7a8fefd08ebe44bd8ca839cd235c55f02d173",
+          "path": "canonical J -> typed structured CPU reference",
+          "predicated_access_count": 0,
+          "protocol": "j_scalar_cpu_mlir_v25",
+          "result_relation_count": 1,
+          "runtime_predicate_proof_count": 0,
+          "scalar_spec_digest": "18bad24a8b269ad7ae68ce40553fc7cf427806f592b3f729fe102133c8e726d0"
+        },
+        "ok": true,
+        "outputs": {
+          "output_p1": {
+            "dtype": "float32",
+            "shape": [
+              16,
+              16
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay": {
+        "error": "",
+        "leg": "replay",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+          "block": [
+            128,
+            1,
+            1
+          ],
+          "dataset_case_id": "tilelang:grouped_row_sum2d",
+          "frontend": "tilelang",
+          "grid": [
+            16,
+            16,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p1": {
+            "dtype": "float32",
+            "shape": [
+              16,
+              16
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay_j": {
+        "left": "replay",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "output_p1",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "source": {
+        "error": "",
+        "leg": "source",
+        "metadata": {
+          "adapter_protocol": "intentir.scrc.frontend-dataset-harness.v3",
+          "block": [
+            128,
+            1,
+            1
+          ],
+          "dataset_case_id": "tilelang:grouped_row_sum2d",
+          "frontend": "tilelang",
+          "grid": [
+            16,
+            16,
+            1
+          ]
+        },
+        "ok": true,
+        "outputs": {
+          "output_p1": {
+            "dtype": "float32",
+            "shape": [
+              16,
+              16
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "source_j": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 1.1920928955078125e-07,
+            "output": "output_p1",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "j"
+      },
+      "source_replay": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": false,
+            "equality_required": true,
+            "max_abs_error": 1.1920928955078125e-07,
+            "output": "output_p1",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v1",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v1",
+        "right": "replay"
+      },
+      "status": "gate2_pass"
+    }
+  ],
+  "diagnostic_only": true,
+  "failed_case_ids": [],
+  "formal_acceptance": false,
+  "passed": true,
+  "reason": "Gate1 rejected this exact Replay",
+  "status_counts": {
+    "gate2_pass": 1
+  },
+  "suite_id": "tilelang:grouped_row_sum2d"
+}

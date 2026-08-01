@@ -1,0 +1,13 @@
+extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
+    const int m = static_cast<int>(blockIdx.x);
+    const int c = static_cast<int>(threadIdx.x);
+    const int g = c / 4;
+    const int lane = c % 4;
+
+    float sum = 0.0f;
+    sum += p0[m * 64 + g * 4 + lane];
+    sum += __shfl_xor_sync(0xffffffffu, sum, 2);
+    sum += __shfl_xor_sync(0xffffffffu, sum, 1);
+
+    p1[m * 16 + g] = sum;
+}

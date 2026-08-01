@@ -1,0 +1,171 @@
+{
+  "case_count": 18,
+  "diagnostic_only": true,
+  "diagnostic_pass_count": 14,
+  "formal_acceptance": false,
+  "protocol": "intentir.experiment.rejected-replay-gate2-diagnostic.v1",
+  "results": [
+    {
+      "case": "tilelang:row_sum",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_row_sum/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "tilelang:row_max",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_row_max/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "tilelang:grouped_row_sum2d",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_grouped_row_sum2d/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "cuda:tilelang_grouped_row_sum2d",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_grouped_row_sum2d/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "tilelang:softmax_inner",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_softmax_inner/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "cuda:tilelang_softmax_inner",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_softmax_inner/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "tilelang:masked_softmax2d",
+      "diagnostic_gate2_passed": false,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_masked_softmax2d/run-001",
+      "status_counts": {
+        "execution_failed": 1
+      }
+    },
+    {
+      "case": "cuda:tilelang_masked_softmax2d",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_masked_softmax2d/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "tilelang:groupnorm",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_groupnorm/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "cuda:tilelang_groupnorm",
+      "diagnostic_gate2_passed": false,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_groupnorm/run-001",
+      "status_counts": {
+        "pairwise_diverged": 1
+      }
+    },
+    {
+      "case": "tilelang:layernorm",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_layernorm/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "cuda:tilelang_layernorm",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_layernorm/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "tilelang:rms_norm2d",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_rms_norm2d/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "cuda:tilelang_rms_norm2d",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_rms_norm2d/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "tilelang:layer_norm_residual2d",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_layer_norm_residual2d/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "cuda:tilelang_layer_norm_residual2d",
+      "diagnostic_gate2_passed": true,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_layer_norm_residual2d/run-001",
+      "status_counts": {
+        "gate2_pass": 1
+      }
+    },
+    {
+      "case": "tilelang:rms_norm_residual2d",
+      "diagnostic_gate2_passed": false,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/tilelang_rms_norm_residual2d/run-001",
+      "status_counts": {
+        "execution_failed": 1
+      }
+    },
+    {
+      "case": "cuda:tilelang_rms_norm_residual2d",
+      "diagnostic_gate2_passed": false,
+      "formal_acceptance": false,
+      "run_dir": "/home/kingdom/phdworks/TianchenIR-frontend-extension-codex/.trellis/tasks/08-01-j-only-replay-multifrontend-batch-28/runs/cuda_tilelang_rms_norm_residual2d/run-001",
+      "status_counts": {
+        "execution_failed": 1
+      }
+    }
+  ]
+}

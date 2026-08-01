@@ -1,0 +1,13 @@
+extern "C" __global__ void scrc_k0(const float* p0, float* p1, int p2) {
+    int v1 = (int)blockIdx.x;
+    int v2 = (int)threadIdx.x % 16;
+
+    float value = -__builtin_inff();
+    value = fmaxf(value, p0[v1 * 16 + v2]);
+    value = fmaxf(value, __shfl_xor_sync(0xffffffffu, value, 8));
+    value = fmaxf(value, __shfl_xor_sync(0xffffffffu, value, 4));
+    value = fmaxf(value, __shfl_xor_sync(0xffffffffu, value, 2));
+    value = fmaxf(value, __shfl_xor_sync(0xffffffffu, value, 1));
+
+    p1[v1] = value;
+}
