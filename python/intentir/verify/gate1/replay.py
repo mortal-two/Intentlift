@@ -2052,10 +2052,17 @@ def _source_blind_compile_failure(result: CompileResult) -> ReplayIngressResult:
 def _packet_transfer_direct_counts(
     packet: Mapping[str, Any],
 ) -> tuple[dict[str, int] | None, tuple[str, ...]]:
-    """Count only legacy-pi-authored direct boundary transfer occurrences.
+    """Project J-owned boundary transfer multiplicity for a local Replay check.
 
-    This historical projection is available only when the old occurrence graph
-    is actually present.  Compact pi absence is not a zero-transfer claim.
+    A compact pi deliberately carries no per-transfer occurrence graph.  That
+    does not remove the J obligation: every J boundary load/store is still one
+    authored logical transfer, and a non-null J predicate still requires a
+    masked target transfer.  This source-blind, reject-only projection lets a
+    Replay agent repair an omitted mask before formal Gate1; it never infers a
+    target implementation, source realization, or pi relation.
+
+    Legacy pi instances, when present, may restrict the projection to their
+    direct-transfer subset.  Compact pi falls back to all J boundary accesses.
     """
 
     j = packet.get("j")
@@ -2063,11 +2070,7 @@ def _packet_transfer_direct_counts(
     boundary = j.get("boundary") if isinstance(j, Mapping) else None
     accesses = boundary.get("accesses") if isinstance(boundary, Mapping) else None
     instances = pi.get("instances") if isinstance(pi, Mapping) else None
-    if not isinstance(accesses, list) or not isinstance(instances, list):
-        # The active compact pi intentionally has no occurrence graph.  Missing
-        # legacy ``instances`` therefore means that direct-transfer multiplicity
-        # is not projectable, not that the compiled program must contain zero
-        # loads/stores.  Formal Gate1 remains responsible for those hard facts.
+    if not isinstance(accesses, list):
         return None, ()
     access_by_id = {
         str(item.get("access_id")): item
@@ -2076,15 +2079,19 @@ def _packet_transfer_direct_counts(
     }
     counts: dict[str, int] = {}
     refs: list[str] = []
-    for instance in instances:
-        if not isinstance(instance, Mapping) or instance.get(
-            "mechanism"
-        ) != "transfer_direct":
-            continue
-        semantic_ref = instance.get("semantic_ref")
-        access = access_by_id.get(str(semantic_ref))
-        if access is None:
-            continue
+    direct_refs: list[str]
+    if isinstance(instances, list):
+        direct_refs = [
+            str(instance.get("semantic_ref"))
+            for instance in instances
+            if isinstance(instance, Mapping)
+            and instance.get("mechanism") == "transfer_direct"
+            and str(instance.get("semantic_ref")) in access_by_id
+        ]
+    else:
+        direct_refs = list(access_by_id)
+    for semantic_ref in direct_refs:
+        access = access_by_id[semantic_ref]
         kind = access.get("kind")
         if kind not in {"load", "store"}:
             continue
@@ -2092,7 +2099,7 @@ def _packet_transfer_direct_counts(
         if access.get("predicate") is not None:
             operation += ".masked"
         counts[operation] = counts.get(operation, 0) + 1
-        refs.append(str(semantic_ref))
+        refs.append(semantic_ref)
     return counts, tuple(dict.fromkeys(refs))
 
 

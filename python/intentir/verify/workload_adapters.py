@@ -6,6 +6,7 @@ They deliberately contain no J operators, predicates, formulas, or Replay text.
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -506,29 +507,79 @@ def _runtime_argument(argument: SCRCCompilerArgument) -> RuntimeArgument:
     raise ValueError("real workload adapter supports tensor/scalar/none runtime ABI")
 
 
-def prepare_triton_workload(
+def _canonicalize_gate_parameter_order(
+    source: str,
+    *,
+    function: str,
+    ordered_names: tuple[str, ...],
+) -> str:
+    """Make the anonymous Gate entry a complete positional ABI.
+
+    The captured Source may use positional-only, keyword-only, or defaulted
+    Python parameters even though the captured launch supplies every concrete
+    argument.  Gate compilation needs a stable anonymous positional ABI, so
+    this boundary preserves each parameter name/body use while dropping those
+    Python call-surface distinctions and ordering runtime parameters before
+    constexprs.  Genuine variadic call surfaces are handled by the existing
+    Triton vararg expansion path; an unexpanded ``*args``/``**kwargs`` stays
+    unsupported rather than guessed.
+    """
+
+    tree = ast.parse(source)
+    matches = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == function
+    ]
+    if len(matches) != 1:
+        raise ValueError("anonymous Gate entry must resolve exactly once")
+    target = matches[0]
+    if target.args.vararg is not None or target.args.kwarg is not None:
+        raise ValueError(
+            "captured Gate parameter canonicalization does not support "
+            "unexpanded variadic ABI"
+        )
+    original_arguments = tuple(
+        [
+            *target.args.posonlyargs,
+            *target.args.args,
+            *target.args.kwonlyargs,
+        ]
+    )
+    current = tuple(argument.arg for argument in original_arguments)
+    if len(current) != len(set(current)) or set(current) != set(ordered_names):
+        raise ValueError("anonymous Gate parameter order differs from the captured ABI")
+    if (
+        current == ordered_names
+        and not target.args.posonlyargs
+        and not target.args.kwonlyargs
+        and not target.args.defaults
+        and not target.args.kw_defaults
+    ):
+        return source
+    by_name = {argument.arg: argument for argument in original_arguments}
+    target.args.posonlyargs = []
+    target.args.args = [by_name[name] for name in ordered_names]
+    target.args.kwonlyargs = []
+    target.args.defaults = []
+    target.args.kw_defaults = []
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree) + "\n"
+
+
+def _prepare_triton_workload_source(
     adapter: TritonWorkloadAdapter,
     *,
-    dataset_root: str | Path | None = None,
+    entry: SCRCWorkloadEntry,
+    source: str,
+    source_location: str,
+    search_roots: tuple[Path, ...],
 ) -> PreparedTritonWorkload:
-    manifest = build_workload_manifest()
-    entry = manifest.by_id.get(adapter.case_id)
-    if entry is None:
-        raise ValueError("adapter case is absent from the active 28-kernel registry")
-    resolution = entry.resolve_source(dataset_root=dataset_root)
-    if not resolution.resolved or resolution.path is None:
-        raise ValueError(
-            f"real source is unavailable for {entry.case_id}: {resolution.diagnostic}"
-        )
-    source = resolution.path.read_text(encoding="utf-8")
     source_slice = build_triton_source_slice(
         source, source_symbol=entry.symbol
     )
-    module_root = resolution.path
-    for _component in entry.source_module.split("."):
-        module_root = module_root.parent
     source_slice = inline_imported_triton_helpers(
-        source_slice, search_roots=(module_root,)
+        source_slice, search_roots=search_roots
     )
     requires_varargs = requires_triton_vararg_expansion(source_slice)
     if requires_varargs != (adapter.vararg_arity is not None):
@@ -552,6 +603,19 @@ def prepare_triton_workload(
         source_symbol=entry.symbol,
         bound_constexpr_parameters=tuple(
             name for name, _value in adapter.semantic_constexprs
+        ),
+    )
+    runtime_parameters = tuple(
+        name
+        for name in source_slice.parameters
+        if name not in source_slice.constexpr_parameters
+    )
+    anonymous = _canonicalize_gate_parameter_order(
+        anonymous,
+        function="scrc_k0",
+        ordered_names=tuple(
+            mapping[name]
+            for name in (*runtime_parameters, *source_slice.constexpr_parameters)
         ),
     )
     used_opaque_names = set(mapping.values())
@@ -600,11 +664,85 @@ def prepare_triton_workload(
     return PreparedTritonWorkload(
         adapter,
         entry,
-        resolution.location,
+        source_location,
         source_slice,
         view,
         request,
         dict(mapping),
+    )
+
+
+def prepare_triton_workload(
+    adapter: TritonWorkloadAdapter,
+    *,
+    dataset_root: str | Path | None = None,
+) -> PreparedTritonWorkload:
+    manifest = build_workload_manifest()
+    entry = manifest.by_id.get(adapter.case_id)
+    if entry is None:
+        raise ValueError("adapter case is absent from the active 28-kernel registry")
+    resolution = entry.resolve_source(dataset_root=dataset_root)
+    if not resolution.resolved or resolution.path is None:
+        raise ValueError(
+            f"real source is unavailable for {entry.case_id}: {resolution.diagnostic}"
+        )
+    source = resolution.path.read_text(encoding="utf-8")
+    module_root = resolution.path
+    for _component in entry.source_module.split("."):
+        module_root = module_root.parent
+    return _prepare_triton_workload_source(
+        adapter,
+        entry=entry,
+        source=source,
+        source_location=resolution.location,
+        search_roots=(module_root,),
+    )
+
+
+def prepare_captured_triton_workload(
+    adapter: TritonWorkloadAdapter,
+    *,
+    source: str,
+    source_symbol: str,
+    source_location: str,
+    search_roots: Iterable[str | Path] = (),
+    suite: str = "flaggems",
+    mechanisms: Iterable[str] = (),
+) -> PreparedTritonWorkload:
+    """Prepare one captured launch without adding it to the static corpus registry.
+
+    The caller supplies the exact source projection and Harness bindings.  This
+    boundary performs no operator, role, shape, or J inference; it only routes a
+    captured real launch through the same anonymization and SCRC lifecycle as the
+    registered corpus.
+    """
+
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("captured Triton source must be non-empty")
+    if not source_symbol.isidentifier():
+        raise ValueError("captured Triton source symbol must be a Python identifier")
+    if not source_location:
+        raise ValueError("captured Triton source location must be non-empty")
+    entry = SCRCWorkloadEntry(
+        ordinal=0,
+        case_id=adapter.case_id,
+        suite=suite,
+        symbol=source_symbol,
+        mechanisms=tuple(mechanisms),
+        source_module="captured_triton",
+        source_alignment="captured_launch",
+        lowering_status="captured",
+        evidence_refs=(),
+        representative_tier="zero_shot",
+        adapter_readiness="captured",
+    )
+    roots = tuple(Path(root).expanduser().resolve() for root in search_roots)
+    return _prepare_triton_workload_source(
+        adapter,
+        entry=entry,
+        source=source,
+        source_location=source_location,
+        search_roots=roots,
     )
 
 
