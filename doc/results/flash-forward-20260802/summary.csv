@@ -1,0 +1,3 @@
+target,workload,dtype,c_fixed_us,schedule_only_us,full_search_us,g_schedule,g_full,source_us,confirmed_full_us,source_over_full_search,source_over_confirmed_full,full_path,out_max_abs,lse_max_abs,tmp_max_abs,confirmation_batches
+RTX_5090_D,"B=8 H=32 Sq=1024 Sk=1024 D=64","QKVOut=f16 LSE_TMP=f32",649.024010,612.991989,522.943974,1.058781,1.172194,520.160019,522.015989,0.994676,0.996445,cuda.flash_forward.normalized_softmax_carry.mma.v1,1.525879e-5,1.430511e-6,1.311302e-6,7
+H100_80GB_HBM3,"B=8 H=32 Sq=1024 Sk=1024 D=64","QKVOut=f16 LSE_TMP=f32",1093.024015,1044.127941,364.767998,1.046830,2.862444,425.312012,466.432005,1.165980,0.911841,cuda.flash_forward.hopper_register_qk_pv_async_kv.v1,1.525879e-5,1.430511e-6,4.768372e-7,7

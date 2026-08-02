@@ -261,7 +261,8 @@ def test_flash_forward_structured_j_reuses_flash_mma_lowering() -> None:
                 "-convert-intent-flash-mma-to-gpu=num-stages=1 block-m=64 "
                 "block-n=128 certified-full-axis-only=true "
                 "direct-v-matrix-load=true direct-v-row-padding=8 "
-                "paired-b-matrix-loads=true stream-p-fragments=true"
+                "paired-b-matrix-loads=true stream-p-fragments=true "
+                "score-fragment-columns=64"
             ),
         ],
         input=materialized.intent_mlir,
@@ -274,6 +275,206 @@ def test_flash_forward_structured_j_reuses_flash_mma_lowering() -> None:
     assert "intent.loop" not in lowered
     assert "nvgpu.mma.sync" in lowered
     assert "nvgpu.ldmatrix" in lowered
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_flash_forward_structured_j_has_hopper_warpgroup_lowering() -> None:
+    _snapshot, _case, materialized = _profiled_materialization(
+        "flash_attention_forward"
+    )
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            (
+                "-convert-intent-flash-mma-to-gpu=num-stages=1 block-m=64 "
+                "block-n=128 certified-full-axis-only=true "
+                "hopper-warpgroup=true"
+            ),
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert lowered.count("gpu.launch") == 1
+    assert "intent.loop" not in lowered
+    # QK uses two independently verified m64 fragments for the authored
+    # 128-key tile; PV chains two K64 warpgroup contractions in one accumulator.
+    assert lowered.count("nvgpu.warpgroup.mma ") == 4
+    assert lowered.count("nvgpu.warpgroup.mma.store") == 3
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_flash_forward_structured_j_has_hopper_hybrid_pv_lowering() -> None:
+    _snapshot, _case, materialized = _profiled_materialization(
+        "flash_attention_forward"
+    )
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            (
+                "-convert-intent-flash-mma-to-gpu=num-stages=1 block-m=64 "
+                "block-n=128 certified-full-axis-only=true "
+                "hopper-warpgroup=true hopper-hybrid-pv=true"
+            ),
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert lowered.count("gpu.launch") == 1
+    assert "intent.loop" not in lowered
+    # QK keeps the two independently verified 64x64 WGMMA fragments.  The
+    # probabilities and output recurrence stay in registers and PV consumes
+    # natural-layout V through ldmatrix + mma.sync instead of another shared
+    # WGMMA round trip.
+    assert lowered.count("nvgpu.warpgroup.mma ") == 2
+    assert lowered.count("nvgpu.warpgroup.mma.store") == 2
+    assert "nvgpu.ldmatrix" in lowered
+    assert "nvgpu.mma.sync" in lowered
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_flash_forward_hopper_qk_accumulator_stays_in_registers() -> None:
+    _snapshot, _case, materialized = _profiled_materialization(
+        "flash_attention_forward"
+    )
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            (
+                "-convert-intent-flash-mma-to-gpu=num-stages=1 block-m=64 "
+                "block-n=128 certified-full-axis-only=true "
+                "hopper-warpgroup=true hopper-hybrid-pv=true "
+                "hopper-register-qk=true"
+            ),
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert lowered.count("nvvm.wgmma.mma_async") == 8
+    assert "nvgpu.warpgroup.mma.store" not in lowered
+    assert "llvm.extractvalue" in lowered
+    assert "nvgpu.mma.sync" in lowered
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_flash_forward_hopper_register_qk_has_async_kv_state() -> None:
+    _snapshot, _case, materialized = _profiled_materialization(
+        "flash_attention_forward"
+    )
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            (
+                "-convert-intent-flash-mma-to-gpu=num-stages=1 block-m=64 "
+                "block-n=128 certified-full-axis-only=true "
+                "hopper-warpgroup=true hopper-hybrid-pv=true "
+                "hopper-register-qk=true hopper-async-kv=true"
+            ),
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert lowered.count("nvgpu.device_async_copy") == 16
+    assert "nvgpu.device_async_create_group" in lowered
+    assert "nvgpu.device_async_wait" in lowered
+    assert lowered.count("nvvm.wgmma.mma_async") == 8
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_flash_forward_hopper_normalized_carry_rebuilds_observables() -> None:
+    _snapshot, _case, materialized = _profiled_materialization(
+        "flash_attention_forward"
+    )
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            (
+                "-convert-intent-flash-mma-to-gpu=num-stages=1 block-m=64 "
+                "block-n=128 certified-full-axis-only=true "
+                "hopper-warpgroup=true hopper-hybrid-pv=true "
+                "hopper-register-qk=true hopper-async-kv=true "
+                "normalized-softmax-carry=true"
+            ),
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert lowered.count("nvvm.wgmma.mma_async") == 8
+    assert lowered.count("nvgpu.device_async_copy") == 16
+    assert "arith.divf" in lowered
+    assert "math.log" in lowered
+    assert "scf.if" in lowered
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_flash_forward_hopper_qk_and_pv_stay_in_registers() -> None:
+    _snapshot, _case, materialized = _profiled_materialization(
+        "flash_attention_forward"
+    )
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            (
+                "-convert-intent-flash-mma-to-gpu=num-stages=1 block-m=64 "
+                "block-n=128 certified-full-axis-only=true "
+                "hopper-warpgroup=true hopper-hybrid-pv=true "
+                "hopper-register-qk=true hopper-register-pv=true"
+            ),
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    # Eight m64n64k16 instructions form QK and another eight form PV per
+    # authored key tile. Neither contraction stores its accumulator to shared.
+    assert lowered.count("nvvm.wgmma.mma_async") == 16
+    assert "nvgpu.warpgroup.mma.store" not in lowered
+    assert "nvgpu.mma.sync" not in lowered
+    assert "llvm.extractvalue" in lowered
+
+
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_flash_forward_hopper_register_pv_combines_with_async_kv() -> None:
+    _snapshot, _case, materialized = _profiled_materialization(
+        "flash_attention_forward"
+    )
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            (
+                "-convert-intent-flash-mma-to-gpu=num-stages=1 block-m=64 "
+                "block-n=128 certified-full-axis-only=true "
+                "hopper-warpgroup=true hopper-hybrid-pv=true "
+                "hopper-register-qk=true hopper-register-pv=true "
+                "hopper-async-kv=true normalized-softmax-carry=true"
+            ),
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert lowered.count("nvvm.wgmma.mma_async") == 16
+    assert lowered.count("nvgpu.device_async_copy") == 16
+    assert "nvgpu.mma.sync" not in lowered
+    assert "arith.divf" in lowered
 
 
 def test_flash_forward_direct_and_full_paths_obey_three_column_boundary() -> None:
@@ -306,3 +507,51 @@ def test_flash_forward_direct_and_full_paths_obey_three_column_boundary() -> Non
         for item in full
         if item.schedule.get("direct_v_matrix_load")
     } == {0, 8}
+    assert {
+        item.schedule["stream_p_fragments"]
+        for item in full
+        if item.fast_path_id == "cuda.flash_forward.certified_full_axis.mma.v1"
+    } == {False, True}
+    assert {
+        item.schedule["tile_cols"]
+        for item in full
+        if item.fast_path_id == "cuda.flash_forward.certified_full_axis.mma.v1"
+    } == {128}
+    assert {
+        item.schedule["score_fragment_columns"]
+        for item in full
+        if item.fast_path_id == "cuda.flash_forward.certified_full_axis.mma.v1"
+    } == {0, 64}
+    assert all(
+        item.schedule["stream_p_fragments"]
+        for item in full
+        if item.fast_path_id == "cuda.flash_forward.certified_full_axis.mma.v1"
+        and item.schedule["score_fragment_columns"]
+    )
+    hopper_state = attach_c(
+        materialized,
+        snapshot.c,
+        BackendTarget("cuda", "sm_90a"),
+    )
+    hopper_full = enumerate_cuda_candidates(hopper_state, axes=_full_axes())
+    hopper_paths = {
+        item.fast_path_id for item in hopper_full
+    }
+    assert "cuda.flash_forward.hopper_warpgroup.v1" in hopper_paths
+    assert "cuda.flash_forward.hopper_hybrid_pv.v1" in hopper_paths
+    assert "cuda.flash_forward.hopper_register_qk.v1" in hopper_paths
+    assert "cuda.flash_forward.hopper_register_qk_async_kv.v1" in hopper_paths
+    assert (
+        "cuda.flash_forward.hopper_register_qk_async_kv_normalized.v1"
+        in hopper_paths
+    )
+    assert "cuda.flash_forward.hopper_register_qk_pv.v1" in hopper_paths
+    assert (
+        "cuda.flash_forward.hopper_register_qk_pv_async_kv.v1" in hopper_paths
+    )
+    assert (
+        "cuda.flash_forward.hopper_register_qk_pv_async_kv_normalized.v1"
+        in hopper_paths
+    )
+    assert "cuda.flash_forward.normalized_softmax_carry.mma.v1" in hopper_paths
+    assert "cuda.flash_forward.compact_query_warps.mma.v1" in hopper_paths

@@ -200,6 +200,30 @@ def test_real_row_reduction_pass_is_selected_structurally() -> None:
 @pytest.mark.skipif(
     not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
 )
+def test_flat_flash_mma_is_portable_to_h100_tensor_cores() -> None:
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "test"
+        / "lower-flash-mma-flat-fwd-to-gpu.mlir"
+    )
+    fast_path_id = "cuda.flash_forward.flat_rank4.mma.v1"
+
+    result = select_variant(
+        source,
+        target=LoweringTarget(chip="sm_90a"),
+        only_fast_path=fast_path_id,
+    )
+
+    assert result.pipeline_kind == "specialized"
+    assert result.fast_path_id == fast_path_id
+    assert result.attempts[0].target_match is True
+    assert result.attempts[0].residual_ops == ()
+    assert result.attempts[0].gpu_launch_count == 1
+
+
+@pytest.mark.skipif(
+    not Path(backend_compile.INTENT_OPT).exists(), reason="intent-opt not built"
+)
 def test_fresh_splitk_j_is_consumed_by_one_cpp_gpu_launch() -> None:
     fast_path_id = "cuda.splitk.reduce-varargs.v1"
 

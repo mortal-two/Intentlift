@@ -77,7 +77,7 @@ func.func @linear_sqrelu(%A: tensor<128x64xf16>, %W: tensor<256x64xf16>,
 // must peel only the exact input widenings, preserve the f16 destination ABI,
 // and write both results from the same tensor-core launch.
 // CHECK-LABEL: func.func @linear_live_saved(
-// CHECK-SAME:    %{{.*}}: memref<128x256xf16>, %{{.*}}: memref<512x256xf16>, %{{.*}}: memref<512xf16>, %{{.*}}: memref<128x512xf16>, %{{.*}}: memref<128x512xf16>)
+// CHECK-SAME:    %{{.*}}: memref<128x256xf16>, %{{.*}}: memref<512x256xf16>, %{{.*}}: memref<256xvector<2xf16>>, %{{.*}}: memref<128x256xvector<2xf16>>, %{{.*}}: memref<128x256xvector<2xf16>>)
 // CHECK:         gpu.launch
 // CHECK:         nvgpu.mma.sync
 // CHECK:         arith.extf

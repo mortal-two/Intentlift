@@ -1,6 +1,6 @@
 // RUN: intent-opt -convert-intent-contraction-to-gpu-mma %s | FileCheck %s --check-prefix=MIXED
 // RUN: intent-opt -convert-intent-contraction-to-gpu-mma='block-m=0 block-n=64' %s | FileCheck %s --check-prefix=ZERO
-// RUN: intent-opt -convert-intent-contraction-to-gpu-mma='block-m=64 block-n=8 block-k=16' %s | FileCheck %s --check-prefix=PACKET
+// RUN: intent-opt -convert-intent-contraction-to-gpu-mma='block-m=64 block-n=64 block-k=16 warps-n=3' %s | FileCheck %s --check-prefix=PACKET
 
 // MIXED-LABEL: func.func @mixed_storage_rejected(
 // MIXED-NOT:     gpu.launch

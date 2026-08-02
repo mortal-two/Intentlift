@@ -187,7 +187,7 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
     PassDescriptor(
         fast_path_id="cuda.flash_forward.flat_rank4.mma.v1",
         pass_argument="-convert-intent-flash-mma-to-gpu=num-stages=2",
-        supported_chips=("sm_120a",),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
         description="flat rank-4 FlashAttention forward MMA",
         scf_to_cf=True,
     ),
@@ -224,6 +224,379 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
     ),
     *(
         PassDescriptor(
+            fast_path_id="cuda.flash_forward.hopper_hybrid_pv.v1",
+            pass_argument=(
+                "-convert-intent-flash-mma-to-gpu="
+                "num-stages=1 block-m=64 block-n=128 "
+                "certified-full-axis-only=true hopper-warpgroup=true "
+                "hopper-hybrid-pv=true"
+            ),
+            supported_chips=("sm_90a",),
+            description=(
+                "Hopper FlashAttention lowering with WGMMA QK and a "
+                "register-resident mma.sync PV recurrence"
+            ),
+            scf_to_cf=True,
+            expanded_only=True,
+            schedule={
+                "tile_rows": 64,
+                "tile_cols": 128,
+                "pipeline_stages": 1,
+                "num_warps": 4,
+                "direct_v_matrix_load": True,
+                "direct_v_row_padding": 8,
+                "materialize_tmp_roundtrip": False,
+                "paired_b_matrix_loads": False,
+                "vectorized_q_staging": False,
+                "stream_p_fragments": True,
+                "score_fragment_columns": 0,
+                "hopper_warpgroup": True,
+                "hopper_hybrid_pv": True,
+            },
+        ),
+    ),
+    PassDescriptor(
+        fast_path_id="cuda.flash_forward.hopper_register_qk.v1",
+        pass_argument=(
+            "-convert-intent-flash-mma-to-gpu="
+            "num-stages=1 block-m=64 block-n=128 "
+            "certified-full-axis-only=true hopper-warpgroup=true "
+            "hopper-hybrid-pv=true hopper-register-qk=true"
+        ),
+        supported_chips=("sm_90a",),
+        description=(
+            "Hopper FlashAttention with register-consumed NVVM WGMMA QK and "
+            "register-resident mma.sync PV"
+        ),
+        scf_to_cf=True,
+        expanded_only=True,
+        schedule={
+            "tile_rows": 64,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+            "direct_v_matrix_load": True,
+            "direct_v_row_padding": 8,
+            "materialize_tmp_roundtrip": False,
+            "paired_b_matrix_loads": False,
+            "vectorized_q_staging": False,
+            "stream_p_fragments": True,
+            "score_fragment_columns": 0,
+            "hopper_warpgroup": True,
+            "hopper_hybrid_pv": True,
+            "hopper_register_qk": True,
+        },
+    ),
+    PassDescriptor(
+        fast_path_id="cuda.flash_forward.hopper_register_qk_async_kv.v1",
+        pass_argument=(
+            "-convert-intent-flash-mma-to-gpu="
+            "num-stages=1 block-m=64 block-n=128 "
+            "certified-full-axis-only=true hopper-warpgroup=true "
+            "hopper-hybrid-pv=true hopper-register-qk=true "
+            "hopper-async-kv=true"
+        ),
+        supported_chips=("sm_90a",),
+        description=(
+            "register-consumed Hopper WGMMA QK with 16-byte asynchronous K/V "
+            "global-to-shared staging"
+        ),
+        scf_to_cf=True,
+        expanded_only=True,
+        schedule={
+            "tile_rows": 64,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+            "direct_v_matrix_load": True,
+            "direct_v_row_padding": 8,
+            "materialize_tmp_roundtrip": False,
+            "paired_b_matrix_loads": False,
+            "vectorized_q_staging": False,
+            "stream_p_fragments": True,
+            "score_fragment_columns": 0,
+            "hopper_warpgroup": True,
+            "hopper_hybrid_pv": True,
+            "hopper_register_qk": True,
+            "hopper_async_kv": True,
+        },
+    ),
+    PassDescriptor(
+        fast_path_id=(
+            "cuda.flash_forward.hopper_register_qk_async_kv_normalized.v1"
+        ),
+        pass_argument=(
+            "-convert-intent-flash-mma-to-gpu="
+            "num-stages=1 block-m=64 block-n=128 "
+            "certified-full-axis-only=true hopper-warpgroup=true "
+            "hopper-hybrid-pv=true hopper-register-qk=true "
+            "hopper-async-kv=true normalized-softmax-carry=true"
+        ),
+        supported_chips=("sm_90a",),
+        description=(
+            "register-consumed Hopper WGMMA QK and asynchronous K/V staging "
+            "with a normalized online-softmax carry and epilogue LSE rebuild"
+        ),
+        scf_to_cf=True,
+        expanded_only=True,
+        schedule={
+            "tile_rows": 64,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+            "direct_v_matrix_load": True,
+            "direct_v_row_padding": 8,
+            "materialize_tmp_roundtrip": False,
+            "paired_b_matrix_loads": False,
+            "vectorized_q_staging": False,
+            "stream_p_fragments": True,
+            "score_fragment_columns": 0,
+            "hopper_warpgroup": True,
+            "hopper_hybrid_pv": True,
+            "hopper_register_qk": True,
+            "hopper_async_kv": True,
+            "normalized_softmax_carry": True,
+        },
+    ),
+    PassDescriptor(
+        fast_path_id="cuda.flash_forward.hopper_register_qk_pv.v1",
+        pass_argument=(
+            "-convert-intent-flash-mma-to-gpu="
+            "num-stages=1 block-m=64 block-n=128 "
+            "certified-full-axis-only=true hopper-warpgroup=true "
+            "hopper-hybrid-pv=true hopper-register-qk=true "
+            "hopper-register-pv=true"
+        ),
+        supported_chips=("sm_90a",),
+        description=(
+            "Hopper FlashAttention with register-consumed NVVM WGMMA QK and "
+            "WGMMA PV carrying O entirely in registers"
+        ),
+        scf_to_cf=True,
+        expanded_only=True,
+        schedule={
+            "tile_rows": 64,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+            "direct_v_matrix_load": False,
+            "direct_v_row_padding": 0,
+            "materialize_tmp_roundtrip": False,
+            "paired_b_matrix_loads": False,
+            "vectorized_q_staging": False,
+            "stream_p_fragments": True,
+            "score_fragment_columns": 0,
+            "hopper_warpgroup": True,
+            "hopper_hybrid_pv": True,
+            "hopper_register_qk": True,
+            "hopper_register_pv": True,
+        },
+    ),
+    PassDescriptor(
+        fast_path_id="cuda.flash_forward.hopper_register_qk_pv_async_kv.v1",
+        pass_argument=(
+            "-convert-intent-flash-mma-to-gpu="
+            "num-stages=1 block-m=64 block-n=128 "
+            "certified-full-axis-only=true hopper-warpgroup=true "
+            "hopper-hybrid-pv=true hopper-register-qk=true "
+            "hopper-register-pv=true hopper-async-kv=true"
+        ),
+        supported_chips=("sm_90a",),
+        description=(
+            "Hopper FlashAttention with register-consumed WGMMA QK/PV and "
+            "16-byte asynchronous K/V staging"
+        ),
+        scf_to_cf=True,
+        expanded_only=True,
+        schedule={
+            "tile_rows": 64,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+            "direct_v_matrix_load": False,
+            "direct_v_row_padding": 0,
+            "materialize_tmp_roundtrip": False,
+            "paired_b_matrix_loads": False,
+            "vectorized_q_staging": False,
+            "stream_p_fragments": True,
+            "score_fragment_columns": 0,
+            "hopper_warpgroup": True,
+            "hopper_hybrid_pv": True,
+            "hopper_register_qk": True,
+            "hopper_register_pv": True,
+            "hopper_async_kv": True,
+        },
+    ),
+    PassDescriptor(
+        fast_path_id=(
+            "cuda.flash_forward.hopper_register_qk_pv_async_kv_normalized.v1"
+        ),
+        pass_argument=(
+            "-convert-intent-flash-mma-to-gpu="
+            "num-stages=1 block-m=64 block-n=128 "
+            "certified-full-axis-only=true hopper-warpgroup=true "
+            "hopper-hybrid-pv=true hopper-register-qk=true "
+            "hopper-register-pv=true hopper-async-kv=true "
+            "normalized-softmax-carry=true"
+        ),
+        supported_chips=("sm_90a",),
+        description=(
+            "register-consumed Hopper WGMMA QK/PV and asynchronous K/V with "
+            "a normalized online-softmax carry"
+        ),
+        scf_to_cf=True,
+        expanded_only=True,
+        schedule={
+            "tile_rows": 64,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+            "direct_v_matrix_load": False,
+            "direct_v_row_padding": 0,
+            "materialize_tmp_roundtrip": False,
+            "paired_b_matrix_loads": False,
+            "vectorized_q_staging": False,
+            "stream_p_fragments": True,
+            "score_fragment_columns": 0,
+            "hopper_warpgroup": True,
+            "hopper_hybrid_pv": True,
+            "hopper_register_qk": True,
+            "hopper_register_pv": True,
+            "hopper_async_kv": True,
+            "normalized_softmax_carry": True,
+        },
+    ),
+    PassDescriptor(
+        fast_path_id="cuda.flash_forward.normalized_softmax_carry.mma.v1",
+        pass_argument=(
+            "-convert-intent-flash-mma-to-gpu="
+            "num-stages=1 block-m=64 block-n=128 "
+            "certified-full-axis-only=true direct-v-matrix-load=true "
+            "direct-v-row-padding=8 vectorized-q-staging=true "
+            "normalized-softmax-carry=true"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "certified FlashAttention scan with a standard normalized online-"
+            "softmax carry and one epilogue LSE reconstruction"
+        ),
+        scf_to_cf=True,
+        expanded_only=True,
+        schedule={
+            "tile_rows": 64,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+            "direct_v_matrix_load": True,
+            "direct_v_row_padding": 8,
+            "materialize_tmp_roundtrip": False,
+            "paired_b_matrix_loads": False,
+            "vectorized_q_staging": True,
+            "stream_p_fragments": False,
+            "score_fragment_columns": 0,
+            "normalized_softmax_carry": True,
+        },
+    ),
+    PassDescriptor(
+        fast_path_id="cuda.flash_forward.compact_query_warps.mma.v1",
+        pass_argument=(
+            "-convert-intent-flash-mma-to-gpu="
+            "num-stages=1 block-m=128 block-n=128 "
+            "certified-full-axis-only=true direct-v-matrix-load=true "
+            "direct-v-row-padding=8 vectorized-q-staging=true "
+            "normalized-softmax-carry=true compact-query-warp-mapping=true"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "certified FlashAttention scan with two M16 query fragments per "
+            "warp sharing one staged K/V tile"
+        ),
+        scf_to_cf=True,
+        expanded_only=True,
+        schedule={
+            "tile_rows": 128,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+            "direct_v_matrix_load": True,
+            "direct_v_row_padding": 8,
+            "materialize_tmp_roundtrip": False,
+            "paired_b_matrix_loads": False,
+            "vectorized_q_staging": True,
+            "stream_p_fragments": False,
+            "score_fragment_columns": 0,
+            "normalized_softmax_carry": True,
+            "compact_query_warp_mapping": True,
+        },
+    ),
+    PassDescriptor(
+        fast_path_id="cuda.flash_forward.compact_query_warps_stream_p.mma.v1",
+        pass_argument=(
+            "-convert-intent-flash-mma-to-gpu="
+            "num-stages=1 block-m=128 block-n=128 "
+            "certified-full-axis-only=true direct-v-matrix-load=true "
+            "direct-v-row-padding=8 vectorized-q-staging=true "
+            "stream-p-fragments=true normalized-softmax-carry=true "
+            "compact-query-warp-mapping=true"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "compact four-warp FlashAttention with streamed probability "
+            "fragments to shorten register lifetimes"
+        ),
+        scf_to_cf=True,
+        expanded_only=True,
+        schedule={
+            "tile_rows": 128,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+            "direct_v_matrix_load": True,
+            "direct_v_row_padding": 8,
+            "materialize_tmp_roundtrip": False,
+            "paired_b_matrix_loads": False,
+            "vectorized_q_staging": True,
+            "stream_p_fragments": True,
+            "score_fragment_columns": 0,
+            "normalized_softmax_carry": True,
+            "compact_query_warp_mapping": True,
+        },
+    ),
+    PassDescriptor(
+        fast_path_id="cuda.flash_forward.compact_query_warps_fragment64.mma.v1",
+        pass_argument=(
+            "-convert-intent-flash-mma-to-gpu="
+            "num-stages=1 block-m=128 block-n=128 "
+            "certified-full-axis-only=true direct-v-matrix-load=true "
+            "direct-v-row-padding=8 vectorized-q-staging=true "
+            "stream-p-fragments=true score-fragment-columns=64 "
+            "normalized-softmax-carry=true compact-query-warp-mapping=true"
+        ),
+        supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
+        description=(
+            "compact four-warp FlashAttention with 64-column score fragments "
+            "and bounded live-register state"
+        ),
+        scf_to_cf=True,
+        expanded_only=True,
+        schedule={
+            "tile_rows": 128,
+            "tile_cols": 128,
+            "pipeline_stages": 1,
+            "num_warps": 4,
+            "direct_v_matrix_load": True,
+            "direct_v_row_padding": 8,
+            "materialize_tmp_roundtrip": False,
+            "paired_b_matrix_loads": False,
+            "vectorized_q_staging": True,
+            "stream_p_fragments": True,
+            "score_fragment_columns": 64,
+            "normalized_softmax_carry": True,
+            "compact_query_warp_mapping": True,
+        },
+    ),
+    *(
+        PassDescriptor(
             fast_path_id="cuda.flash_forward.certified_full_axis.mma.v1",
             pass_argument=(
                 "-convert-intent-flash-mma-to-gpu="
@@ -237,7 +610,12 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
                 )
                 + ("paired-b-matrix-loads=true " if paired_b else "")
                 + ("vectorized-q-staging=true " if vector_q else "")
-                + "stream-p-fragments=true"
+                + ("stream-p-fragments=true " if stream_p else "")
+                + (
+                    f"score-fragment-columns={score_fragment_columns}"
+                    if score_fragment_columns
+                    else ""
+                )
             ),
             supported_chips=_PORTABLE_BLOCK_CUDA_CHIPS,
             description=(
@@ -256,19 +634,55 @@ DEFAULT_PASSES: tuple[PassDescriptor, ...] = (
                 "materialize_tmp_roundtrip": False,
                 "paired_b_matrix_loads": paired_b,
                 "vectorized_q_staging": vector_q,
-                "stream_p_fragments": True,
+                "stream_p_fragments": stream_p,
+                "score_fragment_columns": score_fragment_columns,
             },
         )
         for direct_v, paired_b, direct_v_padding in (
-            (False, False, 0),
-            (True, False, 0),
             (True, False, 8),
-            (True, True, 0),
             (True, True, 8),
+            (True, False, 0),
+            (True, True, 0),
+            (False, False, 0),
         )
         for block_m in (64, 128, 32, 16)
         for vector_q in (False, True)
+        for stream_p in (False, True)
+        for score_fragment_columns in (0, 64)
         for stages in (1, 2)
+        if score_fragment_columns == 0 or stream_p
+    ),
+    *(
+        PassDescriptor(
+            fast_path_id="cuda.flash_forward.hopper_warpgroup.v1",
+            pass_argument=(
+                "-convert-intent-flash-mma-to-gpu="
+                f"num-stages=1 block-m={block_m} block-n=128 "
+                "certified-full-axis-only=true hopper-warpgroup=true"
+            ),
+            supported_chips=("sm_90a",),
+            description=(
+                "Hopper warpgroup FlashAttention lowering using stock NVGPU "
+                "WGMMA with independently stored 64x64 fragments"
+            ),
+            scf_to_cf=True,
+            expanded_only=True,
+            schedule={
+                "tile_rows": block_m,
+                "tile_cols": 128,
+                "pipeline_stages": 1,
+                "num_warps": 4,
+                "direct_v_matrix_load": False,
+                "direct_v_row_padding": 0,
+                "materialize_tmp_roundtrip": False,
+                "paired_b_matrix_loads": False,
+                "vectorized_q_staging": False,
+                "stream_p_fragments": False,
+                "score_fragment_columns": 0,
+                "hopper_warpgroup": True,
+            },
+        )
+        for block_m in (128, 64)
     ),
     PassDescriptor(
         fast_path_id="cuda.flash_backward.flat_rank4.mma.v1",

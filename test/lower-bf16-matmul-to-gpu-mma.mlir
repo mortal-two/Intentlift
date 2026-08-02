@@ -73,14 +73,14 @@ func.func @bf16_linear_bias(%A: tensor<64x32xbf16>,
 // and stores both results without a full f32 shared-memory spill.
 
 // MMA-LABEL: func.func @bf16_linear_saved(
-// MMA-SAME:    %{{.*}}: memref<64x32xbf16>, %{{.*}}: memref<64x32xbf16>, %{{.*}}: memref<64xbf16>, %{{.*}}: memref<64x64xbf16>, %{{.*}}: memref<64x64xbf16>)
+// MMA-SAME:    %{{.*}}: memref<64x32xbf16>, %{{.*}}: memref<64x32xbf16>, %{{.*}}: memref<32xvector<2xbf16>>, %{{.*}}: memref<64x32xvector<2xbf16>>, %{{.*}}: memref<64x32xvector<2xbf16>>)
 // MMA:         nvgpu.mma.sync
-// MMA:         memref.load {{.*}} : memref<64xbf16>
+// MMA:         memref.load {{.*}} : memref<32xvector<2xbf16>>
 // MMA:         arith.extf {{.*}} : bf16 to f32
 // MMA:         arith.addf
 // MMA:         arith.truncf {{.*}} : f32 to bf16
-// MMA:         memref.store {{.*}} : memref<64x64xbf16>
-// MMA:         memref.store {{.*}} : memref<64x64xbf16>
+// MMA:         memref.store {{.*}} : memref<64x32xvector<2xbf16>>
+// MMA:         memref.store {{.*}} : memref<64x32xvector<2xbf16>>
 // MMA-NOT:     memref<64x64xf32, #gpu.address_space<workgroup>>
 // MMA-NOT:     intent.
 func.func @bf16_linear_saved(%A: tensor<64x32xbf16>,

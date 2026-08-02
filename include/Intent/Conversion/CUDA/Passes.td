@@ -1221,6 +1221,62 @@ def ConvertIntentFlashMMAToGPU
            "False retains DirectLower's whole-tile P register materialization; "
            "true is a Full register-lifetime topology that preserves the authored "
            "128-key recurrence while avoiding a whole P tile live across PV.">,
+    Option<"scoreFragmentColumns", "score-fragment-columns", "int64_t",
+           /*default=*/"0",
+           "When non-zero, keep one authored block-n recurrence update but compute "
+           "its score matrix in smaller column fragments. The lowering first "
+           "derives the row maximum across all fragments, then recomputes QK one "
+           "fragment at a time and immediately consumes P in PV. This trades extra "
+           "tensor-core work for a lower live-register peak without changing the "
+           "authored reduction/update order. It must divide block-n, be a multiple "
+           "of 16, be smaller than block-n, and requires stream-p-fragments.">,
+    Option<"hopperWarpgroup", "hopper-warpgroup", "bool",
+           /*default=*/"false",
+           "Use the stock MLIR NVGPU warpgroup MMA abstraction for the two "
+           "FlashAttention contractions. This is a Hopper-only Full structure: "
+           "four warps cooperate on 64 query rows, QK is emitted as K*Q^T to "
+           "reuse natural K staging, and the authored online-softmax recurrence "
+           "is preserved between the two warpgroup contractions.">,
+    Option<"hopperHybridPV", "hopper-hybrid-pv", "bool",
+           /*default=*/"false",
+           "With hopper-warpgroup, use WGMMA only for QK, assemble P in the "
+           "existing register fragment layout, and use mma.sync with direct "
+           "natural-V ldmatrix loads for PV. This Hopper-only Full state removes "
+           "the P and delta shared-memory round trips while preserving the same "
+           "authored 128-key online-softmax update.">,
+    Option<"normalizedSoftmaxCarry", "normalized-softmax-carry", "bool",
+           /*default=*/"false",
+           "Represent the certified online-softmax recurrence with the standard "
+           "register-resident (row max, scaled mass, weighted accumulator) state. "
+           "This removes the per-key-tile log/exp round trip used by the Source "
+           "realization and reconstructs LSE once in the epilogue. It is a "
+           "Full-only execution-domain candidate and must pass Source/Q-D output "
+           "checks before timing.">,
+    Option<"compactQueryWarpMapping", "compact-query-warp-mapping", "bool",
+           /*default=*/"false",
+           "For block-m=128, keep one four-warp CTA and assign two 16-row query "
+           "fragments to each warp. Both fragments reuse the same staged K/V "
+           "tile while retaining independent register-resident softmax carries. "
+           "This is a Full-only implementation-structure candidate; the default "
+           "mapping keeps one 16-row fragment per warp.">,
+    Option<"hopperRegisterQK", "hopper-register-qk", "bool",
+           /*default=*/"false",
+           "With the Hopper hybrid-PV path, emit the QK warpgroup contraction "
+           "as NVVM WGMMA and consume its per-thread accumulator registers "
+           "directly in online softmax. This removes the score shared-memory "
+           "store, barrier, and reload while retaining MLIR/NVVM codegen.">,
+    Option<"hopperRegisterPV", "hopper-register-pv", "bool",
+           /*default=*/"false",
+           "With hopper-register-qk, store the probability tile once to "
+           "swizzled shared memory, execute PV with NVVM WGMMA, and keep the "
+           "weighted output accumulator as per-thread registers across the key "
+           "scan. This removes mma.sync PV and the delta shared round trip.">,
+    Option<"hopperAsyncKV", "hopper-async-kv", "bool",
+           /*default=*/"false",
+           "Stage Hopper K/V tiles with 16-byte nvgpu.device_async_copy "
+           "transactions instead of generic vector load/store pairs. The "
+           "single-buffer state waits before WGMMA; it removes intermediate "
+           "register traffic and is the prerequisite for a multistage ring.">,
   ];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",
@@ -1231,6 +1287,8 @@ def ConvertIntentFlashMMAToGPU
     "::mlir::arith::ArithDialect",
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
+    "::mlir::LLVM::LLVMDialect",
+    "::mlir::NVVM::NVVMDialect",
   ];
 }
 

@@ -26,6 +26,7 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <limits>
 
@@ -1083,6 +1084,28 @@ struct LowerGpuMathToNVVM
   using LowerGpuMathToNVVMBase::LowerGpuMathToNVVMBase;
 
   void runOnOperation() override {
+    // WGMMA reads shared memory through the async proxy.  A CTA barrier orders
+    // the producer threads but does not cross the generic/async proxy boundary.
+    // The structural Flash lowering marks exactly the producer barriers that
+    // need PTX `fence.proxy.async.shared::cta`; materialize that target fence
+    // here, after GPU outlining and immediately before the NVVM pipeline.
+    SmallVector<Operation *> proxyFenceBarriers;
+    getOperation()->walk([&](Operation *op) {
+      if (op->getName().getStringRef() == "gpu.barrier" &&
+          op->hasAttr("intent.backend.wgmma_proxy_fence"))
+        proxyFenceBarriers.push_back(op);
+    });
+    for (Operation *barrier : proxyFenceBarriers) {
+      OpBuilder builder(barrier);
+      builder.setInsertionPointAfter(barrier);
+      builder.create<LLVM::InlineAsmOp>(
+          barrier->getLoc(), TypeRange{}, ValueRange{},
+          "fence.proxy.async.shared::cta;", "",
+          /*has_side_effects=*/true, /*is_align_stack=*/false,
+          LLVM::AsmDialectAttr(), ArrayAttr());
+      barrier->removeAttr("intent.backend.wgmma_proxy_fence");
+    }
+
     RewritePatternSet patterns(&getContext());
     patterns.add<PromoteHalfUnaryMath<math::ExpOp>,
                  PromoteHalfUnaryMath<math::LogOp>,
