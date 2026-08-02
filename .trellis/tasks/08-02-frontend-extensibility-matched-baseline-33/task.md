@@ -1,6 +1,6 @@
 # Task 33：前端扩展性 semantic-SLoC 与 matched baseline 最终实验
 
-> 状态：`READY`（2026-08-02）  
+> 状态：`ACTIVE / P1 COMPLETE`（2026-08-02）
 > 论文设计：`/home/kingdom/phdworks/papers/intentir-ppopp27/experiments/FRONTEND_EXTENSIBILITY_MATCHED_BASELINE_PLAN_20260802.md`  
 > 已冻结历史证据：paper campaign `20260802_claim1_tilelang_cuda_reuse_jonly_9c437c90`
 
@@ -45,6 +45,10 @@
 case。B1 先做 12 对；通用机制稳定后扩到 Task 28 全 31 对。
 
 ## 4. P1：line-level ownership ledger
+
+状态：完成。可复算脚本与冻结输出位于
+`semantic_loc_audit/`；解释与边界见 `p1_checkpoint.md`。P2 必须以该提交为父提交建立独立 clean
+worktree，不能在看到 B1 结果后重分类 P1。
 
 逐行审计当前 frontend onboarding 与关键增量窗口。每一行只能属于：
 
@@ -143,7 +147,7 @@ cubin records 只作 hierarchical evidence depth；310 Q 留 appendix。
 ## 9. 完成条件
 
 - [ ] 12-pair baseline selection 在 implementation 前提交；
-- [ ] line ledger 完整且每行 ownership 唯一；
+- [x] line ledger 完整且每行 ownership 唯一；
 - [ ] B1 12/12 或所有 failure/unsupported 完整保留；
 - [ ] B0/B1 同一 J schema、TypeCheck、Gate 2 与 backend；
 - [ ] 每个 kernel checkpoint 可由 commit 与 receipt 复核；

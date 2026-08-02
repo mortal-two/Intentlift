@@ -1,0 +1,5 @@
+window,full_git_raw_added,full_git_raw_deleted,line_audited_raw_added,line_audited_raw_deleted,snapshot_raw_present,generated_run_artifact_lines_excluded_from_line_ledger,nonblank_noncomment_audited,semantic_core_audited
+d307_joint_onboarding,3619,5,3619,5,0,0,3149,589
+current_frontend_footprint,0,0,0,0,12139,0,10694,2311
+final_five_increment,56765,124,1715,124,0,55050,1707,265
+task28_authoring_footprint,0,0,0,0,2223,0,2009,734

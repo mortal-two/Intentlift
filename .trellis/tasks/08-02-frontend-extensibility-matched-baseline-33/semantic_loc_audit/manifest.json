@@ -1,0 +1,30 @@
+{
+  "buckets": [
+    "frontend_semantic",
+    "frontend_execution_adapter",
+    "observer_semantic",
+    "public_context",
+    "shared_contract",
+    "target_consumer",
+    "per_kernel_persistent",
+    "declarative_data",
+    "artifact_output",
+    "test_evidence_harness",
+    "docs_generated_vendor"
+  ],
+  "core_buckets": [
+    "frontend_semantic",
+    "observer_semantic",
+    "per_kernel_persistent"
+  ],
+  "generated_files": {
+    "audit_method.md": "24abf30c89d74765535b7e1cb6819a9a212ee954ef09577a83adbd48857a1f20",
+    "frontend_onboarding_summary.csv": "3413bb2b2dc34646af01caaefd3d784d6be9fdb906bca9687398b405183943e1",
+    "kernel_authoring_summary.csv": "99a09c83d3b091faae5435fa03abbe29e03d523d3578b258a2d255b6af27e508",
+    "semantic_loc_ledger.csv": "122203807e374c909568b42da8191a5ba5337c1abab51efeb25fa4e15d8091bf",
+    "window_raw_totals.csv": "91d16fe038600a3642aeaad63414c604b0f03214423fc9977430eec4e387e229"
+  },
+  "protocol": "intentir.experiment.frontend-semantic-sloc-ledger.v1",
+  "row_count": 19825,
+  "semantic_core_row_count": 3899
+}
