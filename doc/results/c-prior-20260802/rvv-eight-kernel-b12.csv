@@ -1,0 +1,9 @@
+target,kernel,candidate_universe,candidate_budget,c_prior_best_us,erase_c_best_us,erase_c_over_c_speedup,oracle_best_us,c_prior_candidates_to_95pct,erase_c_candidates_to_95pct
+RVV,cross_entropy,80,12,92387.245,92387.245,1.0,73974.1,46,79
+RVV,flash_linear,27,12,12499905.354,12499905.354,1.0,12436121.849,1,1
+RVV,group_norm,122,12,513.522,513.522,1.0,513.522,4,4
+RVV,jsd,55,12,1869142.271,1869142.271,1.0,1869142.271,7,8
+RVV,liger_rope,14,12,618946.302,618946.302,1.0,618946.302,7,6
+RVV,qwen2vl_mrope,15,12,882964.114,882964.114,1.0,882964.114,8,6
+RVV,tvd,30,12,56346.699,56346.699,1.0,56346.699,6,6
+RVV,xformers_rms_norm,116,12,107896.594,107896.594,1.0,107896.594,6,4
