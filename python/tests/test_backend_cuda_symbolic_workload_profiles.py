@@ -5,13 +5,19 @@ import pytest
 
 from intentir.backend.cuda.production_cases import (
     PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE,
+    PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S512,
+    PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S2048,
     PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE,
     PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM,
     constexpr_input_bindings,
     prepare_production_workload,
     profile_production_snapshot,
 )
-from intentir.backend.cuda.search import enumerate_cuda_candidates
+from intentir.backend.cuda.search import (
+    enumerate_cuda_candidates,
+    schedule_only_cuda_path_identity,
+)
+from intentir.backend.cuda.selection import LoweringTarget, select_variant
 from intentir.backend.materialize import attach_c, materialize_j
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.workload_cost import derive_j_workload_cost
@@ -21,6 +27,7 @@ from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 SNAPSHOTS = Path("corpus/production-jc-v1")
 FRESH_SNAPSHOTS = Path("corpus/production-jc-v2")
+LATEST_SNAPSHOTS = Path("corpus/production-jc-v4")
 
 
 def test_sparsemax_natural_workload_derives_sorted_input_from_x() -> None:
@@ -450,6 +457,72 @@ def test_new_attention_and_llama4_rope_natural_profiles_are_model_scale():
     assert rope_constexprs["head_dim_half"] == 64
     assert dict(rope.c_values)["BLOCK_SIZE"] == 64
     assert rope.grid == (8 * 1024, 8)
+
+
+@pytest.mark.parametrize(
+    ("profile", "batch", "sequence", "grid_x", "grid_y"),
+    (
+        (PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S512, 16, 512, 4, 512),
+        (PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S2048, 4, 2048, 16, 128),
+    ),
+)
+def test_flash_forward_sweep_profiles_revalue_only_symbolic_extents(
+    profile, batch, sequence, grid_x, grid_y
+):
+    base, _ = load_production_snapshot(LATEST_SNAPSHOTS, "flash_attention_forward")
+    prepared = prepare_production_workload("flash_attention_forward", profile=profile)
+    active, record = profile_production_snapshot(base, prepared, profile)
+    shapes = {item.formal: item.shape for item in prepared.adapter.buffers}
+    scalars = {item.formal: item.value for item in prepared.adapter.scalars}
+
+    assert batch * sequence == 8192
+    assert shapes["Q"] == (batch, sequence, 32, 64)
+    assert shapes["K"] == (batch, sequence, 32, 64)
+    assert shapes["Out"] == (batch, sequence, 32, 64)
+    assert shapes["Lse"] == (batch, 32, sequence)
+    assert scalars["stride_qb"] == sequence * 32 * 64
+    assert scalars["seqlen_q"] == sequence
+    assert scalars["seqlen_k"] == sequence
+    assert prepared.adapter.grid == (grid_x, grid_y)
+    assert active.j.to_json() == base.j.to_json()
+    assert record["j_unchanged"] is True
+
+    case = build_workload_jc_suite(prepared, active.j, active.c).cases[0]
+    constexpr = constexpr_input_bindings(
+        active.j,
+        case.refeval.input_binding_map,
+        case.values,
+    )
+    materialized = materialize_j(
+        active.j,
+        case.refeval.dims_map,
+        constexpr_bindings=constexpr,
+    )
+    assert "tile_hint = 128" in materialized.intent_mlir
+
+    state = attach_c(
+        materialized,
+        active.c,
+        BackendTarget("cuda", "sm_120a"),
+    )
+    path_kind, direct_path = schedule_only_cuda_path_identity(state)
+    expected_direct = "cuda.flash_forward.structured_scan.direct.v1"
+    assert direct_path == expected_direct
+    schedule = enumerate_cuda_candidates(
+        state,
+        fixed_lowering_path_kind=path_kind,
+        fixed_fast_path_id=direct_path,
+    )
+    assert schedule
+    assert {item.schedule["tile_cols"] for item in schedule} == {128}
+
+    expanded_path = "cuda.flash_forward.certified_full_axis.mma.v1"
+    expanded = select_variant(
+        materialized.intent_mlir,
+        target=LoweringTarget(chip="sm_120a"),
+        only_fast_path=expanded_path,
+    )
+    assert expanded.fast_path_id == expanded_path
 
 
 def test_natural_splitk_binds_h_and_g_to_their_physical_tensor_axes():

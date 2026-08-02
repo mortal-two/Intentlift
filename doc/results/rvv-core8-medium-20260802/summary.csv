@@ -1,0 +1,10 @@
+kernel,shape,dtype,c_fixed_us,schedule_only_us,full_us,g_schedule,g_full,winning_lowering_state
+SwiGLU,"2x1024",f32,106.7800,106.7800,91.1700,1.000000,1.171219,producer_consumer_fused
+Liger RMSNorm,"2x1024",f32,52.3900,51.3505,40.0105,1.020243,1.283426,producer_consumer_fused
+GeGLU,"2x1024",f32,194.3110,189.9910,164.9710,1.022738,1.151663,producer_consumer_fused
+LayerNorm,"128x1024",f32,1487.3870,1079.5750,201.5600,1.377752,5.356097,producer_consumer_fused_joint_vector_reduction
+DYT,"2x1024",f32,140.0610,139.8405,138.7005,1.001577,1.008219,producer_consumer_fused
+Sparsemax,"128x1024",f32,3010.0440,2171.1700,1292.7555,1.386370,1.679490,producer_consumer_fused
+KLDiv,"2x1024",f32,82.0400,74.0005,66.8900,1.108641,1.106301,producer_consumer_fused
+PolyNorm,"2x1024",f32,65.9800,56.4500,25.5800,1.168822,2.206802,producer_consumer_fused_joint_vector_reduction
+GEOMEAN,,,,,,1.126141,1.577408,

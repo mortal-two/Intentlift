@@ -74,6 +74,8 @@ PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE = "natural-headline-v1"
 PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE = "roofline-large-j-only-v1"
 PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM = "symbolic-medium-v1"
 PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE = "symbolic-large-v1"
+PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S512 = "flash-forward-s512-v1"
+PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S2048 = "flash-forward-s2048-v1"
 
 _ROW = "row"
 _FEATURE = "feature"
@@ -96,6 +98,23 @@ _MROPE_SECTION_H = "mrope_section_h"
 _ROTARY_PAIRS = "rotary_pairs"
 
 _PROFILE_EXTENTS: dict[str, dict[str, int]] = {
+    PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S512: {
+        # Keep B*S constant across the 512/1024/2048 Flash sweep.  This is the
+        # usual model-serving memory envelope and, importantly, keeps the
+        # certified Source's 128-key online-softmax recurrence unchanged.
+        _BATCH: 16,
+        _HEADS: 32,
+        _SEQUENCE: 512,
+        _PADDED_SEQUENCE: 512,
+        _HEAD_DIM: 64,
+    },
+    PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S2048: {
+        _BATCH: 4,
+        _HEADS: 32,
+        _SEQUENCE: 2048,
+        _PADDED_SEQUENCE: 2048,
+        _HEAD_DIM: 64,
+    },
     PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_MEDIUM: {
         _ROW: 128,
         _FEATURE: 1024,
@@ -1304,6 +1323,15 @@ def _binding_spec(name: str, profile: str) -> HarnessBindingSpec:
                 f"workload profile {profile!r} is not registered for {name!r}"
             )
         return spec
+    if profile in {
+        PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S512,
+        PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S2048,
+    }:
+        if name != "flash_attention_forward":
+            raise ValueError(
+                f"workload profile {profile!r} is not registered for {name!r}"
+            )
+        return _NATURAL_HARNESS_BINDINGS[name]
     if profile == PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE and name != "masked_copy":
         raise ValueError(f"workload profile {profile!r} is not registered for {name!r}")
     if profile not in _PROFILE_EXTENTS:
@@ -1525,6 +1553,8 @@ __all__ = [
     "FORMAL_PRODUCTION_CASE_IDS",
     "PRODUCTION_CASE_IDS",
     "PRODUCTION_WORKLOAD_PROFILE_CLOSED",
+    "PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S512",
+    "PRODUCTION_WORKLOAD_PROFILE_FLASH_FORWARD_S2048",
     "PRODUCTION_WORKLOAD_PROFILE_NATURAL_HEADLINE",
     "PRODUCTION_WORKLOAD_PROFILE_ROOFLINE_LARGE",
     "PRODUCTION_WORKLOAD_PROFILE_SYMBOLIC_LARGE",

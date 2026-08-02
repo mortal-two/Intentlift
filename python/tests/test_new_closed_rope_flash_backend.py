@@ -477,6 +477,33 @@ def test_flash_forward_hopper_register_pv_combines_with_async_kv() -> None:
     assert "arith.divf" in lowered
 
 
+@pytest.mark.skipif(not _INTENT_OPT.exists(), reason="intent-opt is not built")
+def test_flash_forward_hopper_bm128_reuses_async_kv_warpgroup_lowering() -> None:
+    _snapshot, _case, materialized = _profiled_materialization(
+        "flash_attention_forward"
+    )
+    lowered = subprocess.run(
+        [
+            str(_INTENT_OPT),
+            (
+                "-convert-intent-flash-mma-to-gpu=num-stages=1 block-m=128 "
+                "block-n=128 certified-full-axis-only=true "
+                "hopper-warpgroup=true hopper-async-kv=true"
+            ),
+        ],
+        input=materialized.intent_mlir,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    assert lowered.count("gpu.launch") == 1
+    assert lowered.count("nvgpu.device_async_copy") == 16
+    # Two 64-row query halves each form QK and PV against two 64-column halves.
+    assert lowered.count("nvgpu.warpgroup.mma ") == 8
+    assert "intent.loop" not in lowered
+
+
 def test_flash_forward_direct_and_full_paths_obey_three_column_boundary() -> None:
     snapshot, _case, materialized = _profiled_materialization(
         "flash_attention_forward"
@@ -546,6 +573,11 @@ def test_flash_forward_direct_and_full_paths_obey_three_column_boundary() -> Non
         in hopper_paths
     )
     assert "cuda.flash_forward.hopper_register_qk_pv.v1" in hopper_paths
+    assert "cuda.flash_forward.hopper_warpgroup_async_kv.v1" in hopper_paths
+    assert (
+        "cuda.flash_forward.hopper_warpgroup_async_kv_normalized.v1"
+        in hopper_paths
+    )
     assert (
         "cuda.flash_forward.hopper_register_qk_pv_async_kv.v1" in hopper_paths
     )
