@@ -1,0 +1,11 @@
+kernel,workload_profile,shape,dtype,c_fixed_us,schedule_only_us,full_us,g_schedule,g_full,winning_lowering_state
+xFormers RMSNorm-add,symbolic-medium-v1,"2x1024",f32,26.8300,24.4900,23.4205,1.095549,1.045665,materialized
+SplitK reduce,symbolic-medium-v1,"splits=2 B=1 H=1 G=1 M=2 D=16",f32,19.5105,18.4700,17.9900,1.056335,1.026681,producer_consumer_fused
+JSD,symbolic-medium-v1,"128x1024",f32,18554.9140,12619.2175,11465.1820,1.470370,1.100656,producer_consumer_fused
+CrossEntropy,symbolic-medium-v1,"128x1024",f32,4134.6880,4026.3885,3844.9175,1.026897,1.047198,explicit_vector_reduction
+GroupNorm,natural-headline-v1,"B=8 G=32 N=512 C=256",f32,5428.9240,985.7640,502.2420,5.507326,1.962727,producer_consumer_fused_joint_vector_reduction
+Liger RoPE,natural-headline-v1,"Q=4x2048x16x64 K=4x2048x8x64",f16,743220.9410,743220.9410,743220.9410,1.000000,1.000000,materialized
+Qwen2VL MRoPE,natural-headline-v1,"8x1024x8x128",f16,1253287.1810,919305.4620,919305.4620,1.363298,1.000000,materialized
+Flash Linear,natural-headline-v1,"M=1024 K=8192 N=1024",f16,15288621.0050,12750173.3350,12749844.4930,1.199091,1.000026,producer_consumer_fused
+GEOMEAN_MEDIUM4,,,,,,,1.149732,1.054696,
+GEOMEAN_NATURAL4,,,,,,,1.732192,1.183635,
