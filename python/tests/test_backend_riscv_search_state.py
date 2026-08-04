@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -434,6 +435,11 @@ def test_rvv_contract_consumes_flash_forward_internal_overwrite_updates() -> Non
     view = derive_riscv_contract_view(
         attach_c(materialized, snapshot.c, target)
     )
+    state = attach_c(materialized, snapshot.c, target)
+    plan = rvv_search.plan_riscv_search(state)
+    streaming = [
+        item for item in plan.universe if item.transformation.streaming_attention
+    ]
 
     assert view.supported
     assert {
@@ -443,9 +449,59 @@ def test_rvv_contract_consumes_flash_forward_internal_overwrite_updates() -> Non
         "update:n32:overwrite:forbid:input_order",
         "update:n34:overwrite:forbid:input_order",
     }
+    assert len(streaming) == 8
+    assert {item.schedule.vector_lanes for item in streaming} == {2, 4, 8, 16}
+    assert not {
+        item.candidate_id for item in streaming
+    }.intersection(plan.schedule_only_c_prior_order)
+    assert {
+        item.candidate_id for item in streaming
+    }.issubset(plan.c_prior_order)
+    compiled = rvv.compile_riscv_object(
+        state,
+        next(
+            item
+            for item in streaming
+            if item.schedule.opt_level == 3 and item.schedule.vector_lanes == 4
+        ),
+        capabilities=view.capabilities,
+    )
+    record = compiled.to_record()
+    assert record["lowering_path_kind"] == "streaming_attention_vector"
+    assert record["transformation_record"]["linalg_ops_after"] == 0
+    assert record["transformation_record"][
+        "streaming_attention_removed_materializations"
+    ] == 25
+    assert record["rvv_instruction_count"] > 0
+    assert record["rvv_reduction_instruction_count"] > 0
+    assert not record["python_target_kernel_emission"]
     native = native_rvv_baseline_record("flash_attention_forward")
     assert "M4 *q_d" in native["source"]
     assert "out_lse[state]=maximum+logf(denominator)" in native["source"]
+
+
+def test_rvv_streaming_attention_match_is_structural_and_fail_closed() -> None:
+    snapshot, _path = load_production_snapshot(
+        _ROOT / "corpus" / "production-jc-v4",
+        "flash_attention_forward",
+    )
+    payload = snapshot.j.to_json()
+    payload["kernel_id"] = "unrelated_renamed_kernel"
+    assert rvv_search._has_typed_flash_attention_graph(payload)
+
+    bad_update = copy.deepcopy(payload)
+    bad_update["boundary"]["updates"][0]["order"] = "unordered"
+    assert not rvv_search._has_typed_flash_attention_graph(bad_update)
+
+    bad_contraction = copy.deepcopy(payload)
+    loop = next(
+        item
+        for item in bad_contraction["intent"]["intent_function"]["body"]
+        if item["op"] == "loop"
+    )
+    contraction = next(item for item in loop["body"] if item["op"] == "contraction")
+    contraction["attrs"]["subscripts"] = "bqhd,bkhd->bqhk"
+    assert not rvv_search._has_typed_flash_attention_graph(bad_contraction)
 
 
 def test_flash_forward_refj_executes_internal_scatter_contract() -> None:

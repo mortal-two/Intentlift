@@ -19,10 +19,12 @@ GroupNorm 是最强的解耦案例：`5428.924 -> 985.764 -> 502.242 us`，即 r
 
 加上原七项和上一批八项，目前 **24/24** 个正式 J 均已有 RVV 三柱。最后补齐的
 FlashAttention forward 使用 `B=1,Q=128,H=1,D=64,KV=128`、单线程、cold-data
-和 12-candidate 预算：`4194.499 -> 3951.378 -> 3923.318 us`，即
-`G_schedule=1.062×`、`G_full=1.007×`。Full winner 是真实 MLIR 产生的
-`explicit_vector_reduction` state；36 个 native candidate 全部通过 RefJ 三输出比较。
-独立 LLVM-RVV C baseline 为 `4475.321 us`，Full 相对它为 `1.142×`。
+和 12-candidate 预算：`4039.109 -> 3831.638 -> 1234.536 us`，即
+`G_schedule=1.054×`、`G_full=3.104×`。Full winner 是真实 C++ MLIR pass 产生的
+`streaming_attention_vector` state（O2、8 lanes）：QK、稳定 softmax 与 PV 由直接
+SCF/vector loops 执行，54 个 Linalg op 降为 0，删除 25 个中间 materialization；
+44 个 native candidate 全部通过 RefJ 三输出比较。独立 LLVM-RVV C baseline 为
+`4425.760 us`，Full 相对它为 `3.585×`。
 
 逐项数据在 [summary.csv](summary.csv)；FlashAttention forward 的完整关键字段见
 [flash_attention_forward.json](flash_attention_forward.json)。

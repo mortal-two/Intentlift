@@ -78,6 +78,7 @@ class RiscvTransformationState:
     mixed_precision_dot_reduction: bool = False
     paired_rotation: bool = False
     paired_rotation_head_angle_reuse: bool = False
+    streaming_attention: bool = False
 
     def __post_init__(self) -> None:
         if type(self.fuse_producers) is not bool:
@@ -104,6 +105,8 @@ class RiscvTransformationState:
             raise TypeError("paired_rotation must be bool")
         if type(self.paired_rotation_head_angle_reuse) is not bool:
             raise TypeError("paired_rotation_head_angle_reuse must be bool")
+        if type(self.streaming_attention) is not bool:
+            raise TypeError("streaming_attention must be bool")
         if self.paired_rotation_head_angle_reuse and not self.paired_rotation:
             raise ValueError(
                 "paired-rotation head-angle reuse requires paired_rotation"
@@ -210,9 +213,31 @@ class RiscvTransformationState:
             raise ValueError(
                 "paired rotation is a complete direct-loop structural state"
             )
+        if self.streaming_attention and not self.reassociate_reductions:
+            raise ValueError(
+                "streaming attention requires admitted float reduction "
+                "reassociation"
+            )
+        if self.streaming_attention and (
+            self.fuse_producers
+            or self.explicit_vector_reduction
+            or self.joint_vector_reduction
+            or self.fused_softmax
+            or self.rowmask_zero_fill
+            or self.composed_indexed_gather
+            or self.fuse_sibling_outputs
+            or self.approximate_exp
+            or self.mixed_precision_dot_reduction
+            or self.paired_rotation
+        ):
+            raise ValueError(
+                "streaming attention is a complete direct-loop structural state"
+            )
 
     @property
     def lowering_path_kind(self) -> str:
+        if self.streaming_attention:
+            return "streaming_attention_vector"
         if self.paired_rotation:
             return (
                 "paired_rotation_head_angle_reuse"
@@ -246,7 +271,9 @@ class RiscvTransformationState:
     @property
     def transformation_trace(self) -> tuple[str, ...]:
         structural = (
-            "rvv.elementwise.paired_rotation.head_angle_reuse.v1"
+            "rvv.attention.streaming_vector.v1"
+            if self.streaming_attention
+            else "rvv.elementwise.paired_rotation.head_angle_reuse.v1"
             if self.paired_rotation_head_angle_reuse
             else "rvv.elementwise.paired_rotation.contiguous.v1"
             if self.paired_rotation
@@ -337,6 +364,7 @@ class RiscvTransformationState:
             "paired_rotation_head_angle_reuse": (
                 self.paired_rotation_head_angle_reuse
             ),
+            "streaming_attention": self.streaming_attention,
             "transformation_trace": list(self.transformation_trace),
             "b_transformations": list(self.b_transformations),
             "required_b_capabilities": list(self.required_b_capabilities),
@@ -436,6 +464,11 @@ class RiscvLoweringCandidate:
             f".fusedsoftmax{int(self.transformation.fused_softmax)}"
             f".approxexp{int(self.transformation.approximate_exp)}"
             f".mixeddot{int(self.transformation.mixed_precision_dot_reduction)}"
+            + (
+                ".streamattn1"
+                if self.transformation.streaming_attention
+                else ""
+            )
             + (".rowmaskzero1" if self.transformation.rowmask_zero_fill else "")
             + (
                 ".composedgather1"
@@ -514,6 +547,10 @@ class RiscvTransformationRecord:
     paired_rotation_head_angle_reuses: int = 0
     paired_rotation_vector_width: int = 0
     paired_rotation_scalable: int = 0
+    streaming_attention_lowerings: int = 0
+    streaming_attention_vector_width: int = 0
+    streaming_attention_score_scratch: int = 0
+    streaming_attention_removed_materializations: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -584,6 +621,18 @@ class RiscvTransformationRecord:
             ),
             "paired_rotation_vector_width": self.paired_rotation_vector_width,
             "paired_rotation_scalable": self.paired_rotation_scalable,
+            "streaming_attention_lowerings": (
+                self.streaming_attention_lowerings
+            ),
+            "streaming_attention_vector_width": (
+                self.streaming_attention_vector_width
+            ),
+            "streaming_attention_score_scratch": (
+                self.streaming_attention_score_scratch
+            ),
+            "streaming_attention_removed_materializations": (
+                self.streaming_attention_removed_materializations
+            ),
         }
 
 
@@ -1023,6 +1072,20 @@ def _lower_to_llvm_ir(
             ],
             stdin=bufferized,
         )
+    elif candidate.transformation.streaming_attention:
+        specialized_buffer = _run_text(
+            [
+                INTENT_OPT,
+                (
+                    "-lower-flash-attention-to-loops="
+                    "require-lowering=true vector-width="
+                    f"{candidate.schedule.vector_lanes}"
+                ),
+                "-canonicalize",
+                "-cse",
+            ],
+            stdin=bufferized,
+        )
     elif candidate.transformation.rowmask_zero_fill:
         rowmask_vector_width = 4 if schedule.vectorize else 1
         specialized_buffer = _run_text(
@@ -1090,6 +1153,19 @@ def _lower_to_llvm_ir(
         paired_rotation_scalable=_module_i64_attr(
             specialized_buffer, "intent.rvv.paired_rotation_scalable_count"
         ),
+        streaming_attention_lowerings=_module_i64_attr(
+            specialized_buffer, "intent.rvv.flash_attention_streaming_count"
+        ),
+        streaming_attention_vector_width=_module_i64_attr(
+            specialized_buffer, "intent.rvv.flash_attention_vector_width"
+        ),
+        streaming_attention_score_scratch=_module_i64_attr(
+            specialized_buffer, "intent.rvv.flash_attention_score_scratch_count"
+        ),
+        streaming_attention_removed_materializations=_module_i64_attr(
+            specialized_buffer,
+            "intent.rvv.flash_attention_removed_materialization_count",
+        ),
     )
     if candidate.transformation.paired_rotation and (
         record.paired_rotation_lowerings != 1
@@ -1102,6 +1178,15 @@ def _lower_to_llvm_ir(
     ):
         raise RuntimeError(
             "requested RVV paired rotation produced no exact direct-loop state"
+        )
+    if candidate.transformation.streaming_attention and (
+        record.streaming_attention_lowerings != 1
+        or record.streaming_attention_vector_width != candidate.schedule.vector_lanes
+        or record.streaming_attention_score_scratch != 1
+        or record.streaming_attention_removed_materializations < 20
+    ):
+        raise RuntimeError(
+            "requested RVV streaming attention produced no exact direct-loop state"
         )
     if candidate.transformation.rowmask_zero_fill and (
         record.rowmask_lowerings != 1
@@ -1173,6 +1258,7 @@ def _lower_to_llvm_ir(
                         candidate.transformation.paired_rotation
                         and schedule.vectorize
                     )
+                    or candidate.transformation.streaming_attention
                 )
                 else []
             ),
@@ -1332,6 +1418,16 @@ def compile_riscv_object(
         raise RuntimeError(
             "requested RVV paired rotation produced no exact direct-loop state"
         )
+    if candidate.transformation.streaming_attention and (
+        transformation_record.streaming_attention_lowerings != 1
+        or transformation_record.streaming_attention_vector_width
+        != candidate.schedule.vector_lanes
+        or transformation_record.streaming_attention_score_scratch != 1
+        or transformation_record.streaming_attention_removed_materializations < 20
+    ):
+        raise RuntimeError(
+            "requested RVV streaming attention produced no exact direct-loop state"
+        )
     schedule = candidate.schedule
     vector_shape_flags = (
         [
@@ -1403,6 +1499,10 @@ def compile_riscv_object(
             candidate.transformation.paired_rotation
             and schedule.vectorize
             and rvv_instruction_count == 0
+        )
+        or (
+            candidate.transformation.streaming_attention
+            and rvv_reduction_instruction_count < 1
         )
     ):
         raise RuntimeError(

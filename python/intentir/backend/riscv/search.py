@@ -21,7 +21,7 @@ from intentir.backend.riscv.compile import (
 )
 
 
-RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v10"
+RVV_SEARCH_PLAN_PROTOCOL = "intentir.backend.riscv.search-plan.v11"
 RVV_C_PROJECTION_PROTOCOL = "intentir.backend.riscv.c-projection.v1"
 
 _PARALLEL_TILES = (1, 2, 4, 8, 16, 32, 64, 128)
@@ -92,6 +92,7 @@ def enumerate_riscv_candidates(
     enable_composed_gather: bool = False,
     enable_sibling_output_fusion: bool = False,
     enable_paired_rotation: bool = False,
+    enable_streaming_attention: bool = False,
 ) -> tuple[RiscvLoweringCandidate, ...]:
     """Build the target schedule/structure universe without reading C."""
 
@@ -127,6 +128,14 @@ def enumerate_riscv_candidates(
             )
     if enable_reassociation:
         transformations.append(RiscvTransformationState(False, True, False))
+        if enable_streaming_attention and enable_b_transformations:
+            transformations.append(
+                RiscvTransformationState(
+                    False,
+                    True,
+                    streaming_attention=True,
+                )
+            )
         if enable_b_transformations:
             transformations.append(
                 RiscvTransformationState(
@@ -202,7 +211,16 @@ def enumerate_riscv_candidates(
                 )
             ):
                 continue
-            if transformation.mixed_precision_dot_reduction:
+            if transformation.streaming_attention and (
+                not base_schedule.vectorize
+                or base_schedule.scalable_vectorization
+                or base_schedule.parallel_tile != 0
+                or base_schedule.reduction_tile != 0
+            ):
+                continue
+            if transformation.streaming_attention:
+                lane_values = (2, 4, 8, 16)
+            elif transformation.mixed_precision_dot_reduction:
                 lane_values = (
                     (4,) if base_schedule.scalable_vectorization else (16,)
                 )
@@ -453,6 +471,224 @@ def _has_two_public_outputs(value: Mapping[str, Any]) -> bool:
         isinstance(outputs, list)
         and len(outputs) == 2
         and all(isinstance(output, Mapping) for output in outputs)
+    )
+
+
+def _has_typed_flash_attention_graph(value: Mapping[str, Any]) -> bool:
+    """Match the closed structured stable-attention J without kernel names."""
+
+    intent = value.get("intent")
+    boundary = value.get("boundary")
+    constraints = value.get("dimension_constraints")
+    if (
+        not isinstance(intent, Mapping)
+        or not isinstance(boundary, Mapping)
+        or not isinstance(constraints, list)
+        or boundary.get("aliases") not in (None, [])
+    ):
+        return False
+    function = intent.get("intent_function")
+    if not isinstance(function, Mapping):
+        return False
+    inputs = function.get("inputs")
+    outputs = function.get("outputs")
+    body = function.get("body")
+    if (
+        not isinstance(inputs, list)
+        or not isinstance(outputs, list)
+        or not isinstance(body, list)
+        or len(inputs) != 6
+        or len(outputs) != 3
+    ):
+        return False
+
+    input_by_name = {
+        item.get("name"): item
+        for item in inputs
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    output_by_name = {
+        item.get("name"): item
+        for item in outputs
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    operations: list[Mapping[str, Any]] = []
+
+    def visit(items: Any) -> None:
+        if not isinstance(items, list):
+            return
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            operations.append(item)
+            visit(item.get("body"))
+            for arm in ("positive", "negative"):
+                region = item.get(arm)
+                if isinstance(region, Mapping):
+                    visit(region.get("body"))
+
+    visit(body)
+    contractions = [item for item in operations if item.get("op") == "contraction"]
+    loops = [item for item in operations if item.get("op") == "loop"]
+    scatters = [item for item in operations if item.get("op") == "scatter"]
+    reductions = [item for item in operations if item.get("op") == "reduce"]
+    if (
+        len(contractions) != 2
+        or len(loops) != 1
+        or len(scatters) != 3
+        or len(reductions) != 2
+    ):
+        return False
+    qk = next(
+        (
+            item
+            for item in contractions
+            if isinstance(item.get("attrs"), Mapping)
+            and item["attrs"].get("subscripts") == "bqhd,bkhd->bhqk"
+        ),
+        None,
+    )
+    pv = next(
+        (
+            item
+            for item in contractions
+            if isinstance(item.get("attrs"), Mapping)
+            and item["attrs"].get("subscripts") == "bhqk,bkhd->bqhd"
+        ),
+        None,
+    )
+    if qk is None or pv is None:
+        return False
+    qk_operands = qk.get("operands")
+    pv_operands = pv.get("operands")
+    if (
+        not isinstance(qk_operands, list)
+        or len(qk_operands) != 2
+        or not isinstance(pv_operands, list)
+        or len(pv_operands) != 2
+    ):
+        return False
+    scans = loops[0].get("scan")
+    scan_sources = {
+        item.get("name"): item.get("from")
+        for item in scans
+        if isinstance(item, Mapping)
+        and isinstance(item.get("name"), str)
+        and isinstance(item.get("from"), str)
+    } if isinstance(scans, list) else {}
+
+    def boundary_input(name: Any) -> Any:
+        return input_by_name.get(scan_sources.get(name, name))
+
+    query = boundary_input(qk_operands[0])
+    key = boundary_input(qk_operands[1])
+    value_input = boundary_input(pv_operands[1])
+    if not all(isinstance(item, Mapping) for item in (query, key, value_input)):
+        return False
+    query_shape = query.get("shape")
+    key_shape = key.get("shape")
+    value_shape = value_input.get("shape")
+    if (
+        query.get("dtype") != "f16"
+        or key.get("dtype") != "f16"
+        or value_input.get("dtype") != "f16"
+        or not isinstance(query_shape, list)
+        or not isinstance(key_shape, list)
+        or len(query_shape) != 4
+        or len(key_shape) != 4
+        or value_shape != key_shape
+        or query_shape[0] != key_shape[0]
+        or query_shape[2:] != key_shape[2:]
+    ):
+        return False
+    rank_four_outputs = [
+        item
+        for item in output_by_name.values()
+        if item.get("dtype") == "f16" and item.get("shape") == query_shape
+    ]
+    rank_three_outputs = [
+        item
+        for item in output_by_name.values()
+        if item.get("dtype") == "f32"
+        and isinstance(item.get("shape"), list)
+        and len(item["shape"]) == 3
+        and item["shape"][:2] == [query_shape[0], query_shape[2]]
+    ]
+    scalar_f32_inputs = [
+        item
+        for item in input_by_name.values()
+        if item.get("dtype") == "f32" and item.get("shape") == []
+    ]
+    scratch_inputs = [
+        item
+        for item in input_by_name.values()
+        if item.get("dtype") == "f32"
+        and isinstance(item.get("shape"), list)
+        and len(item["shape"]) == 3
+        and item["shape"][:2] == [query_shape[0], query_shape[2]]
+    ]
+    if (
+        len(rank_four_outputs) != 1
+        or len(rank_three_outputs) != 2
+        or len(scalar_f32_inputs) != 1
+        or len(scratch_inputs) != 1
+    ):
+        return False
+    loop_trip = loops[0].get("trip")
+    if not isinstance(loop_trip, Mapping) or loop_trip.get("axis") != key_shape[1]:
+        return False
+    reduction_facts = {
+        (
+            item.get("attrs", {}).get("fn"),
+            tuple(item.get("attrs", {}).get("axes", [])),
+            item.get("attrs", {}).get("assoc"),
+        )
+        for item in reductions
+        if isinstance(item.get("attrs"), Mapping)
+    }
+    if reduction_facts != {
+        ("max", (3,), "float_nondeterministic"),
+        ("sum", (3,), "float_nondeterministic"),
+    }:
+        return False
+    if any(
+        not isinstance(item.get("attrs"), Mapping)
+        or item["attrs"].get("axis") != 2
+        or item["attrs"].get("mode") != "along_axis"
+        or item["attrs"].get("reduce") != "none"
+        for item in scatters
+    ):
+        return False
+    updates = boundary.get("updates")
+    relations = boundary.get("result_relations")
+    if (
+        not isinstance(updates, list)
+        or len(updates) != 3
+        or any(
+            not isinstance(item, Mapping)
+            or item.get("axis") != 2
+            or item.get("combiner") != "overwrite"
+            or item.get("duplicate_policy") != "forbid"
+            or item.get("order") != "input_order"
+            for item in updates
+        )
+        or not isinstance(relations, list)
+        or len(relations) != 3
+        or any(
+            not isinstance(item, Mapping) or item.get("kind") != "tolerance"
+            for item in relations
+        )
+    ):
+        return False
+    padded = scratch_inputs[0]["shape"][2]
+    return any(
+        isinstance(item, str)
+        and item.replace(" ", "")
+        in {
+            f"{query_shape[1]}<={padded}",
+            f"{padded}>={query_shape[1]}",
+        }
+        for item in constraints
     )
 
 
@@ -781,6 +1017,7 @@ def plan_riscv_search(
         'intent.paired_rotation = "interleaved"' in state.base.intent_mlir
         and "intentir.paired-last-axis-rotation.v1" in state.base.intent_mlir
     )
+    has_streaming_attention = _has_typed_flash_attention_graph(j_payload)
     has_sibling_outputs = (
         _has_two_public_outputs(j_payload)
         and not reduction_axes
@@ -794,6 +1031,7 @@ def plan_riscv_search(
         enable_composed_gather=has_typed_gather_chain,
         enable_sibling_output_fusion=has_sibling_outputs,
         enable_paired_rotation=has_paired_rotation,
+        enable_streaming_attention=has_streaming_attention,
     )
     minimum_reduction_tile = int(projection["vector_lanes"])
     subvector_reduction_schedules_rejected = sum(
@@ -871,6 +1109,7 @@ def plan_riscv_search(
                 item.transformation.mixed_precision_dot_reduction,
                 item.transformation.paired_rotation,
                 item.transformation.paired_rotation_head_angle_reuse,
+                item.transformation.streaming_attention,
             )
             for item in universe
             if item not in canonical
@@ -893,6 +1132,7 @@ def plan_riscv_search(
                 item.transformation.mixed_precision_dot_reduction,
                 item.transformation.paired_rotation,
                 item.transformation.paired_rotation_head_angle_reuse,
+                item.transformation.streaming_attention,
             )
             == state_key
         )

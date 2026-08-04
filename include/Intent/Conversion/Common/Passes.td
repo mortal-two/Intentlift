@@ -210,6 +210,35 @@ def LowerRowMaskToLoops : Pass<
   ];
 }
 
+def LowerFlashAttentionToLoops : Pass<
+    "lower-flash-attention-to-loops", "::mlir::ModuleOp"> {
+  let summary = "Lower certified stable attention to direct RVV streaming loops.";
+  let description = [{
+    Structurally matches the exact bufferized QK/stable-softmax/PV graph with
+    Out/LSE/TMP results and its closed in/out scratch ABI. It replaces the
+    materialized Linalg graph by direct SCF and vector operations: vectorized
+    f16-to-f32 QK dots, one row-score scratch, stable max/sum, and vectorized PV
+    accumulation. Matching is source-name and target-name blind. The pass never
+    runs in C-Fixed or Schedule-Only and fails closed when the requested graph is
+    absent.
+  }];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+    "::mlir::linalg::LinalgDialect",
+    "::mlir::math::MathDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::vector::VectorDialect",
+  ];
+  let options = [
+    Option<"vectorWidth", "vector-width", "unsigned", "4",
+           "Fixed RVV packet width for QK and PV innermost dimensions">,
+    Option<"requireLowering", "require-lowering", "bool", "false",
+           "Fail when no exact certified stable-attention graph is present">,
+  ];
+}
+
 def LowerPairedRotationToLoops : Pass<
     "lower-paired-rotation-to-loops", "::mlir::ModuleOp"> {
   let summary = "Lower a closed interleaved paired rotation to direct loops.";

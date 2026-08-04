@@ -16,29 +16,38 @@
   },
   "target_reference": "refj",
   "candidate_correctness": {
-    "passed": 36,
+    "passed": 44,
     "failed": 0,
     "outputs": ["out", "lse", "tmp"]
   },
   "performance_us": {
-    "c_fixed": 4194.499,
-    "schedule_only": 3951.378,
-    "full": 3923.318,
-    "llvm_rvv_c": 4475.321
+    "c_fixed": 4039.1085,
+    "schedule_only": 3831.638,
+    "full": 1234.536,
+    "llvm_rvv_c": 4425.76
   },
   "speedup": {
-    "g_schedule": 1.0615281554941087,
-    "g_full": 1.007152109515466,
-    "full_over_llvm_rvv_c": 1.1420865585926216
+    "g_schedule": 1.0541466860909094,
+    "g_full": 3.1037069797883574,
+    "full_over_llvm_rvv_c": 3.5852486479655483
   },
   "winner": {
-    "lowering_path_kind": "explicit_vector_reduction",
-    "opt_level": 3,
-    "parallel_tile": 4,
-    "scalable_vectorization": true,
-    "vector_lanes": 4,
-    "rvv_instruction_count": 717,
-    "rvv_reduction_instruction_count": 34,
+    "lowering_path_kind": "streaming_attention_vector",
+    "opt_level": 2,
+    "parallel_tile": 0,
+    "scalable_vectorization": false,
+    "vector_lanes": 8,
+    "rvv_instruction_count": 344,
+    "rvv_reduction_instruction_count": 6,
+    "linalg_ops_before": 54,
+    "linalg_ops_after": 0,
+    "removed_materializations": 25,
+    "object_size_bytes": 4752,
+    "winner_max_abs_error": {
+      "out": 0.00006103515625,
+      "lse": 4.76837158203125e-7,
+      "tmp": 5.587935447692871e-9
+    },
     "python_target_kernel_emission": false
   }
 }
