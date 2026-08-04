@@ -1,0 +1,840 @@
+{
+  "cohort": "formal production-jc-v4 24-J set",
+  "cuda_cross_structure_matrix": [
+    {
+      "admitted": true,
+      "case": "swiglu",
+      "expected": true,
+      "graph_structure": "elementwise",
+      "pass_structure": "elementwise",
+      "path_id": "cuda.elementwise.row.vectorized.v1"
+    },
+    {
+      "admitted": false,
+      "case": "swiglu",
+      "expected": false,
+      "graph_structure": "elementwise",
+      "pass_structure": "row",
+      "path_id": "cuda.row_reduction.normalization_loss.read_once.v1"
+    },
+    {
+      "admitted": false,
+      "case": "swiglu",
+      "expected": false,
+      "graph_structure": "elementwise",
+      "pass_structure": "padded_row",
+      "path_id": "cuda.padded_row_reduction.masked_short_dot.v1"
+    },
+    {
+      "admitted": false,
+      "case": "swiglu",
+      "expected": false,
+      "graph_structure": "elementwise",
+      "pass_structure": "contraction",
+      "path_id": "cuda.contraction.tiled.v1"
+    },
+    {
+      "admitted": false,
+      "case": "swiglu",
+      "expected": false,
+      "graph_structure": "elementwise",
+      "pass_structure": "splitk",
+      "path_id": "cuda.splitk.reduce-varargs.v1"
+    },
+    {
+      "admitted": false,
+      "case": "swiglu",
+      "expected": false,
+      "graph_structure": "elementwise",
+      "pass_structure": "attention",
+      "path_id": "cuda.flash_forward.structured_scan.direct.v1"
+    },
+    {
+      "admitted": false,
+      "case": "liger_rms_norm",
+      "expected": false,
+      "graph_structure": "row",
+      "pass_structure": "elementwise",
+      "path_id": "cuda.elementwise.row.vectorized.v1"
+    },
+    {
+      "admitted": true,
+      "case": "liger_rms_norm",
+      "expected": true,
+      "graph_structure": "row",
+      "pass_structure": "row",
+      "path_id": "cuda.row_reduction.normalization_loss.read_once.v1"
+    },
+    {
+      "admitted": false,
+      "case": "liger_rms_norm",
+      "expected": false,
+      "graph_structure": "row",
+      "pass_structure": "padded_row",
+      "path_id": "cuda.padded_row_reduction.masked_short_dot.v1"
+    },
+    {
+      "admitted": false,
+      "case": "liger_rms_norm",
+      "expected": false,
+      "graph_structure": "row",
+      "pass_structure": "contraction",
+      "path_id": "cuda.contraction.tiled.v1"
+    },
+    {
+      "admitted": false,
+      "case": "liger_rms_norm",
+      "expected": false,
+      "graph_structure": "row",
+      "pass_structure": "splitk",
+      "path_id": "cuda.splitk.reduce-varargs.v1"
+    },
+    {
+      "admitted": false,
+      "case": "liger_rms_norm",
+      "expected": false,
+      "graph_structure": "row",
+      "pass_structure": "attention",
+      "path_id": "cuda.flash_forward.structured_scan.direct.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_bwd_preprocess",
+      "expected": false,
+      "graph_structure": "padded_row",
+      "pass_structure": "elementwise",
+      "path_id": "cuda.elementwise.row.vectorized.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_bwd_preprocess",
+      "expected": false,
+      "graph_structure": "padded_row",
+      "pass_structure": "row",
+      "path_id": "cuda.row_reduction.normalization_loss.read_once.v1"
+    },
+    {
+      "admitted": true,
+      "case": "flash_bwd_preprocess",
+      "expected": true,
+      "graph_structure": "padded_row",
+      "pass_structure": "padded_row",
+      "path_id": "cuda.padded_row_reduction.masked_short_dot.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_bwd_preprocess",
+      "expected": false,
+      "graph_structure": "padded_row",
+      "pass_structure": "contraction",
+      "path_id": "cuda.contraction.tiled.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_bwd_preprocess",
+      "expected": false,
+      "graph_structure": "padded_row",
+      "pass_structure": "splitk",
+      "path_id": "cuda.splitk.reduce-varargs.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_bwd_preprocess",
+      "expected": false,
+      "graph_structure": "padded_row",
+      "pass_structure": "attention",
+      "path_id": "cuda.flash_forward.structured_scan.direct.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_linear",
+      "expected": false,
+      "graph_structure": "contraction",
+      "pass_structure": "elementwise",
+      "path_id": "cuda.elementwise.row.vectorized.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_linear",
+      "expected": false,
+      "graph_structure": "contraction",
+      "pass_structure": "row",
+      "path_id": "cuda.row_reduction.normalization_loss.read_once.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_linear",
+      "expected": false,
+      "graph_structure": "contraction",
+      "pass_structure": "padded_row",
+      "path_id": "cuda.padded_row_reduction.masked_short_dot.v1"
+    },
+    {
+      "admitted": true,
+      "case": "flash_linear",
+      "expected": true,
+      "graph_structure": "contraction",
+      "pass_structure": "contraction",
+      "path_id": "cuda.contraction.tiled.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_linear",
+      "expected": false,
+      "graph_structure": "contraction",
+      "pass_structure": "splitk",
+      "path_id": "cuda.splitk.reduce-varargs.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_linear",
+      "expected": false,
+      "graph_structure": "contraction",
+      "pass_structure": "attention",
+      "path_id": "cuda.flash_forward.structured_scan.direct.v1"
+    },
+    {
+      "admitted": false,
+      "case": "splitk_reduce_varargs",
+      "expected": false,
+      "graph_structure": "splitk",
+      "pass_structure": "elementwise",
+      "path_id": "cuda.elementwise.row.vectorized.v1"
+    },
+    {
+      "admitted": false,
+      "case": "splitk_reduce_varargs",
+      "expected": false,
+      "graph_structure": "splitk",
+      "pass_structure": "row",
+      "path_id": "cuda.row_reduction.normalization_loss.read_once.v1"
+    },
+    {
+      "admitted": false,
+      "case": "splitk_reduce_varargs",
+      "expected": false,
+      "graph_structure": "splitk",
+      "pass_structure": "padded_row",
+      "path_id": "cuda.padded_row_reduction.masked_short_dot.v1"
+    },
+    {
+      "admitted": false,
+      "case": "splitk_reduce_varargs",
+      "expected": false,
+      "graph_structure": "splitk",
+      "pass_structure": "contraction",
+      "path_id": "cuda.contraction.tiled.v1"
+    },
+    {
+      "admitted": true,
+      "case": "splitk_reduce_varargs",
+      "expected": true,
+      "graph_structure": "splitk",
+      "pass_structure": "splitk",
+      "path_id": "cuda.splitk.reduce-varargs.v1"
+    },
+    {
+      "admitted": false,
+      "case": "splitk_reduce_varargs",
+      "expected": false,
+      "graph_structure": "splitk",
+      "pass_structure": "attention",
+      "path_id": "cuda.flash_forward.structured_scan.direct.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_attention_forward",
+      "expected": false,
+      "graph_structure": "attention",
+      "pass_structure": "elementwise",
+      "path_id": "cuda.elementwise.row.vectorized.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_attention_forward",
+      "expected": false,
+      "graph_structure": "attention",
+      "pass_structure": "row",
+      "path_id": "cuda.row_reduction.normalization_loss.read_once.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_attention_forward",
+      "expected": false,
+      "graph_structure": "attention",
+      "pass_structure": "padded_row",
+      "path_id": "cuda.padded_row_reduction.masked_short_dot.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_attention_forward",
+      "expected": false,
+      "graph_structure": "attention",
+      "pass_structure": "contraction",
+      "path_id": "cuda.contraction.tiled.v1"
+    },
+    {
+      "admitted": false,
+      "case": "flash_attention_forward",
+      "expected": false,
+      "graph_structure": "attention",
+      "pass_structure": "splitk",
+      "path_id": "cuda.splitk.reduce-varargs.v1"
+    },
+    {
+      "admitted": true,
+      "case": "flash_attention_forward",
+      "expected": true,
+      "graph_structure": "attention",
+      "pass_structure": "attention",
+      "path_id": "cuda.flash_forward.structured_scan.direct.v1"
+    }
+  ],
+  "cuda_full_space_representatives": [
+    {
+      "admitted_candidate_count": 292,
+      "admitted_path_count": 3,
+      "admitted_paths": [
+        "cuda.pipeline.linalg-materialized.v1",
+        "cuda.elementwise.row.vectorized.v1",
+        "cuda.linalg.elementwise-fused.v1"
+      ],
+      "case": "swiglu",
+      "invariant": true,
+      "raw_candidate_count": 1763,
+      "structure": "elementwise"
+    },
+    {
+      "admitted_candidate_count": 894,
+      "admitted_path_count": 3,
+      "admitted_paths": [
+        "cuda.pipeline.linalg-materialized.v1",
+        "cuda.row_reduction.normalization_loss.read_once.v1",
+        "cuda.linalg.elementwise-fused.v1"
+      ],
+      "case": "liger_rms_norm",
+      "invariant": true,
+      "raw_candidate_count": 2537,
+      "structure": "row"
+    },
+    {
+      "admitted_candidate_count": 192,
+      "admitted_path_count": 3,
+      "admitted_paths": [
+        "cuda.pipeline.linalg-materialized.v1",
+        "cuda.padded_row_reduction.masked_short_dot.v1",
+        "cuda.linalg.elementwise-fused.v1"
+      ],
+      "case": "flash_bwd_preprocess",
+      "invariant": true,
+      "raw_candidate_count": 1725,
+      "structure": "padded_row"
+    },
+    {
+      "admitted_candidate_count": 147,
+      "admitted_path_count": 4,
+      "admitted_paths": [
+        "cuda.pipeline.linalg-materialized.v1",
+        "cuda.contraction.tiled.v1",
+        "cuda.contraction.mma-sync.v1",
+        "cuda.linalg.elementwise-fused.v1"
+      ],
+      "case": "flash_linear",
+      "invariant": true,
+      "raw_candidate_count": 1629,
+      "structure": "contraction"
+    },
+    {
+      "admitted_candidate_count": 64,
+      "admitted_path_count": 3,
+      "admitted_paths": [
+        "cuda.pipeline.linalg-materialized.v1",
+        "cuda.splitk.reduce-varargs.v1",
+        "cuda.linalg.elementwise-fused.v1"
+      ],
+      "case": "splitk_reduce_varargs",
+      "invariant": true,
+      "raw_candidate_count": 1947,
+      "structure": "splitk"
+    },
+    {
+      "admitted_candidate_count": 256,
+      "admitted_path_count": 8,
+      "admitted_paths": [
+        "cuda.pipeline.linalg-materialized.v1",
+        "cuda.flash_forward.structured_scan.direct.v1",
+        "cuda.flash_forward.certified_full_axis.mma.v1",
+        "cuda.flash_forward.compact_query_warps.mma.v1",
+        "cuda.flash_forward.compact_query_warps_fragment64.mma.v1",
+        "cuda.flash_forward.compact_query_warps_stream_p.mma.v1",
+        "cuda.flash_forward.normalized_softmax_carry.mma.v1",
+        "cuda.linalg.elementwise-fused.v1"
+      ],
+      "case": "flash_attention_forward",
+      "invariant": true,
+      "raw_candidate_count": 1631,
+      "structure": "attention"
+    }
+  ],
+  "intervention": "replace each entry function symbol with an operator name from a different lowering structure; keep J, C, target, and MLIR body fixed",
+  "per_case": [
+    {
+      "case": "cross_entropy",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "dyt",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.elementwise.row.vectorized.v1",
+      "misleading_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "misleading_symbol": "liger_rms_norm",
+      "original_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 74,
+      "rvv_search_plan_invariant": true,
+      "structure": "elementwise"
+    },
+    {
+      "case": "flash_attention_forward",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.flash_forward.structured_scan.direct.v1",
+      "misleading_cuda_path": [
+        "cuda.flash_forward.structured_scan.direct.v1",
+        "cuda.flash_forward.structured_scan.direct.v1"
+      ],
+      "misleading_symbol": "liger_rms_norm",
+      "original_cuda_path": [
+        "cuda.flash_forward.structured_scan.direct.v1",
+        "cuda.flash_forward.structured_scan.direct.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 96,
+      "rvv_search_plan_invariant": true,
+      "structure": "attention"
+    },
+    {
+      "case": "flash_bwd_preprocess",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.padded_row_reduction.masked_short_dot.v1",
+      "misleading_cuda_path": [
+        "padded_row_reduction",
+        "cuda.padded_row_reduction.masked_short_dot.v1"
+      ],
+      "misleading_symbol": "flash_linear",
+      "original_cuda_path": [
+        "padded_row_reduction",
+        "cuda.padded_row_reduction.masked_short_dot.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "padded_row"
+    },
+    {
+      "case": "flash_layer_norm_1pass",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "fused_add_rms_norm",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "flash_linear",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.contraction.tiled.v1",
+      "misleading_cuda_path": [
+        "cuda.contraction.tiled.v1",
+        "cuda.contraction.tiled.v1"
+      ],
+      "misleading_symbol": "splitk_reduce_varargs",
+      "original_cuda_path": [
+        "cuda.contraction.tiled.v1",
+        "cuda.contraction.tiled.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 48,
+      "rvv_search_plan_invariant": true,
+      "structure": "contraction"
+    },
+    {
+      "case": "geglu",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.elementwise.row.vectorized.v1",
+      "misleading_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "misleading_symbol": "liger_rms_norm",
+      "original_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 74,
+      "rvv_search_plan_invariant": true,
+      "structure": "elementwise"
+    },
+    {
+      "case": "group_norm",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "jsd",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "kl_div",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "layer_norm",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "llama4_rope",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.elementwise.row.vectorized.v1",
+      "misleading_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "misleading_symbol": "liger_rms_norm",
+      "original_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 7,
+      "rvv_search_plan_invariant": true,
+      "structure": "elementwise"
+    },
+    {
+      "case": "liger_rope",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.elementwise.row.vectorized.v1",
+      "misleading_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "misleading_symbol": "liger_rms_norm",
+      "original_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 99,
+      "rvv_search_plan_invariant": true,
+      "structure": "elementwise"
+    },
+    {
+      "case": "liger_rms_norm",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "poly_norm",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 96,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "qwen2vl_mrope",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.elementwise.row.vectorized.v1",
+      "misleading_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "misleading_symbol": "liger_rms_norm",
+      "original_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 99,
+      "rvv_search_plan_invariant": true,
+      "structure": "elementwise"
+    },
+    {
+      "case": "softmax",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "sparsemax",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "splitk_reduce_varargs",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.splitk.reduce-varargs.v1",
+      "misleading_cuda_path": [
+        "splitk_weighted_merge",
+        "cuda.splitk.reduce-varargs.v1"
+      ],
+      "misleading_symbol": "flash_attention_forward",
+      "original_cuda_path": [
+        "splitk_weighted_merge",
+        "cuda.splitk.reduce-varargs.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 111,
+      "rvv_search_plan_invariant": true,
+      "structure": "splitk"
+    },
+    {
+      "case": "swiglu",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.elementwise.row.vectorized.v1",
+      "misleading_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "misleading_symbol": "liger_rms_norm",
+      "original_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 74,
+      "rvv_search_plan_invariant": true,
+      "structure": "elementwise"
+    },
+    {
+      "case": "tvd",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.elementwise.row.vectorized.v1",
+      "misleading_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "misleading_symbol": "liger_rms_norm",
+      "original_cuda_path": [
+        "elementwise",
+        "cuda.elementwise.row.vectorized.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 111,
+      "rvv_search_plan_invariant": true,
+      "structure": "elementwise"
+    },
+    {
+      "case": "xformers_rms_norm",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    },
+    {
+      "case": "xformers_rms_norm_add",
+      "cuda_path_invariant": true,
+      "expected_cuda_path": "cuda.row_reduction.normalization_loss.read_once.v1",
+      "misleading_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "misleading_symbol": "swiglu",
+      "original_cuda_path": [
+        "row_reduction",
+        "cuda.row_reduction.normalization_loss.read_once.v1"
+      ],
+      "original_symbol": "scrc_j0",
+      "rvv_candidate_count": 207,
+      "rvv_search_plan_invariant": true,
+      "structure": "row"
+    }
+  ],
+  "protocol": "intentir.backend.algorithm-name-independence.v1",
+  "summary": {
+    "cuda_cross_structure_matrix": {
+      "diagonal_admitted": 6,
+      "diagonal_total": 6,
+      "off_diagonal_rejected": 30,
+      "off_diagonal_total": 30
+    },
+    "cuda_full_candidate_space_invariance": {
+      "passed": 6,
+      "total": 6
+    },
+    "cuda_misleading_name_path_invariance": {
+      "passed": 24,
+      "total": 24
+    },
+    "formal_case_count": 24,
+    "rvv_misleading_name_search_plan_invariance": {
+      "passed": 24,
+      "total": 24
+    }
+  },
+  "targets": [
+    "cuda:sm_120a",
+    "riscv:rv64gcv_zfh_zvfh:vlen128"
+  ]
+}

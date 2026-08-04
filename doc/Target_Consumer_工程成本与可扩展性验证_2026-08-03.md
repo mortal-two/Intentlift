@@ -89,9 +89,9 @@
 | 共享部分 | 文件数 | physical LoC | nonblank LoC | 内容 |
 |---|---:|---:|---:|---|
 | Intent dialect | 6 | 1,412 | 1,310 | 28 个 Intent ops、verifier、dialect registration |
-| target-neutral C++/MLIR conversion | 14 | 5,536 | 5,117 | 12 个 common passes |
-| J materialization/contract/search protocol Python | 16 | 10,476 | 9,526 | J→Intent MLIR、typed B projection、C attachment、通用搜索闭环 |
-| **共享基座合计** | **36** | **17,424** | **15,953** | 每个 target 不重复计算 |
+| target-neutral C++/MLIR conversion | 15 | 6,005 | 5,559 | 13 个 common passes |
+| J materialization/contract/search protocol Python | 17 | 10,561 | 9,597 | J→Intent MLIR、typed B projection、C attachment、通用搜索闭环 |
+| **共享基座合计** | **38** | **17,978** | **16,466** | 每个 target 不重复计算 |
 
 共享 Python 数字是保守的 production 口径：它包含完整的 typed boundary、ContractExpr、canonical J elaboration 与 paired-rotation view，而不只统计 `materialize.py` 的入口代码；但不计只被 SCRC/RefEval 使用的旧 `functional_boundary.py`、dimension checker 和 schema helper。production materializer 使用的是 typed ContractExpr projection，并未把旧 matcher 当作 membership gate。
 
@@ -100,14 +100,14 @@
 | CUDA target-local 部分 | 文件数 | physical LoC | nonblank LoC |
 |---|---:|---:|---:|
 | CUDA Intent conversion + NVVM target C++/TableGen | 32 | 27,577 | 25,995 |
-| CUDA production Python controller/runtime | 13 | 10,876 | 10,057 |
-| **CUDA target-local 合计** | **45** | **38,453** | **36,052** |
+| CUDA production Python controller/runtime | 13 | 10,871 | 10,052 |
+| **CUDA target-local 合计** | **45** | **38,448** | **36,047** |
 
-CUDA Python 并不发射 Python kernel。其 10,876 行可进一步分为：
+CUDA Python 并不发射 Python kernel。其 10,871 行可进一步分为：
 
 | Python 职责 | physical LoC | 主要文件 |
 |---|---:|---|
-| J admission、pass probe、schedule/state search | 6,469 | `program.py`、`selection.py`、`schedules.py`、`search.py` |
+| J admission、pass probe、schedule/state search | 6,464 | `program.py`、`selection.py`、`schedules.py`、`search.py` |
 | MLIR→cubin 编译与真实 launch/orchestration | 2,934 | `compile.py`、`pipeline.py`、`launch.py`、`launch_config.py`、`orchestrate.py` |
 | Q/D、runtime contract、offline variant dispatch | 1,473 | `qd.py`、`runtime_contract.py`、`variant_manifest.py`、`dispatch.py` |
 
@@ -132,20 +132,21 @@ CUDA C++ inventory 包含：
 
 | RVV 口径 | physical LoC | nonblank LoC | 解释 |
 |---|---:|---:|---|
-| 严格 target-local Python | 2,524 | 2,406 | `compile.py`、`contract.py`、`search.py` |
+| 严格 target-local Python | 2,878 | 2,752 | `compile.py`、`contract.py`、`search.py` |
 | RVV-specific C++ pass | 0 | 0 | 当前没有独立 RVV C++ rewrite 目录 |
-| 加上实际执行所用的 common C++ passes | 8,060 | 7,523 | 2,524 + 5,536；这是更保守的“可执行 RVV stack”口径 |
+| 加上实际执行所用的 common C++ passes | 8,883 | 8,311 | 2,878 + 6,005；这是更保守的“可执行 RVV stack”口径 |
 
-RVV consumer 复用全部 12 个 common MLIR passes，包括：
+RVV consumer 复用全部 13 个 common MLIR passes，包括：
 
 - `ConvertIntentToLinalg`；
 - iterator-kind tiling；
 - row/mixed-precision reduction vectorization；
 - softmax 与 sibling-output fusion；
 - paired rotation、row mask、gather chain lowering；
+- structured FlashAttention loop lowering；
 - buffer-result forwarding 与 disjoint-copy lowering。
 
-当前正式集合在 RVV 上是 **23/24 可消费**。FlashAttention forward 因 logical-update contract 尚未被 RVV consumer 支持而 fail closed。因此不能把 RVV 写成 24/24，也不能把 fail-closed 当作免费支持。
+当前正式集合在 RVV 上已是 **24/24 可消费**。最后补齐的 FlashAttention forward 有 36 个 native candidates 全部通过 RefJ 三输出比较，Full winner 是真实 MLIR 的 `explicit_vector_reduction` state，而非 Python target-kernel emitter。
 
 ## 4. 24 个 J 是否对应手写模板
 
@@ -280,12 +281,13 @@ workload/measurement:  需要，但不计入 consumer LoC
 - 新增 J 不必新增同名 target implementation；
 - C 只提供 schedule/search prior，不是 Kernel recipe；
 - 24 个 J 的 CUDA 映射为 6 类结构，而不是 24 套模板。
+- FlashAttention forward 已在 RVV 完整消费，正式集合达到 24/24；
+- 名称干预实验中 CUDA 24/24 path、RVV 24/24 search plan 均不随误导性算子名改变。
 
 ### 6.2 当前尚未证明的内容
 
 - 任意新 Intent op 都能零成本跨 target；
 - consumer LoC 只与 target 数有关；
-- FlashAttention forward 已在 RVV 完整消费；
 - LoC 可以直接替代开发人时或维护成本；
 - 6 个结构类别已经覆盖未来所有 workload。
 
@@ -311,10 +313,10 @@ workload/measurement:  需要，但不计入 consumer LoC
 
 | Consumer | shared/common LoC | target-local C++ LoC | target-local Python LoC | registered structure passes | 24-J active passes | supported formal J |
 |---|---:|---:|---:|---:|---:|---:|
-| CUDA | 17,424 | 27,577 | 10,876 | 23 + 2 legalization | 7 CUDA TUs / 6 structures | 24/24 |
-| RVV | 17,424 | 0 | 2,524 | 12 common passes | 12 common passes | 23/24 |
+| CUDA | 17,978 | 27,577 | 10,871 | 23 + 2 legalization | 7 CUDA TUs / 6 structures | 24/24 |
+| RVV | 17,978 | 0 | 2,878 | 13 common passes | 13 common passes | 24/24 |
 
-表注必须说明 shared/common 只计一次，不能把 17,424 重复加到每个 target 后再声称总成本。
+表注必须说明 shared/common 只计一次，不能把 17,978 重复加到每个 target 后再声称总成本。
 
 ### 7.2 Kernel-to-structure amortization 表
 
@@ -368,10 +370,10 @@ git ls-files 'lib/Intent/Conversion/CUDA/*.cpp' \
   'include/Target/CUDA/*.h' | xargs wc -l
 ```
 
-共享 Python production manifest 是以下 16 个文件，而不是整个 `python/intentir/ir`：
+共享 Python production manifest 是以下 17 个文件，而不是整个 `python/intentir/ir`：
 
 ```text
-python/intentir/backend/{ablation,contract_capabilities,materialize,protocol,search_and_close}.py
+python/intentir/backend/{ablation,contract_capabilities,contract_updates,materialize,protocol,search_and_close}.py
 python/intentir/frontend/{canonical_j,emit_mlir}.py
 python/intentir/ir/{canonical_j,contract_ir,contract_materialization,
   contract_semantics,dense_predicate_materialization,model,paired_rotation,
@@ -404,16 +406,16 @@ grep -c '^def ' include/Target/CUDA/Passes.td
 grep -c '^def Intent_.*Op' include/Intent/IntentOps.td
 ```
 
-当前结果依次为 `12 / 23 / 2 / 28`。
+当前结果依次为 `13 / 23 / 2 / 28`。
 
-### 8.3 还应补成自动测试的 reviewer-oriented 检查
+### 8.3 Reviewer-oriented 名称干预检查
 
-以下两项最适合补成论文 artifact test，而不是继续增加文字说明：
+第一项已经完成为可执行实验：
 
-1. **symbol-renaming invariance**：把 24 个 materialized module 的函数名统一改成随机无语义符号，确认 admitted pass、candidate space 和结果不变；
-2. **leave-one-structure-in reuse**：对 row 与 elementwise 各增加一个只改变 DAG 组合和函数名的合成 J，确认不修改 target code 即可被现有 matcher 消费。
+1. **operator-name intervention**：24 个 J 全部替换为来自另一结构的误导性算子名；CUDA path 24/24 不变、RVV exact search plan 24/24 不变；六类 CUDA Full spaces 6/6 完全一致；同名 6×6 矩阵中正确结构 6/6 准入、错误结构 30/30 拒绝。完整结果见 [algorithm-not-operator-name-20260804/README.md](results/algorithm-not-operator-name-20260804/README.md)。
+2. **leave-one-structure-in reuse** 仍可作为更强的未来扩展：对 row 与 elementwise 各增加一个只改变 DAG 组合和函数名的合成 J，确认不修改 target code 即可被现有 matcher 消费。
 
-这两项会把“源码名无关”和“新增 J 的零 target-code 增量”从静态审计提升为可执行证据。
+当前第一项已经把“源码名无关”从静态审计提升为可执行干预证据；第二项针对的是更强的未见图组合泛化，不能与名称独立性混为同一个 claim。
 
 ## 9. 最终裁决
 
@@ -423,7 +425,7 @@ grep -c '^def Intent_.*Op' include/Intent/IntentOps.td
 24 个已接受 J
   -> 15 个现有 Intent 计算 ops
   -> CUDA 6 类结构 / 7 个 active conversion TUs
-  -> RVV 12 个 common MLIR passes（23/24）
+  -> RVV 13 个 common MLIR passes（24/24）
 ```
 
 因此可以有证据地声称：
