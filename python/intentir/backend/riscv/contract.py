@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from intentir.backend.contract_capabilities import derive_search_capabilities
+from intentir.backend.contract_updates import (
+    canonical_node_table,
+    consume_exact_internal_overwrite_update,
+)
 from intentir.backend.materialize import BackendSearchState
 
 
@@ -53,8 +57,17 @@ def derive_riscv_contract_view(
     unsupported: list[str] = list(projection.unsupported_lowering)
     if j.boundary.aliases:
         unsupported.append("alias_relation")
-    if j.boundary.updates:
-        unsupported.append("logical_update_relation")
+    nodes = canonical_node_table(j)
+    for update in j.boundary.updates:
+        update_record = consume_exact_internal_overwrite_update(
+            j,
+            update,
+            nodes=nodes,
+        )
+        if update_record is None:
+            unsupported.append("logical_update_relation")
+        else:
+            consumed.append(update_record)
     if j.boundary.access_guard_relations:
         guards_consumed = all(
             any(

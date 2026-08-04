@@ -232,6 +232,45 @@ def _flash_bwd_preprocess() -> str:
     )
 
 
+def _flash_attention_forward() -> str:
+    return _source(
+        (
+            "M4 *q_d, M4 *k_d, M4 *v_d, M1 *bias_d, M3 *tmp_in_d, "
+            "M0 *scale_d, M4 *out_d, M3 *lse_d, M3 *tmp_out_d"
+        ),
+        r"""
+  _Float16 *q=DATA(q_d,_Float16),*k=DATA(k_d,_Float16),*v=DATA(v_d,_Float16);
+  float *tmp_in=DATA(tmp_in_d,float),*out_lse=DATA(lse_d,float);
+  float *tmp_out=DATA(tmp_out_d,float);_Float16 *out=DATA(out_d,_Float16);
+  float scale=DATA(scale_d,float)[0];(void)bias_d;
+  int64_t batch=q_d->sizes[0],queries=q_d->sizes[1],heads=q_d->sizes[2],d=q_d->sizes[3];
+  int64_t keys=k_d->sizes[1],padded=tmp_out_d->sizes[2];
+  int64_t scratch=batch*heads*padded;
+  for(int64_t i=0;i<scratch;i++){tmp_out[i]=tmp_in[i];out_lse[i]=0.0f;}
+  #pragma omp parallel for collapse(3) schedule(static)
+  for(int64_t b=0;b<batch;b++)for(int64_t qi=0;qi<queries;qi++)for(int64_t h=0;h<heads;h++){
+    float weights[keys];float maximum=-INFINITY;
+    for(int64_t ki=0;ki<keys;ki++){float score=0.0f;
+      int64_t qbase=((b*queries+qi)*heads+h)*d;
+      int64_t kbase=((b*keys+ki)*heads+h)*d;
+      for(int64_t j=0;j<d;j++)score+=(float)q[qbase+j]*(float)k[kbase+j];
+      score*=scale;weights[ki]=score;if(score>maximum)maximum=score;}
+    float denominator=0.0f;
+    for(int64_t ki=0;ki<keys;ki++){float weight=expf(weights[ki]-maximum);weights[ki]=weight;denominator+=weight;}
+    float inverse=1.0f/denominator;
+    int64_t state=(b*heads+h)*padded+qi;
+    tmp_out[state]=inverse;out_lse[state]=maximum+logf(denominator);
+    int64_t obase=((b*queries+qi)*heads+h)*d;
+    for(int64_t j=0;j<d;j++){float accumulator=0.0f;
+      for(int64_t ki=0;ki<keys;ki++){
+        int64_t vbase=((b*keys+ki)*heads+h)*d;
+        accumulator+=weights[ki]*(float)v[vbase+j];}
+      out[obase+j]=(_Float16)(accumulator*inverse);}
+  }
+""",
+    )
+
+
 def _splitk() -> str:
     return _source(
         "M5 *o0_d, M5 *o1_d, M4 *l0_d, M4 *l1_d, M5 *out_d, M4 *lse_d",
@@ -561,6 +600,7 @@ _SOURCES = {
     "xformers_rms_norm_add": _xformers_rms_norm_add,
     "kl_div": _kl_div,
     "poly_norm": _poly_norm,
+    "flash_attention_forward": _flash_attention_forward,
     "flash_bwd_preprocess": _flash_bwd_preprocess,
     "splitk_reduce_varargs": _splitk,
     "flash_layer_norm_1pass": _flash_layer_norm,

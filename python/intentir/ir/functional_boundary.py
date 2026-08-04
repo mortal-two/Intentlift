@@ -23,6 +23,11 @@ from intentir.ir.canonical_j import (
     parse_contract_expr,
     parse_index_expression,
 )
+from intentir.ir.dim_expr import (
+    DimExprError,
+    DimensionConstraintSet,
+    parse_affine_dim_expr,
+)
 from intentir.ir.model import IntentOp
 from intentir.ir.value_dimension import (
     validate_value_dimension_instantiation,
@@ -919,6 +924,73 @@ def predicate_dominated_pointwise_load(
     return True
 
 
+def _zero_based_iota_extent(j: Any, value_ref: str) -> int | str | None:
+    """Recognize an integer iota, optionally broadcast by adding exact zero."""
+
+    nodes = tuple(_node_table(j).values())
+
+    def producer(ref: str) -> IntentOp | None:
+        return next(
+            (operation for operation in nodes if ref in _result_names(operation)),
+            None,
+        )
+
+    operation = producer(value_ref)
+    if operation is None:
+        return None
+    if operation.op == "iota":
+        extent = operation.attrs.get("n")
+        return extent if type(extent) is int or isinstance(extent, str) else None
+    if (
+        operation.op != "map_binary"
+        or operation.attrs.get("fn") != "add"
+        or len(operation.operands) != 2
+    ):
+        return None
+    for iota_ref, zero_ref in (
+        (operation.operands[0], operation.operands[1]),
+        (operation.operands[1], operation.operands[0]),
+    ):
+        iota = producer(iota_ref)
+        zero = producer(zero_ref)
+        if (
+            iota is None
+            or zero is None
+            or iota.op != "iota"
+            or zero.op != "const"
+            or zero.attrs.get("value") != 0
+        ):
+            continue
+        extent = iota.attrs.get("n")
+        if type(extent) is int or isinstance(extent, str):
+            return extent
+    return None
+
+
+def _proves_extent_at_least(j: Any, extent: int | str, required: int | str) -> bool:
+    if type(extent) is int and type(required) is int:
+        return extent >= required
+    declared = frozenset(
+        dimension
+        for tensor in [*j.intent.inputs, *j.intent.outputs]
+        for dimension in tensor.shape
+        if isinstance(dimension, str)
+    )
+    try:
+        constraints = DimensionConstraintSet.parse(
+            j.dimension_constraints,
+            dimensions=declared,
+        )
+        difference = parse_affine_dim_expr(
+            f"({extent}) - ({required})",
+            dimensions=declared,
+            context="J index-bounds iota extent",
+        )
+    except (DimExprError, ValueError):
+        return False
+    return constraints.proves_nonnegative(difference)
+
+
 def static_index_bounds_status(j: Any, relation: Any) -> bool | None:
     """Decide a closed internal-constant index precondition from J alone.
 
@@ -940,6 +1012,11 @@ def static_index_bounds_status(j: Any, relation: Any) -> bool | None:
     ):
         return None
     extent = data_type.shape[relation.axis]
+    iota_extent = _zero_based_iota_extent(j, relation.indices)
+    if iota_extent is not None and _proves_extent_at_least(
+        j, extent, iota_extent
+    ):
+        return True
     if type(extent) is not int:
         return None
     producer = next(
@@ -1740,15 +1817,48 @@ def _runtime_predicate_tautology(
     return canonical, record
 
 
+def _boundary_referenced_axes(j: Any) -> frozenset[str]:
+    """Return logical axes that participate in an observable boundary use."""
+
+    referenced: set[str] = set()
+    for access in j_elaboration(j).accesses:
+        for component in access.index.components:
+            referenced.update(component.references)
+        if access.predicate is not None:
+            referenced.update(access.predicate.references)
+    return frozenset(referenced)
+
+
+def _domain_defined_axes(j: Any, expression: ContractExpr) -> frozenset[str]:
+    """Separate domain coordinates from extents and logical scalar inputs."""
+
+    external_refs = {
+        dimension
+        for tensor in [*j.intent.inputs, *j.intent.outputs]
+        for dimension in tensor.shape
+        if isinstance(dimension, str)
+    }
+    external_refs.update(item.name for item in j.intent.inputs)
+    return expression.references - external_refs
+
+
 def _full_domains(j: Any) -> dict[str, int | str]:
     result: dict[str, int | str] = {}
     logical_guards = _logical_boolean_guards(j)
+    boundary_axes = _boundary_referenced_axes(j)
     for domain_id, expression in j_elaboration(j).domains:
         try:
             contract = _j_predicate_projection(
                 j, expression, logical_guards=logical_guards
             )
         except NotImplementedError as exc:
+            # A declared domain that never indexes or guards an observable
+            # boundary access has no role in the dense functional projection.
+            # Ignore only that dead declaration.  If any of its logical axes is
+            # consumed, preserve the existing fail-closed capability boundary.
+            domain_axes = _domain_defined_axes(j, expression)
+            if domain_axes and domain_axes.isdisjoint(boundary_axes):
+                continue
             raise NotImplementedError(
                 "functional dense domain requires complete logical axis bounds; "
                 f"unsupported domain {domain_id!r}"
@@ -3961,10 +4071,23 @@ def _project_functional_boundary(
                 )
             if op is None:
                 if len(loads_by_tensor[access.tensor]) != 1:
-                    raise ValueError(
-                        "functional node-less input load must be the sole load "
-                        "for its J tensor"
-                    )
+                    repeated_loads = loads_by_tensor[access.tensor]
+                    repeated_unmasked_whole_load = all(
+                        item.node_ref is None
+                        and item.predicate is None
+                        and item.fill_value is None
+                        for item in repeated_loads
+                    ) and len(
+                        {
+                            parsed_accesses[item.access_id].index.to_text()
+                            for item in repeated_loads
+                        }
+                    ) == 1
+                    if not repeated_unmasked_whole_load:
+                        raise ValueError(
+                            "functional node-less input load must be the sole load "
+                            "for its J tensor"
+                        )
                 if (
                     access.tensor not in graph_operands
                     and (
@@ -4001,6 +4124,7 @@ def _project_functional_boundary(
             raise ValueError("functional store does not target a J output")
         observable_value = returns.get(access.tensor, access.tensor)
         mapping = mappings.get(access.tensor)
+        dead_exact_overwrite = False
         if mapping is not None:
             observable_value = mapping.value
             if (
@@ -4014,9 +4138,35 @@ def _project_functional_boundary(
                 observable_value not in _result_names(op)
                 and access.access_id not in projected_guarded_store_accesses
             ):
+                update = next(
+                    (
+                        item
+                        for item in boundary.updates
+                        if item.node_ref == access.node_ref
+                    ),
+                    None,
+                )
+                op_results = _result_names(op)
+                dead_exact_overwrite = bool(
+                    update is not None
+                    and op.op == "scatter"
+                    and op.operands
+                    == [update.base, update.indices, update.values]
+                    and op.attrs.get("axis") == update.axis
+                    and op.attrs.get("mode", "along_axis") == "along_axis"
+                    and op.attrs.get("reduce", "none") == "none"
+                    and update.combiner.value == "overwrite"
+                    and update.duplicate_policy.value == "forbid"
+                    and update.order.value == "input_order"
+                    and all(
+                        result not in graph_operands
+                        and result not in returns.values()
+                        for result in op_results
+                    )
+                )
                 carry_results = [
                     result
-                    for result in _result_names(op)
+                    for result in op_results
                     if _store_result_reaches_output_through_enclosing_carry(
                         j,
                         operation=op,
@@ -4024,7 +4174,7 @@ def _project_functional_boundary(
                         observable_value=observable_value,
                     )
                 ]
-                if len(carry_results) != 1:
+                if len(carry_results) != 1 and not dead_exact_overwrite:
                     raise ValueError(
                         "functional store is not produced by its J node or one "
                         "unique enclosing loop carry"
@@ -4041,7 +4191,8 @@ def _project_functional_boundary(
             raise NotImplementedError(
                 "node-less store is supported only for direct identity J"
             )
-        stores_by_output[access.tensor].append(access)
+        if not dead_exact_overwrite:
+            stores_by_output[access.tensor].append(access)
 
     if set(effects_by_access) != set(access_ids):
         raise ValueError("functional boundary has effect for unknown access")

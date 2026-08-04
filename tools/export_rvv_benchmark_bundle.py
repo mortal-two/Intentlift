@@ -37,6 +37,8 @@ from intentir.backend.riscv.native_baselines import native_rvv_baseline_record
 from intentir.backend.riscv.search import plan_riscv_search
 from intentir.backend.workload_cost import derive_j_workload_cost
 from intentir.ir.production_snapshot import load_production_snapshot
+from intentir.verify.gate1._triton_worker import _normalize_deprecated_triton_dot
+from intentir.verify.gate1.compiler import KernelSource
 from intentir.verify.gate1.model import ResultRelationKind
 from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
 from intentir.verify.gate2.scalar import ScalarLoweringRunner
@@ -90,6 +92,13 @@ def _canonical_reference_outputs(
     if reference.ok:
         return dict(reference.outputs), "refj", None
     source_program = prepared.request.source.gate_source
+    source_code, _source_origin = source_program.read_code()
+    source_code, _frontend_compat = _normalize_deprecated_triton_dot(source_code)
+    source_program = KernelSource.from_code(
+        source_code,
+        source_program.function,
+        trusted=True,
+    )
     try:
         with PreparedTritonInvocation(
             source_program,

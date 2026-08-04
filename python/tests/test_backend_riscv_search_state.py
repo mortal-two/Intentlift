@@ -8,9 +8,12 @@ import pytest
 
 import intentir.backend.riscv.compile as rvv
 import intentir.backend.riscv.search as rvv_search
+from intentir.backend.riscv.native_baselines import native_rvv_baseline_record
 from intentir.backend.contract_capabilities import B_CAP_READONLY_INPUTS
 from intentir.backend.cuda.production_cases import (
+    PRODUCTION_WORKLOAD_PROFILE_CLOSED,
     constexpr_input_bindings,
+    profile_production_snapshot,
     prepare_production_workload,
 )
 from intentir.backend.materialize import attach_c, materialize_j
@@ -20,6 +23,7 @@ from intentir.backend.riscv.contract import (
     derive_riscv_contract_view,
 )
 from intentir.ir.production_snapshot import load_production_snapshot
+from intentir.verify.gate2.scalar import ScalarLoweringRunner
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
 
 
@@ -370,6 +374,7 @@ def test_rvv_bufferization_exposes_dense_identity_layout(monkeypatch) -> None:
         "function-boundary-type-conversion=identity-layout-map" in item
         for item in bufferize
     )
+    assert any("allow-return-allocs-from-loops=true" in item for item in bufferize)
 
 
 def test_rvv_contract_consumes_only_materialized_typed_access_guards() -> None:
@@ -412,6 +417,60 @@ def test_rvv_contract_consumes_only_materialized_typed_access_guards() -> None:
         match="access_guard_materialization_not_implemented",
     ):
         derive_riscv_contract_view(attach_c(stripped, snapshot.c, target))
+
+
+def test_rvv_contract_consumes_flash_forward_internal_overwrite_updates() -> None:
+    snapshot, _path = load_production_snapshot(
+        _ROOT / "corpus" / "production-jc-v4",
+        "flash_attention_forward",
+    )
+    assert snapshot.c is not None
+    materialized = materialize_j(
+        snapshot.j,
+        {"x0": 1, "x1": 16, "x2": 1, "x3": 16, "x4": 16, "x5": 16},
+    )
+    target = BackendTarget("riscv", "rv64gcv_zfh", ("vlen128",))
+
+    view = derive_riscv_contract_view(
+        attach_c(materialized, snapshot.c, target)
+    )
+
+    assert view.supported
+    assert {
+        item for item in view.consumed if item.startswith("update:")
+    } == {
+        "update:n28:overwrite:forbid:input_order",
+        "update:n32:overwrite:forbid:input_order",
+        "update:n34:overwrite:forbid:input_order",
+    }
+    native = native_rvv_baseline_record("flash_attention_forward")
+    assert "M4 *q_d" in native["source"]
+    assert "out_lse[state]=maximum+logf(denominator)" in native["source"]
+
+
+def test_flash_forward_refj_executes_internal_scatter_contract() -> None:
+    base, _path = load_production_snapshot(
+        _ROOT / "corpus" / "production-jc-v4",
+        "flash_attention_forward",
+    )
+    prepared = prepare_production_workload(
+        "flash_attention_forward",
+        profile=PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    )
+    snapshot, _valuation = profile_production_snapshot(
+        base,
+        prepared,
+        PRODUCTION_WORKLOAD_PROFILE_CLOSED,
+    )
+    assert snapshot.c is not None
+    case = build_workload_jc_suite(prepared, snapshot.j, snapshot.c).cases[0]
+
+    result = ScalarLoweringRunner().run(case.refeval, case.values)
+
+    assert result.ok, result.error
+    assert result.outputs["out"].shape == (1, 128, 1, 64)
+    assert result.outputs["lse"].shape == (1, 1, 128)
+    assert result.outputs["tmp"].shape == (1, 1, 128)
 
 
 def test_rvv_contract_consumes_typed_materialized_internal_storage() -> None:

@@ -11,6 +11,9 @@ from intentir.backend.protocol import (
     ComparisonEvidence,
     LoweringRequest,
 )
+from intentir.backend.contract_updates import (
+    consume_exact_internal_overwrite_update,
+)
 from intentir.backend.materialize import MaterializedJ, materialize_j
 from intentir.frontend.canonical_j import (
     LOGICAL_FULL_AXIS_STEP_MATERIALIZATION,
@@ -208,21 +211,13 @@ def analyze_j_for_cuda(
             # scratch/output materialization.  It needs no atomic permission and
             # is independent of tensor rank; target lowering still has to consume
             # the resulting scatter or replace the enclosing graph as a whole.
-            if (
-                op.op == "scatter"
-                and op.operands == [item.base, item.indices, item.values]
-                and op.attrs.get("axis") == item.axis
-                and op.attrs.get("mode", "along_axis") == "along_axis"
-                and op.attrs.get("reduce", "none") == "none"
-                and item.combiner is UpdateCombiner.OVERWRITE
-                and item.duplicate_policy is DuplicatePolicy.FORBID
-                and item.order is UpdateOrder.INPUT_ORDER
-            ):
-                consumed.append(
-                    "update:"
-                    f"{item.node_ref}:{item.combiner.value}:"
-                    f"{item.duplicate_policy.value}:{item.order.value}"
-                )
+            update_record = consume_exact_internal_overwrite_update(
+                j,
+                item,
+                nodes=nodes,
+            )
+            if update_record is not None:
+                consumed.append(update_record)
                 continue
             unsupported.append(f"update_internal_operand:{item.node_ref}")
             continue

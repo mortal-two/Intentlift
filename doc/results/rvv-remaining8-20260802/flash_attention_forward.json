@@ -1,0 +1,44 @@
+{
+  "kernel": "flash_attention_forward",
+  "target": "rv64gcv_zfh_zvfh-vlen128",
+  "threads": 1,
+  "cache_regime": "cold-data",
+  "working_set_mib": 128,
+  "search_budget": 12,
+  "workload_profile": "closed-v1",
+  "shape": {
+    "batch": 1,
+    "queries": 128,
+    "heads": 1,
+    "head_dim": 64,
+    "keys": 128,
+    "padded_queries": 128
+  },
+  "target_reference": "refj",
+  "candidate_correctness": {
+    "passed": 36,
+    "failed": 0,
+    "outputs": ["out", "lse", "tmp"]
+  },
+  "performance_us": {
+    "c_fixed": 4194.499,
+    "schedule_only": 3951.378,
+    "full": 3923.318,
+    "llvm_rvv_c": 4475.321
+  },
+  "speedup": {
+    "g_schedule": 1.0615281554941087,
+    "g_full": 1.007152109515466,
+    "full_over_llvm_rvv_c": 1.1420865585926216
+  },
+  "winner": {
+    "lowering_path_kind": "explicit_vector_reduction",
+    "opt_level": 3,
+    "parallel_tile": 4,
+    "scalable_vectorization": true,
+    "vector_lanes": 4,
+    "rvv_instruction_count": 717,
+    "rvv_reduction_instruction_count": 34,
+    "python_target_kernel_emission": false
+  }
+}

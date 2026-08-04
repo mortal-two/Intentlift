@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from intentir.verify.gate1.model import SemanticArchive
 
 
-STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v7"
+STRUCTURED_CPU_REFERENCE_PROTOCOL = "intentir.j-structured-cpu-reference.v8"
 
 
 class StructuredReferenceUnsupportedError(CPUBackendUnsupportedError):
@@ -50,6 +50,7 @@ _ORDINARY_OPS = frozenset(
         "pad",
         "reduce",
         "scan",
+        "scatter",
         "select",
         "tile",
         "transpose",
@@ -584,6 +585,83 @@ class _Evaluator:
             f"structured gather has unsupported mode {mode!r}"
         )
 
+    def _scatter(
+        self,
+        op: IntentOp,
+        env: Mapping[str, np.ndarray],
+    ) -> np.ndarray:
+        if (
+            set(op.attrs) != {"axis", "mode", "reduce"}
+            or len(op.operands) != 3
+        ):
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter requires axis/mode/reduce and three operands"
+            )
+        axis = op.attrs.get("axis")
+        if isinstance(axis, bool) or not isinstance(axis, int):
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter axis must be a closed integer"
+            )
+        if (
+            op.attrs.get("mode") != "along_axis"
+            or op.attrs.get("reduce") != "none"
+        ):
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter implements only along_axis overwrite"
+            )
+        updates = [
+            item
+            for item in self.j.boundary.updates
+            if op.operands == [item.base, item.indices, item.values]
+            and item.axis == axis
+        ]
+        if len(updates) != 1:
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter requires one exact logical update contract"
+            )
+        update = updates[0]
+        if (
+            op.operands != [update.base, update.indices, update.values]
+            or update.axis != axis
+            or update.combiner.value != "overwrite"
+            or update.duplicate_policy.value != "forbid"
+            or update.order.value != "input_order"
+        ):
+            raise StructuredReferenceUnsupportedError(
+                "structured scatter differs from its logical update contract"
+            )
+        base = self._operand(op, env, 0)
+        indices = self._operand(op, env, 1)
+        values = self._operand(op, env, 2)
+        if axis < 0 or axis >= base.ndim:
+            raise ValueError("structured scatter axis is outside data rank")
+        if indices.dtype.kind not in {"i", "u"}:
+            raise ValueError("structured scatter indices must be integers")
+        if (
+            indices.ndim != base.ndim
+            or values.shape != indices.shape
+            or values.dtype != base.dtype
+            or any(
+                indices.shape[dimension] != base.shape[dimension]
+                for dimension in range(base.ndim)
+                if dimension != axis
+            )
+        ):
+            raise ValueError(
+                "structured scatter operands violate along_axis shape/dtype"
+            )
+        if bool(np.any(indices < 0)) or bool(np.any(indices >= base.shape[axis])):
+            raise ValueError("structured scatter index is outside data axis")
+        if indices.shape[axis] > 1:
+            ordered = np.sort(indices, axis=axis)
+            if bool(np.any(np.diff(ordered, axis=axis) == 0)):
+                raise ValueError(
+                    "structured scatter violates duplicate-forbid contract"
+                )
+        result = np.array(base, copy=True)
+        np.put_along_axis(result, indices, values, axis=axis)
+        return result
+
     def _tile(
         self,
         op: IntentOp,
@@ -855,6 +933,8 @@ class _Evaluator:
             return self._reduce(op, env)
         if op.op == "scan":
             return self._scan(op, env)
+        if op.op == "scatter":
+            return self._scatter(op, env)
         if op.op == "contraction":
             return self._contraction(op, env)
         if op.op == "select":

@@ -997,7 +997,8 @@ def _lower_to_llvm_ir(
         # concrete buffers are contiguous.
         (
             "--one-shot-bufferize=bufferize-function-boundaries "
-            "function-boundary-type-conversion=identity-layout-map"
+            "function-boundary-type-conversion=identity-layout-map "
+            "allow-return-allocs-from-loops=true"
         ),
         "--buffer-results-to-out-params",
         "--canonicalize",

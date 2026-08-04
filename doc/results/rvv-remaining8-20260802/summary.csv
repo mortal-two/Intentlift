@@ -7,5 +7,6 @@ GroupNorm,natural-headline-v1,"B=8 G=32 N=512 C=256",f32,5428.9240,985.7640,502.
 Liger RoPE,natural-headline-v1,"Q=4x2048x16x64 K=4x2048x8x64",f16,743220.9410,743220.9410,743220.9410,1.000000,1.000000,materialized
 Qwen2VL MRoPE,natural-headline-v1,"8x1024x8x128",f16,1253287.1810,919305.4620,919305.4620,1.363298,1.000000,materialized
 Flash Linear,natural-headline-v1,"M=1024 K=8192 N=1024",f16,15288621.0050,12750173.3350,12749844.4930,1.199091,1.000026,producer_consumer_fused
+FlashAttention forward,closed-v1,"B=1 Q=128 H=1 D=64 KV=128","Q/K/V/Out=f16; score/LSE/tmp=f32",4194.4990,3951.3780,3923.3180,1.061528,1.007152,explicit_vector_reduction
 GEOMEAN_MEDIUM4,,,,,,,1.149732,1.054696,
 GEOMEAN_NATURAL4,,,,,,,1.732192,1.183635,

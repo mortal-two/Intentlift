@@ -2060,6 +2060,34 @@ def test_scalar_e_j_consumes_dense_functional_boundary(
     assert result.metadata["effect_relation_count"] == 2
 
 
+def test_functional_boundary_ignores_only_unreferenced_general_domain() -> None:
+    artifact = make_copy_artifact()
+    _attach_dense_copy_boundary(
+        artifact,
+        domains={
+            "d0": "0 <= i0 and i0 < x0",
+            "dead": "0 <= k6 and k6 < (x0 * x0)",
+        },
+    )
+
+    projection = project_functional_boundary(artifact.j)
+
+    assert projection.domains == (("i0", "x0"),)
+
+
+def test_functional_boundary_rejects_referenced_general_domain() -> None:
+    artifact = make_copy_artifact()
+    _attach_dense_copy_boundary(
+        artifact,
+        domains={
+            "d0": "0 <= i0 and i0 < (x0 * x0)",
+        },
+    )
+
+    with pytest.raises(NotImplementedError, match="unsupported domain 'd0'"):
+        project_functional_boundary(artifact.j)
+
+
 def test_constant_gather_loads_match_boundary_coordinates_bidirectionally() -> None:
     j = _constant_gather_boundary_j()
 
