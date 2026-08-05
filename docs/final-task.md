@@ -36,10 +36,10 @@ FlashAttention forward 在统一代码树上完成零模型调用的能力复核
 - Gate2：通过，`Source–Replay`、`Source–J`、`Replay–J` 全部通过
 - 模型调用：0
 - 复用：精确 parent artifact 与精确 parent Replay
-- 当前复核证据：`/tmp/intentir-flash-fwd-unified-rerun-20260805/flash_attn_flash_attn_triton_fwd_kernel/gate2-recheck-001`
-- parent：`/tmp/intentir-flash-fwd-manual-access-pi-20260801/flash_attn_flash_attn_triton_fwd_kernel/run-001/attempt-04`
+- 当前复核证据：`local/internal/scrc/evidence/flash-attention-forward/final-main-gate2-recheck-001/`
+- parent：`local/internal/scrc/evidence/flash-attention-forward/parent-run-001/attempt-04/`
 
-该复核重新运行当前 Gate1 编译和完整 Gate2，但不改变 parent verdict。闭包总数仍为 24/28；复核证明统一树没有破坏这一已闭包 Kernel。
+该复核在最终独立 `main` 代码树上重新运行当前 Gate1 编译和完整 Gate2，但不改变 parent verdict。闭包总数仍为 24/28；复核证明统一树没有破坏这一已闭包 Kernel。
 
 ## 当前交付物
 
@@ -47,17 +47,14 @@ FlashAttention forward 在统一代码树上完成零模型调用的能力复核
 - 公共文档只保留架构、构建、工作流与本最终任务。
 - 活动树不包含历史测试、Trellis 或旧状态文档。
 - 本地忽略目录按 `scrc/`、`frontend-extension/`、`backend/` 保存内部理解与重要结果。
-- 合并前 Git refs、脏改动和不可提交资产必须在删除旧 worktree 前重新生成完整安全快照。
-- 最终仓库必须是普通独立 Git 仓库，只保留权威主分支，并能在新机器上构建最小系统骨架。
+- 合并前 13 个 worktree 的 Git refs、脏改动和本地资产已保存在 `local/archive/consolidation-safety-final-20260805/`，其 bundle 与全部校验和已验证。
+- 活动仓库已是普通独立 Git 仓库，只保留 `main`，无共享 object store 或额外 worktree；最小系统骨架已在全新构建目录中构建。
 
 ## 未解决阻塞
 
 - 上述 4 个 Kernel 尚无满足当前合同的 Gate1 + Gate2 三边闭包证据。
-- 旧 worktree 中的论文敏感文件、真实实验结果、provider 配置和未跟踪核心源码必须先完成校验归档，才能安全删除旧 checkout。
 
 ## 下一步
 
-1. 刷新完整 Git bundle、脏状态 patch、未跟踪/ignored 重要资产清单与校验和。
-2. 建立独立、单主分支仓库，迁移 `local/` 与安全配置后复验构建、清单和当前真实闭包证据。
-3. 删除已归档的旧 worktree；保留一个本地归档入口，不恢复历史测试或 Trellis 到活动树。
-4. 对 4 个剩余 Kernel 逐一解决真实 normalizer/Replay 闭包缺口，并只在 Gate1 与 Gate2 三边均通过后更新 24/28 计数。
+1. 对 4 个剩余 Kernel 逐一解决真实 normalizer/Replay 闭包缺口。
+2. 只在某个 Kernel 的 Gate1 与 Gate2 三边均通过且 closure artifacts 完整保存后，更新 24/28 计数和本任务的权威证据。
