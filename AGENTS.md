@@ -1,6 +1,9 @@
 # Repository execution constraint
 
-- `python/tests` was archived to `archive/2026-07-29-python-tests` on 2026-07-29.
+- `python/tests` was removed from the tracked active tree; its historical contents
+  are retained only in the ignored workspace archive at
+  `local/archive/legacy-trees/scrc-legacy-docs-tests.tgz` when local archival
+  assets are present.
 - Do not add, regenerate, or restore test files or test directories in the active tree.
 - Do not replace real SCRC closure work with mocked unit, regression, smoke, or protocol tests.
 - Validate changes through the real Kernel closure workflow and its actual Gate/closure artifacts.
