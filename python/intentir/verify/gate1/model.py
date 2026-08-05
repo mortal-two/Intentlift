@@ -3091,7 +3091,10 @@ class ValueDimensionRelation(StrictJSONMixin):
 
 
 _DIMENSION_RELATION_OPS = frozenset(
-    {"identity", "add_const", "mul_const", "ceil_div_const", "round_up_const"}
+    {
+        "identity", "add_const", "mul_const", "ceil_div_const",
+        "round_up_const", "mul_dims",
+    }
 )
 
 
@@ -3102,6 +3105,7 @@ class DimensionRelationExpr(StrictJSONMixin):
     op: str
     arg: str
     value: int | None = None
+    rhs: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "op", _string(self.op, "DimensionRelationExpr.op"))
@@ -3112,10 +3116,22 @@ class DimensionRelationExpr(StrictJSONMixin):
             raise SchemaError("DimensionRelationExpr.op is not in the closed grammar")
         if re.fullmatch(r"x[0-9]+", self.arg) is None:
             raise SchemaError("DimensionRelationExpr.arg must be a dimension handle x*")
+        if self.rhs is not None:
+            object.__setattr__(
+                self, "rhs", _string(self.rhs, "DimensionRelationExpr.rhs")
+            )
+            if re.fullmatch(r"x[0-9]+", self.rhs) is None:
+                raise SchemaError("DimensionRelationExpr.rhs must be a dimension handle x*")
         if self.op == "identity":
-            if self.value is not None:
-                raise SchemaError("identity dimension expression forbids value")
+            if self.value is not None or self.rhs is not None:
+                raise SchemaError("identity dimension expression forbids value/rhs")
             return
+        if self.op == "mul_dims":
+            if self.rhs is None or self.value is not None:
+                raise SchemaError("mul_dims dimension expression requires rhs and forbids value")
+            return
+        if self.rhs is not None:
+            raise SchemaError(f"{self.op} dimension expression forbids rhs")
         if (
             isinstance(self.value, bool)
             or not isinstance(self.value, int)
@@ -3130,15 +3146,17 @@ class DimensionRelationExpr(StrictJSONMixin):
         data = _strict_object(
             value,
             path="DimensionRelationExpr",
-            allowed={"op", "arg", "value"},
+            allowed={"op", "arg", "value", "rhs"},
             required={"op", "arg"},
         )
-        return cls(data["op"], data["arg"], data.get("value"))
+        return cls(data["op"], data["arg"], data.get("value"), data.get("rhs"))
 
     def to_json(self) -> dict[str, Any]:
         result: dict[str, Any] = {"op": self.op, "arg": self.arg}
         if self.value is not None:
             result["value"] = self.value
+        if self.rhs is not None:
+            result["rhs"] = self.rhs
         return result
 
 
@@ -3613,6 +3631,13 @@ def _validate_logical_signature(archive: SemanticArchive) -> None:
         for dim in tensor.shape
         if isinstance(dim, str)
     }
+    dimensions.update(relation.result for relation in archive.dimension_relations)
+    dimensions.update(relation.expr.arg for relation in archive.dimension_relations)
+    dimensions.update(
+        relation.expr.rhs
+        for relation in archive.dimension_relations
+        if relation.expr.rhs is not None
+    )
     input_refs = {tensor.name for tensor in archive.intent.inputs}
     output_refs = {tensor.name for tensor in archive.intent.outputs}
     seen_logical: set[str] = set()
@@ -3760,10 +3785,10 @@ class ScheduleSlot(StrictJSONMixin):
             self.subject_ref = _string(
                 self.subject_ref, "ScheduleSlot.subject_ref"
             )
-            if re.fullmatch(r"[ndaqb][0-9]+", self.subject_ref) is None:
+            if re.fullmatch(r"[tndaqb][0-9]+", self.subject_ref) is None:
                 raise SchemaError(
                     "ScheduleSlot.subject_ref must be a closed J scheduling "
-                    "subject n*/d*/a*/q*/b*"
+                    "subject t*/n*/d*/a*/q*/b*"
                 )
         if self.axis_ref is not None:
             if self.subject_ref is None:
@@ -5026,6 +5051,21 @@ def _opaque_reference_data(
                 f"j.intent.tensor_shapes[{tensor_index}][{shape_index}]",
             )
             dimension_index += 1
+    for relation_index, relation in enumerate(artifact.j.dimension_relations):
+        for field, dim in (
+            ("result", relation.result),
+            ("arg", relation.expr.arg),
+            ("rhs", relation.expr.rhs),
+        ):
+            if dim is None or dim in aliases:
+                continue
+            allocate(
+                dim,
+                f"x{dimension_index}",
+                "j_dimension",
+                f"j.dimension_relations[{relation_index}].{field}",
+            )
+            dimension_index += 1
     for index, slot in enumerate(artifact.c.slots):
         allocate(
             slot.name,
@@ -5459,6 +5499,11 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                     "expr": {
                         **item.expr.to_json(),
                         "arg": _opaque_reference(item.expr.arg, aliases),
+                        **(
+                            {"rhs": _opaque_reference(item.expr.rhs, aliases)}
+                            if item.expr.rhs is not None
+                            else {}
+                        ),
                     },
                 }
                 for item in artifact.j.dimension_relations
@@ -5849,6 +5894,11 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                     "expr": {
                         "op": "<masked>",
                         "arg": opaque_reference(item.expr.arg),
+                        **(
+                            {"rhs": opaque_reference(item.expr.rhs)}
+                            if item.expr.rhs is not None
+                            else {}
+                        ),
                         **(
                             {"value": "<masked>"}
                             if item.expr.value is not None

@@ -162,7 +162,11 @@ def _logical_sort_hints(j: Any) -> dict[str, ContractSort]:
                     )
                 hints[extent] = ContractSort.INTEGER
     for relation in j.dimension_relations:
-        for extent in (relation.result, relation.expr.arg):
+        for extent in (
+            relation.result,
+            relation.expr.arg,
+            *((relation.expr.rhs,) if relation.expr.rhs is not None else ()),
+        ):
             previous = hints.get(extent)
             if previous not in {None, ContractSort.INTEGER}:
                 raise ContractIRProjectionError(

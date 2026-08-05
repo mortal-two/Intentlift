@@ -78,8 +78,8 @@ _FORBIDDEN_TL_CALLS = {
 # selected from J, pi, a dataset identity, or a per-operation catalog.
 GLOBAL_LIBDEVICE_CALLS = frozenset(
     {
-        "atan", "atan2", "cos", "erf", "exp", "log", "pow", "rsqrt",
-        "sin", "sqrt", "tan", "tanh",
+        "atan", "atan2", "cos", "erf", "exp", "finitef", "isinf", "isnan", "log",
+        "pow", "rsqrt", "sin", "sqrt", "tan", "tanh",
     }
 )
 # Triton 3.6 exposes some reviewed math only through the public libdevice
@@ -88,7 +88,7 @@ GLOBAL_LIBDEVICE_CALLS = frozenset(
 TRITON_UNAVAILABLE_CALL_GUIDANCE = {
     "atan": "import libdevice and call `libdevice.atan`",
     "atan2": "import libdevice and call `libdevice.atan2`",
-    "isnan": "use the public comparison `x != x`",
+    "isnan": "import libdevice and call `libdevice.isnan`",
     "pow": "use the public `x ** y` operator",
     "tan": "import libdevice and call `libdevice.tan`",
     "tanh": "import libdevice and call `libdevice.tanh`",
@@ -339,6 +339,19 @@ def _validate_call(
             if target.attr.startswith("_") or target.attr in _FORBIDDEN_TL_CALLS:
                 _fail(node, f"call to `tl.{target.attr}` is forbidden")
             return
+        # ``tl.math`` is a public Triton namespace.  It is semantically no
+        # different from other public ``tl`` operators and must remain
+        # available to a source-blind replay when the captured source uses it
+        # (for example ``tl.math.erf``).  This extends only the target API
+        # surface; it supplies no Source or pi information to Replay.
+        if (
+            isinstance(target.value, ast.Attribute)
+            and _is_name(target.value.value, "tl")
+            and target.value.attr == "math"
+        ):
+            if target.attr.startswith("_"):
+                _fail(node, f"call to `tl.math.{target.attr}` is forbidden")
+            return
         if _is_name(target.value, "libdevice"):
             if (
                 "libdevice" not in imported_namespaces
@@ -421,6 +434,13 @@ def _validate_function(
                 if _is_name(child.value, "tl"):
                     if child.attr.startswith("_"):
                         _fail(child, f"private Triton attribute {child.attr!r} is forbidden")
+                elif (
+                    isinstance(child.value, ast.Attribute)
+                    and _is_name(child.value.value, "tl")
+                    and child.value.attr == "math"
+                ):
+                    if child.attr.startswith("_"):
+                        _fail(child, f"private Triton math attribute {child.attr!r} is forbidden")
                 elif _is_name(child.value, "libdevice"):
                     if (
                         "libdevice" not in imported_namespaces

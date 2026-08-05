@@ -64,6 +64,10 @@ class BufferBinding:
     output_key: str | None = None
     initializer: BufferInitializer | None = None
     shape_contract: tuple[int | str, ...] | None = None
+    # Physical element strides belong to the captured Harness valuation, not J.
+    # Keeping them here lets Source and Replay receive the same real view while
+    # RefJ continues to consume the logical tensor value.
+    strides: tuple[int, ...] | None = None
 
     def __post_init__(self) -> None:
         if not self.formal.isidentifier():
@@ -73,8 +77,10 @@ class BufferBinding:
         if not self.dtype:
             raise ValueError("buffer dtype must be non-empty")
         shape = tuple(int(dim) for dim in self.shape)
-        if not shape or any(dim <= 0 for dim in shape):
-            raise ValueError("real workload buffers require positive dimensions")
+        # A rank-zero tensor is a real pointer-backed scalar output/input (for
+        # example dot and global reductions), not a scalar ABI argument.
+        if any(dim <= 0 for dim in shape):
+            raise ValueError("real workload buffer dimensions must be positive")
         object.__setattr__(self, "shape", shape)
         shape_contract = (
             tuple(self.shape_contract)
@@ -101,6 +107,13 @@ class BufferBinding:
                         "buffer shape contract coordinates must use anonymous h* handles"
                     )
         object.__setattr__(self, "shape_contract", shape_contract)
+        strides = tuple(int(value) for value in self.strides) if self.strides is not None else None
+        if strides is not None:
+            if len(strides) != len(shape):
+                raise ValueError("buffer physical strides must match its rank")
+            if any(value < 0 for value in strides):
+                raise ValueError("captured negative strides require an explicit storage offset")
+        object.__setattr__(self, "strides", strides)
         if self.role is BufferRole.INPUT and self.output_key is not None:
             raise ValueError("input-only buffer cannot declare an output key")
         if self.role is not BufferRole.INPUT and self.output_key is None:
@@ -447,6 +460,7 @@ class TritonWorkloadAdapter:
                         if item.shape_contract is not None
                         else None
                     ),
+                    "strides": list(item.strides) if item.strides is not None else None,
                     "output_key": item.output_key,
                     "initializer": (
                         item.initializer.value

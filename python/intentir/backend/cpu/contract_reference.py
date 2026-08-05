@@ -497,7 +497,11 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
             or input_load_counts.get(access.tensor) != 1
             or value_type is None
             or len(access.index) != len(value_type.shape)
-            or (access.predicate is not None and access.fill_value is None)
+            or (
+                access.predicate is not None
+                and access.fill_value is None
+                and not predicates_are_domain_total
+            )
             or not predicates_are_domain_total
         ):
             return False
@@ -563,7 +567,11 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
                 raise ContractReferenceUnsupportedError(
                     "contract indexed result gather requires one exact index bound"
                 )
-            if access.predicate is not None and access.fill_value is None:
+            if (
+                access.predicate is not None
+                and access.fill_value is None
+                and not predicates_are_domain_total
+            ):
                 raise ValueError("contract predicated gather load lacks its authored fill")
             result_loads.append(
                 IndexedResultLoadProjection(
@@ -618,7 +626,11 @@ def project_contract_reference(j: "SemanticArchive") -> ContractReferencePlan:
             if edge in seen_load_edges:
                 raise ValueError("contract indexed loads duplicate one operand edge")
             seen_load_edges.add(edge)
-            if access.predicate is not None and access.fill_value is None:
+            if (
+                access.predicate is not None
+                and access.fill_value is None
+                and not predicates_are_domain_total
+            ):
                 raise ValueError("contract predicated load lacks its authored fill")
             loads.append(
                 IndexedLoadProjection(

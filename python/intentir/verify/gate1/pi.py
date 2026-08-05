@@ -45,6 +45,8 @@ MATERIALIZATION_BINDING_RELATIONS: tuple[str, ...] = (
 
 ACCESS_REPRESENTATION_BINDING_RELATIONS: tuple[str, ...] = (
     "address_recomputed",
+    "boolean_storage_byte",
+    "guard_lower_bound_elided",
     "pointer_advanced",
 )
 

@@ -67,7 +67,7 @@ _STRING = {"type": "string", "minLength": 1}
 _TENSOR_HANDLE = {"type": "string", "pattern": "^t[0-9]+$"}
 _NODE_HANDLE = {"type": "string", "pattern": "^n[0-9]+$"}
 _C_HANDLE = {"type": "string", "pattern": "^c[0-9]+$"}
-_C_SUBJECT_HANDLE = {"type": "string", "pattern": "^[ndaqb][0-9]+$"}
+_C_SUBJECT_HANDLE = {"type": "string", "pattern": "^[tndaqb][0-9]+$"}
 _PARAMETER_HANDLE = {"type": "string", "pattern": "^p[0-9]+$"}
 _PORTABLE_PREDICATE_STRING = {
     "type": "string",
@@ -193,10 +193,18 @@ def _dimension_relation_schema() -> dict[str, Any]:
         },
         ("op", "arg", "value"),
     )
+    product_expr = _closed_object(
+        {
+            "op": {"type": "string", "enum": ["mul_dims"]},
+            "arg": dimension,
+            "rhs": dimension,
+        },
+        ("op", "arg", "rhs"),
+    )
     return _closed_object(
         {
             "result": dimension,
-            "expr": {"oneOf": [identity, const_expr]},
+            "expr": {"oneOf": [identity, const_expr, product_expr]},
         },
         ("result", "expr"),
         description=(
@@ -591,7 +599,7 @@ def _c_schema() -> dict[str, Any]:
                 **_C_SUBJECT_HANDLE,
                 "description": (
                     "Optional source-neutral attachment to one declared J "
-                    "node/domain/access/scope/storage subject. It is not a "
+                    "tensor/node/domain/access/scope/storage subject. It is not a "
                     "transformation permission or source binding. Compiler-kind "
                     "slots must omit subject_ref and axis_ref."
                 ),

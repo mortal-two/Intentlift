@@ -1814,6 +1814,27 @@ def _axis_refs_v1(
         return frozenset()
 
     elaboration = j_elaboration(j)
+    if subject_ref.startswith("t"):
+        tensor = next(
+            (
+                item
+                for item in [*j.intent.inputs, *j.intent.outputs]
+                if item.name == subject_ref
+            ),
+            None,
+        )
+        if tensor is None:
+            return frozenset()
+        return frozenset(
+            [
+                *range(len(tensor.shape)),
+                *(
+                    dim
+                    for dim in tensor.shape
+                    if isinstance(dim, str) and dim in dimensions
+                ),
+            ]
+        )
     if subject_ref.startswith("d"):
         expression = elaboration.domain_by_id.get(subject_ref)
         if expression is None:
@@ -2033,6 +2054,8 @@ def _rank_zero_semantic_live_values(j: SemanticArchive) -> set[str]:
     for relation in j.dimension_relations:
         semantic_refs.add(relation.result)
         semantic_refs.add(relation.expr.arg)
+        if relation.expr.rhs is not None:
+            semantic_refs.add(relation.expr.rhs)
 
     for node_ref in node_seed_refs:
         operation = nodes.get(node_ref)
@@ -3963,9 +3986,19 @@ def _check_physical_loop_carriers(
 
 
 _CONSUMER_EXTENSION_OPS = frozenset(
-    {"map_unary", "map_binary", "select", "cast", "transpose", "pad"}
+    {
+        "map_unary",
+        "map_binary",
+        "select",
+        "cast",
+        "transpose",
+        "pad",
+        "gather",
+    }
 )
-_CONSUMER_EXTENSION_FNS = frozenset({"sum", "max", "min"})
+_CONSUMER_EXTENSION_FNS = frozenset(
+    {"sum", "prod", "max", "min", "any", "all"}
+)
 
 
 def _same_closed_scalar(left: Any, right: Any) -> bool:
@@ -3995,6 +4028,16 @@ def _is_consumer_identity(fn: str, dtype: str, value: Any) -> bool:
             and isinstance(value, (int, float))
             and float(value) == 0.0
         )
+    if fn == "prod":
+        return (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and float(value) == 1.0
+        )
+    if fn == "any":
+        return value is False or value == "false"
+    if fn == "all":
+        return value is True or value == "true"
     if not _floating_dtype(dtype):
         return False
     if fn == "max":
@@ -4240,7 +4283,8 @@ def _check_consumer_extensions(
                 TypeCheckDiagnostic(
                     TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
                     f"{path}.consumer_ref",
-                    "consumer extension requires a sum/max/min reduce or scan",
+                    "consumer extension requires a supported reduce or scan with "
+                    "a closed two-sided identity",
                     extension.consumer_ref,
                 )
             )
@@ -5489,7 +5533,7 @@ def type_check(
         if parameter.kind is ParameterKind.OPAQUE and parameter.dtype == "none"
     }
     _check_result_relations(j, diagnostics)
-    c_subject_kinds = {"node", "domain", "access", "scope", "storage"}
+    c_subject_kinds = {"tensor", "node", "domain", "access", "scope", "storage"}
     for index, slot in enumerate(c.slots):
         if slot.kind is ScheduleSlotKind.COMPILER:
             if slot.subject_ref is not None or slot.axis_ref is not None:

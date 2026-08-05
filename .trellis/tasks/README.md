@@ -5,61 +5,29 @@ Trellis CLI、自动 session 或 workflow phase。
 
 ## 当前任务
 
-Task 11 继续作为不停止的 28-Kernel 闭合主线。Task 20 在当前严格基线上把 Replay 改为只消费
-`J + MaskC(C)`，并把 typed π 限定为 Gate1 内部的 certification-only normalization witness；
-Gate1 的结论只谈 J/C structural closure。
-Task 16–19 的 fragment、hole、binding、Composer 与直接完整源码 Agent 路线均已归档。
-production backend 仍只在 SCRC 后消费 J+C，不读取 π。
+- [最终 Kernel 逐核 SCRC 闭合](08-01-final-three-kernel-closure/task.md)（执行中；唯一活动执行记录）
 
-- [Task 11：SCRC v4 的 28-Kernel 有界并行全闭合](07-24-scrc-v4-full-closure-11/task.md)（执行中；闭合主线）
-- [Task 20：J-only Replay / J/C Structural Gate1](07-31-j-only-replay-jc-structural-gate1-20/task.md)（设计与执行中）
+按 [`AGENTS.md`](../../AGENTS.md)，同时只维护一个活动 final task：它只保留当前合同、未解决
+阻塞、下一步动作与权威 closure 证据，不累积历史叙述。
 
-## 本轮已归档任务
+## 已归档任务
 
-Task 01–10、Task 12–19 均已结束并迁入 `archive/2026-07/`。其中任务正文与 evidence 是历史记录，不再作为
-当前执行状态或后继调度的权威来源。
+Task 01–20 与其后的子任务已全部结束，2026-08-01 起迁入仓库根的
+[`archive/2026-08-01-trellis-history/tasks-archive/`](../../archive/2026-08-01-trellis-history/tasks-archive/)，
+按 `2026-06/`、`2026-07/`、`2026-08/` 分批。其中：
 
-- [Task 17：Typed Skeleton / LLM Target Binding Composer（已由 Task 18 取代）](archive/2026-07/07-31-typed-skeleton-llm-binding-composer-17/task.md)
-- [Task 16：J 主导最小 π / Replay 内部 Composer（已由 Task 18 取代）](archive/2026-07/07-31-j-led-minimal-pi-replay-composer-16/task.md)
-- [Task 15：Compiler-Observed Lift / Closed J / Source-Blind Replay（23/28后由Task 16接管）](archive/2026-07/07-29-compiler-observed-scrc-closure-15/task.md)
-- [Task 14：Source-Grounded Certification Profile 与 Codex 28-Kernel Fresh SCRC（已结束）](archive/2026-07/07-27-codex-parametric-28-closure-14/task.md)
-- [Task 13：Lightweight Single-Owner MiniSWE / Codex Agent Runtime（工程完成）](archive/2026-07/07-27-lightweight-miniswe-codex-runtime-13/task.md)
-- [Task 12：Persistent Single-Owner Transactional Agent Runtime（验收未通过）](archive/2026-07/07-26-single-owner-agent-runtime-12/task.md)
-- [Task 10：J Semantic Readiness 与 SCRC vNext 横向闭合](archive/2026-07/07-24-j-readiness-scrc-vnext-10/task.md)
-- [Task 09：退役 RefEval 重复 Layer-B 解释器](archive/2026-07/07-23-retire-duplicate-boundary-interpreter-09/task.md)
-- [Task 08：唯一 J 的可执行 CUDA ABI 与 Backend Conformance 闭环](archive/2026-07/07-23-executable-j-cuda-backend-08/task.md)
-- [Task 07：Canonical Boundary Projection 与 Production Lowering 消费闭合](archive/2026-07/07-23-canonical-boundary-lowering-07/task.md)
-- [Task 06：J 构造标准化与统一 lowering 消费边界](archive/2026-07/07-23-canonical-j-elaboration-06/task.md)
-- [Task 05：Gate2 dense pointwise RefEval 合同闭合](archive/2026-07/07-23-gate2-dense-refeval-05/task.md)
-- [Task 04：mini-swe-agent 有界 Lift Worker 接入](archive/2026-07/07-23-miniswe-lift-worker-04/task.md)
-- [Task 03：28 项真实 Kernel Manifest、Batch 与代表性纵切](archive/2026-07/07-22-scrc-real-kernel-batch-03/task.md)
-- [Task 02：真实 SCRC Exact / Masked / Reduction Canary](archive/2026-07/07-22-scrc-real-canary-02/task.md)
-- [Task 01：SCRC Gate Core 整体门禁能力重构](archive/2026-07/07-22-scrc-system-rebuild-01/task.md)
+- `2026-08/07-24-scrc-v4-full-closure-11/` — Task 11，28-Kernel 闭合主线
+- `2026-08/07-31-j-only-replay-jc-structural-gate1-20/` — Task 20，把 Replay 收窄为只消费
+  `J + MaskC(C)`，π 降为 Gate1 内部的 certification-only normalization witness
+- `2026-08/08-01-rope-pi-consumer-lift-closure/` — RoPE 手工纵切 + 自动 Lift 双闭合
+- `2026-07/` — Task 01–19，含 Task 16–19 已停止的 fragment/hole/binding/Composer 路线
 
-编号从 01 重新开始，因为 2026-07-22 的 C、π、最终执行流程和 SCRC 数学总述已经替换此前
-formal/hash/epoch 实验口径；新任务不得继承旧序列的协议状态。当前序列的 Task 01–10 已成为
-Task 11 的历史输入，不得因正文中的旧“执行中”或“后续”措辞被重新激活。
+更早的 formal/hash 协议实验在
+[`archive/2026-08-01-trellis-history/trellis-archive/experiments/`](../../archive/2026-08-01-trellis-history/trellis-archive/)。
 
-## 历史任务序列
+归档任务正文与其中的 evidence 都是历史记录，**不再作为当前执行状态或后继调度的权威来源**；
+正文里的"执行中""后续"等措辞不得据以重新激活。每份归档任务只按其落盘时的协议版本解释，
+后续 schema/TypeCheck/observer 升级不追认、不重判。
 
-此前 01–10 只用于追溯，不约束当前实现。其中旧 Task 10 与 formal batch v1–v7 已迁入：
-
-- [旧 Lift Envelope / Boundary 10 与 formal/hash 实验归档](../archive/experiments/2026-07-22-formal-hash-protocol/task/task.md)
-
-最近完成：
-
-- [Address Realization 09：新增 base/lane tags，v6 暴露 Lift envelope/boundary 缺口](archive/2026-07/07-22-address-realization-09/task.md)
-- [Pi Graph Integrity 08：闭合 graph 外键，v5 暴露 address base/lane 缺口](archive/2026-07/07-22-pi-graph-integrity-08/task.md)
-- [Semantic/Realization Residual 07：完成 J/C/π 所有权回收，v4 暴露 graph 外键歧义](archive/2026-07/07-22-pi-realization-topology-07/task.md)
-- [Lift Wire / Parser Isomorphism 06：wire/parser 闭合，v3 暴露 pi topology 缺口](archive/2026-07/07-22-lift-wire-parser-isomorphism-06/task.md)
-- [Formal Batch V2 05：protocol-v2 recovery canary 失败并完整留证](archive/2026-07/07-22-formal-batch-v2-05/task.md)
-- [28 Real Kernels 04：protocol-v1 首次真实 Lift 失败并完整留证](archive/2026-07/07-22-28-kernel-llm-batch-04/task.md)
-- [Typed Relations 03：闭合 logical bounds、update 与 allowed-result relation](archive/2026-07/07-22-typed-relations-03/task.md)
-- [IntentOp Robustness 02：真实机制审计与错误能力回收](archive/2026-07/07-21-intentop-robustness-02/task.md)
-- [Architecture Reset 01：清除旧控制面并切换到 LLM-direct π](archive/2026-07/07-21-architecture-reset-01-direct-pi/task.md)
-
-此前所有活动任务已原样归档到
-[07-21 reset 快照](archive/2026-07/07-21-pre-llm-first-reset/README.md)。
-- [Task 18：J SemanticMaterializer / 直接 Replay Compiler Agent（已由 Task 19 取代）](archive/2026-07/07-31-j-semantic-materializer-replay-compiler-agent-18/task.md)
-- [Task 19：J-only Target-Normal IR / 确定性 Composer（已由 Task 20 取代）](archive/2026-07/07-31-j-only-target-normal-composer-19/task.md)
-- [Task 20 早期 π-centered Gate1 草案（已由活动 Task 20 取代）](archive/2026-07/07-31-j-only-replay-pi-relative-gate1-20-draft/task.md)
+production backend 仍只在 SCRC 之后消费 accepted `J+C`，不读取 π；其实现与实验在
+`TianchenIR-backend-certified-j-search` 分支。

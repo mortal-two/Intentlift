@@ -207,25 +207,53 @@ def _opaque_python_interface(
         for index in constexpr_indices
     ):
         raise ValueError("compiler constexpr indices are malformed")
-    signature_constexpr = [
-        index
-        for index, parameter in enumerate(signature_parameters)
-        if parameter.kind is ParameterKind.CONSTEXPR
-    ]
-    expected_constexpr = [
-        *signature_constexpr,
-        *range(len(signature_parameters), len(signature_parameters) + len(c_constexprs)),
-    ]
-    if sorted(constexpr_indices) != expected_constexpr:
-        raise ValueError("compiled constexpr positions differ from artifact harness")
-
     opaque_function, parameter_names, schedule_names = opaque_replay_abi(artifact)
-    aliases = [
-        parameter_names[parameter.name]
-        for parameter in signature_parameters
-    ] + [
-        schedule_names[slot.name] for slot in c_constexprs
-    ]
+    authoritative_names = {
+        **parameter_names,
+        **{slot.name: schedule_names[slot.name] for slot in c_constexprs},
+    }
+    if set(raw_names) == set(authoritative_names):
+        # Triton canonicalizes interleaved semantic constexprs by moving them
+        # behind runtime arguments.  The p*/c* names are authoritative, so
+        # recover identity and constexpr ownership by name rather than by the
+        # compiler's reordered declaration position.
+        constexpr_names = {
+            parameter.name
+            for parameter in signature_parameters
+            if parameter.kind is ParameterKind.CONSTEXPR
+        } | {slot.name for slot in c_constexprs}
+        expected_constexpr = [
+            index for index, name in enumerate(raw_names)
+            if name in constexpr_names
+        ]
+        aliases = [authoritative_names[name] for name in raw_names]
+    else:
+        # Compatibility for trusted fixtures that predate opaque p*/c* names.
+        signature_constexpr = [
+            index
+            for index, parameter in enumerate(signature_parameters)
+            if parameter.kind is ParameterKind.CONSTEXPR
+        ]
+        expected_constexpr = [
+            *signature_constexpr,
+            *range(
+                len(signature_parameters),
+                len(signature_parameters) + len(c_constexprs),
+            ),
+        ]
+        aliases = [
+            parameter_names[parameter.name]
+            for parameter in signature_parameters
+        ] + [
+            schedule_names[slot.name] for slot in c_constexprs
+        ]
+    if sorted(constexpr_indices) != expected_constexpr:
+        raise ValueError("compiled constexpr identities differ from artifact harness")
+    # TTIR may drop specialized scalar carriers independently on Source and
+    # Replay.  Preserve their J/Harness ABI identity by Python argument name;
+    # the fingerprint consumes this map only for leaf naming and deliberately
+    # excludes it from the hard public-interface payload.
+    result["ttir_argument_aliases"] = dict(zip(raw_names, aliases, strict=True))
     result["arg_names"] = aliases
     result["constexpr_indices"] = expected_constexpr
     result["constexprs"] = [aliases[index] for index in expected_constexpr]

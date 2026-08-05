@@ -7,6 +7,9 @@
 当前 Task 20 改为 J-only Replay；π 不进入 Replay，而只实例化冻结的 frontend/profile-specific
 Gate1 observer canonicalization。本文仅供历史追溯，不是活动规范。
 
-`code/` 原样保存该路线未提交的 Target-Normal IR、Codex Replay backend 与 Triton Composer
-prototype。活动 runner/CLI 已撤掉 `codex-target-normal` 接线；这些源码不在 Python package 路径中，
-不得作为 Task 20 runtime 或实验能力使用。
+该路线未提交的 Target-Normal IR、Codex Replay backend 与 Triton Composer prototype 源码，
+2026-08-01 起改存于仓库根的
+[`archive/2026-07-31-j-only-target-normal-composer/code/`](../../../archive/2026-07-31-j-only-target-normal-composer/code/)
+（归档源码统一放在根 `archive/`，不再混在 `doc/` 下）。活动 runner/CLI 已撤掉
+`codex-target-normal` 接线；这些源码不在 Python package 路径中，不得作为 Task 20 runtime
+或实验能力使用。

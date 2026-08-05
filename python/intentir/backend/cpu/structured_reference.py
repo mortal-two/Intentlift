@@ -130,6 +130,8 @@ _UNARY = {
     "exp2": np.exp2,
     "atan": np.arctan,
     "isnan": np.isnan,
+    "isinf": np.isinf,
+    "isfinite": np.isfinite,
     "logical_not": np.logical_not,
 }
 

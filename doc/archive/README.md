@@ -8,8 +8,13 @@
 
 - [2026-07-31：π-centered Gate1 草案](2026-07-31-pi-centered-gate1-draft/README.md)
 - [2026-07-31：Replay Composer 原型](2026-07-31-replay-composer-prototypes/README.md)
+- [2026-07-31：Direct Replay Compiler Agent](2026-07-31-direct-replay-compiler-agent/README.md)
+- [2026-07-31：J-only Target-Normal 与确定性 Composer（Task 19）](2026-07-31-j-only-target-normal-composer/README.md)
 - [2026-07-22：C、π 与最终执行流程形成之前](2026-07-22-pre-C-pi-execution/README.md)
 - [2026-07-21：LLM-first reset 之前](2026-07-21-pre-llm-first/README.md)
+
+被取代的**代码与数据**归档在仓库根的 [`archive/`](../../archive/README.md)，与本目录的
+设计文档归档分列；Task 19 的 Composer 原型源码即在那里。
 
 历史材料中的 hash、digest、epoch、commitment、单次 Replay 或旧 masked-J 规则保留原貌，
 不代表当前系统仍采用这些机制。

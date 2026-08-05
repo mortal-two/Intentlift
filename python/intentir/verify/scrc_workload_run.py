@@ -169,15 +169,55 @@ def _input_value(
     buffer: BufferBinding,
 ) -> np.ndarray:
     dtype = _numpy_dtype(buffer.dtype)
+    physical_shape = (
+        (_physical_storage_size(buffer.shape, buffer.strides),)
+        if buffer.strides is not None
+        else buffer.shape
+    )
     if buffer.initializer is BufferInitializer.ZEROS:
-        return np.zeros(buffer.shape, dtype=dtype)
+        physical = np.zeros(physical_shape, dtype=dtype)
+        return _logical_buffer_value(physical, buffer)
     if buffer.initializer is not BufferInitializer.RANDOM:
         raise ValueError("input/inout buffer lacks a supported initializer")
     if dtype.kind == "b":
-        return rng.integers(0, 2, size=buffer.shape).astype(dtype)
+        physical = rng.integers(0, 2, size=physical_shape).astype(dtype)
+        return _logical_buffer_value(physical, buffer)
     if dtype.kind in {"i", "u"}:
-        return rng.integers(-3, 4, size=buffer.shape).astype(dtype)
-    return rng.normal(0.0, 0.25, size=buffer.shape).astype(dtype)
+        physical = rng.integers(-3, 4, size=physical_shape).astype(dtype)
+        return _logical_buffer_value(physical, buffer)
+    physical = rng.normal(0.0, 0.25, size=physical_shape).astype(dtype)
+    return _logical_buffer_value(physical, buffer)
+
+
+def _physical_storage_size(
+    shape: tuple[int, ...],
+    strides: tuple[int, ...] | None,
+) -> int:
+    if strides is None:
+        return int(np.prod(shape, dtype=np.int64)) if shape else 1
+    return 1 + sum(
+        (extent - 1) * stride
+        for extent, stride in zip(shape, strides, strict=True)
+    )
+
+
+def _logical_buffer_value(physical: np.ndarray, buffer: BufferBinding) -> np.ndarray:
+    if buffer.strides is None:
+        return physical.reshape(buffer.shape)
+    if not buffer.shape:
+        return physical.reshape(())
+    offsets = np.zeros(buffer.shape, dtype=np.int64)
+    for axis, (extent, stride) in enumerate(
+        zip(buffer.shape, buffer.strides, strict=True)
+    ):
+        values = np.arange(extent, dtype=np.int64)
+        values = values.reshape(
+            (1,) * axis
+            + (extent,)
+            + (1,) * (len(buffer.shape) - axis - 1)
+        )
+        offsets += values * stride
+    return physical.reshape(-1)[offsets].copy()
 
 
 def _bind_shape(
@@ -367,6 +407,8 @@ def _build_workload_execution_case(
                     ArgumentRole.INPUT,
                     value_key=key,
                     dtype=buffer.dtype,
+                    shape=buffer.shape,
+                    strides=buffer.strides,
                 )
             )
         elif buffer.role is BufferRole.OUTPUT:
@@ -382,6 +424,7 @@ def _build_workload_execution_case(
                     dtype=buffer.dtype,
                     shape=buffer.shape,
                     output_key=key,
+                    strides=buffer.strides,
                 )
             )
         else:
@@ -399,6 +442,8 @@ def _build_workload_execution_case(
                     value_key=input_key,
                     dtype=buffer.dtype,
                     output_key=output_key,
+                    shape=buffer.shape,
+                    strides=buffer.strides,
                 )
             )
 
@@ -827,6 +872,7 @@ def _build_workload_runtime(
     lift_workflow: str = "single",
     replay_backend: str = "responses",
     replay_width: int = 1,
+    replay_writer_factory: Callable[[], RecordedReplayWriter] | None = None,
     stop_requested: Callable[[], int | None] | None = None,
 ) -> tuple[
     SCRCGateRunner,
@@ -875,11 +921,15 @@ def _build_workload_runtime(
 
     def gate1_factory(_formal_round: int) -> BoundGate1Adapter:
         round_writers = tuple(
-            _new_replay_writer(
-                replay_backend,
-                provider=effective_replay_provider,
-                effort=effective_replay_effort,
-                stop_requested=stop_requested,
+            (
+                replay_writer_factory()
+                if replay_writer_factory is not None
+                else _new_replay_writer(
+                    replay_backend,
+                    provider=effective_replay_provider,
+                    effort=effective_replay_effort,
+                    stop_requested=stop_requested,
+                )
             )
             for _ in range(replay_width)
         )
@@ -924,6 +974,7 @@ def search_prepared_workload_gate1(
     lift_workflow: str = "single",
     replay_backend: str = "responses",
     replay_width: int = 1,
+    replay_writer_factory: Callable[[], RecordedReplayWriter] | None = None,
     retry_initial_artifact: bool = False,
     max_gate1_rounds: int | None = None,
     max_pre_replay_rejections: int | None = None,
@@ -943,6 +994,7 @@ def search_prepared_workload_gate1(
         lift_workflow=lift_workflow,
         replay_backend=replay_backend,
         replay_width=replay_width,
+        replay_writer_factory=replay_writer_factory,
         stop_requested=stop_requested,
     )
     request = prepared.request
@@ -1067,6 +1119,7 @@ def retry_prepared_workload_gate1_fixed_artifact(
     lift_workflow: str = "single",
     replay_backend: str = "responses",
     replay_width: int = 1,
+    replay_writer_factory: Callable[[], RecordedReplayWriter] | None = None,
     stop_requested: Callable[[], int | None] | None = None,
     progress_callback: SCRCProgressCallback | None = None,
 ) -> WorkloadGate1Search:
@@ -1125,6 +1178,7 @@ def retry_prepared_workload_gate1_fixed_artifact(
         lift_workflow=lift_workflow,
         replay_backend=replay_backend,
         replay_width=replay_width,
+        replay_writer_factory=replay_writer_factory,
         retry_initial_artifact=True,
         max_gate1_rounds=1,
         # Exact-artifact retry is intentionally one-shot before Replay.  A current

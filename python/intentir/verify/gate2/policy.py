@@ -364,24 +364,27 @@ def _output_low_precision_compute_dtype(
 DEFAULT_GATE2_POLICY = ComparisonPolicy.create(
     "intentir.gate2.default.v2",
     (
-        ("bf16", NumericTolerance(2.0e-2, 2.0e-3)),
+        ("bf16", NumericTolerance(2.0e-2, 2.0e-3, equal_nan=True)),
         # The model-level Flash attention Out is an f16 materialized result;
         # its source kernel has a documented scratch-store/low-precision
         # execution path whose repeated launches differ by about 2e-3.  Q
         # must cover that external numerical behavior; J still declares only
         # the relation class and cannot select this threshold.
-        ("f16", NumericTolerance(2.0e-2, 3.0e-3)),
-        ("f32", NumericTolerance(1.0e-5, 1.0e-6)),
-        ("f64", NumericTolerance(1.0e-12, 1.0e-12)),
+        ("f16", NumericTolerance(2.0e-2, 3.0e-3, equal_nan=True)),
+        # Matching NaN locations denote the same floating result for partial
+        # functions such as sqrt/rsqrt/log.  Unequal NaN masks remain a hard
+        # failure in compare_outputs, so this cannot hide a domain disagreement.
+        ("f32", NumericTolerance(1.0e-5, 1.0e-6, equal_nan=True)),
+        ("f64", NumericTolerance(1.0e-12, 1.0e-12, equal_nan=True)),
     ),
     mixed_precision_tolerances=(
-        ("bf16", NumericTolerance(2.0e-2, 2.0e-3)),
+        ("bf16", NumericTolerance(2.0e-2, 2.0e-3, equal_nan=True)),
         # Iterated f16 contractions/reductions (notably long attention
         # recurrences) can be nondeterministic even when the same Source is
         # launched twice.  Keep this in external Q: J still declares only
         # ``tolerance`` and cannot choose its own threshold.
-        ("f16", NumericTolerance(2.0e-2, 3.0e-3)),
-        ("f32", NumericTolerance(1.0e-5, 1.0e-6)),
+        ("f16", NumericTolerance(2.0e-2, 3.0e-3, equal_nan=True)),
+        ("f32", NumericTolerance(1.0e-5, 1.0e-6, equal_nan=True)),
     ),
 )
 

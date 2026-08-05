@@ -59,10 +59,19 @@ def validate_dimension_relations(j: Any) -> None:
             raise DimensionRelationError(
                 f"{path}.expr.arg must name a declared symbolic x* dimension"
             )
+        if relation.expr.rhs is not None and relation.expr.rhs not in declared:
+            raise DimensionRelationError(
+                f"{path}.expr.rhs must name a declared symbolic x* dimension"
+            )
         if relation.expr.op == "identity":
-            if relation.expr.value is not None:
+            if relation.expr.value is not None or relation.expr.rhs is not None:
                 raise DimensionRelationError(
-                    f"{path}.expr identity forbids a constant value"
+                    f"{path}.expr identity forbids value/rhs"
+                )
+        elif relation.expr.op == "mul_dims":
+            if relation.expr.rhs is None or relation.expr.value is not None:
+                raise DimensionRelationError(
+                    f"{path}.expr mul_dims requires rhs and forbids value"
                 )
         elif relation.expr.op in {
             "add_const",
@@ -95,9 +104,13 @@ def validate_dimension_relations(j: Any) -> None:
                 f"{result!r}"
             )
         visiting.add(result)
-        argument = relations[result].expr.arg
-        if argument in relations:
-            visit(argument)
+        expr = relations[result].expr
+        dependencies = [expr.arg]
+        if expr.rhs is not None:
+            dependencies.append(expr.rhs)
+        for argument in dependencies:
+            if argument in relations:
+                visit(argument)
         visiting.remove(result)
         visited.add(result)
 
@@ -113,12 +126,21 @@ def _closed_extent(value: Any, *, context: str) -> int:
     return value
 
 
-def evaluate_dimension_relation_expr(expr: Any, argument: int) -> int:
+def evaluate_dimension_relation_expr(
+    expr: Any, argument: int, rhs_argument: int | None = None
+) -> int:
     """Evaluate one already-validated closed expression."""
 
     argument = _closed_extent(argument, context=f"dimension {expr.arg!r}")
     if expr.op == "identity":
         return argument
+    if expr.op == "mul_dims":
+        if rhs_argument is None:
+            raise DimensionRelationError("mul_dims requires a concrete rhs dimension")
+        rhs_argument = _closed_extent(
+            rhs_argument, context=f"dimension {expr.rhs!r}"
+        )
+        return argument * rhs_argument
     constant = expr.value
     if isinstance(constant, bool) or not isinstance(constant, int) or constant <= 0:
         raise DimensionRelationError(
@@ -168,28 +190,44 @@ def resolve_dimension_relations(
         progress = False
         for result in tuple(sorted(pending)):
             relation = relations[result]
-            if relation.expr.arg not in resolved:
+            dependencies = [relation.expr.arg]
+            if relation.expr.rhs is not None:
+                dependencies.append(relation.expr.rhs)
+            if any(dependency not in resolved for dependency in dependencies):
                 continue
             expected = evaluate_dimension_relation_expr(
-                relation.expr, resolved[relation.expr.arg]
+                relation.expr,
+                resolved[relation.expr.arg],
+                (
+                    resolved[relation.expr.rhs]
+                    if relation.expr.rhs is not None
+                    else None
+                ),
             )
             if result in resolved and resolved[result] != expected:
                 raise DimensionRelationError(
                     "J dimension relation mismatch: "
                     f"{result}={resolved[result]}, expected {expected} from "
-                    f"{relation.expr.op}({relation.expr.arg})"
+                    f"{relation.expr.op}({relation.expr.arg}"
+                    + (
+                        f", {relation.expr.rhs})"
+                        if relation.expr.rhs is not None
+                        else ")"
+                    )
                 )
             resolved[result] = expected
             pending.remove(result)
             progress = True
         if not progress:
-            missing = sorted(
-                {
-                    relations[result].expr.arg
-                    for result in pending
-                    if relations[result].expr.arg not in resolved
-                }
-            )
+            missing = sorted({
+                dependency
+                for result in pending
+                for dependency in (
+                    relations[result].expr.arg,
+                    *((relations[result].expr.rhs,) if relations[result].expr.rhs is not None else ()),
+                )
+                if dependency not in resolved
+            })
             raise DimensionRelationError(
                 "J dimension relations lack base valuation(s): " + ", ".join(missing)
             )

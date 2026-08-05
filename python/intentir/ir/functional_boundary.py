@@ -354,7 +354,9 @@ class FunctionalBoundaryProjection:
     runtime_predicate_proofs: tuple[RuntimePredicateProofReceipt, ...] = ()
     consumer_extensions: tuple[ConsumerOutsideProjection, ...] = ()
     value_dimension_relations: tuple[tuple[str, str], ...] = ()
-    dimension_relations: tuple[tuple[str, str, str, int | None], ...] = ()
+    dimension_relations: tuple[
+        tuple[str, str, str, str | None, int | None], ...
+    ] = ()
     constant_gathers: tuple[ConstantGatherProjection, ...] = ()
     concat_store_partitions: tuple[ConcatStorePartitionProjection, ...] = ()
     direct_store_partitions: tuple[DirectStorePartitionProjection, ...] = ()
@@ -429,10 +431,11 @@ class FunctionalBoundaryProjection:
                     "expr": {
                         "op": op,
                         "arg": arg,
+                        **({"rhs": rhs} if rhs is not None else {}),
                         **({"value": value} if value is not None else {}),
                     },
                 }
-                for result, op, arg, value in self.dimension_relations
+                for result, op, arg, rhs, value in self.dimension_relations
             ],
             "constant_gathers": [
                 proof.to_json() for proof in self.constant_gathers
@@ -1841,12 +1844,18 @@ def _value_dimension_pairs(j: Any) -> tuple[tuple[str, str], ...]:
 
 def _dimension_relation_tuples(
     j: Any,
-) -> tuple[tuple[str, str, str, int | None], ...]:
+) -> tuple[tuple[str, str, str, str | None, int | None], ...]:
     """Return exact, validated J-owned dimension definitions."""
 
     validate_dimension_relations(j)
     return tuple(
-        (relation.result, relation.expr.op, relation.expr.arg, relation.expr.value)
+        (
+            relation.result,
+            relation.expr.op,
+            relation.expr.arg,
+            relation.expr.rhs,
+            relation.expr.value,
+        )
         for relation in j.dimension_relations
     )
 
@@ -1867,11 +1876,84 @@ def _functional_access_coordinates(
     direct = index.direct_coordinates
     if direct is not None:
         return direct
+    scalar_value_refs = {
+        parameter.logical_ref
+        for parameter in j.signature.parameters
+        if parameter.kind.value == "scalar" and parameter.logical_ref is not None
+    }
+    # A rank-1 physical view may be addressed by one logical domain coordinate
+    # scaled by a runtime scalar stride.  The stride is already a typed J value
+    # used by the ContractReference evaluator; the result still has the sole
+    # logical axis, and concrete bounds are checked when that access executes.
+    # This is intentionally narrower than a general affine projection: no
+    # offset, sum, second domain axis, or non-scalar factor is accepted here.
+    if len(target_shape) == 1 and len(index.components) == 1:
+        expression = index.components[0]
+        if expression.op == "mul" and len(expression.args) == 2:
+            for axis_term, stride_term in (
+                (expression.args[0], expression.args[1]),
+                (expression.args[1], expression.args[0]),
+            ):
+                axis = (
+                    axis_term.value
+                    if axis_term.op == "ref" and isinstance(axis_term.value, str)
+                    else None
+                )
+                scalar_stride = (
+                    stride_term.op == "int"
+                    or (
+                        stride_term.op == "ref"
+                        and isinstance(stride_term.value, str)
+                        and stride_term.value in scalar_value_refs
+                    )
+                )
+                if axis is not None and scalar_stride:
+                    return (axis,)
     if len(target_shape) != 2 or len(index.components) != 1:
         return None
     expression = index.components[0]
     if expression.op != "add" or len(expression.args) != 2:
         return None
+
+    # A captured rank-2 strided tensor may spell its physical address as the
+    # ordered affine form ``axis0 * stride0 + axis1 * stride1``.  The expression
+    # itself authors the tensor-axis order; both stride carriers must be typed
+    # scalar J inputs, and no offset, coefficient folding, repeated axis, or
+    # extra term is accepted.  ContractReference then evaluates the same access
+    # through the tensor's logical coordinates while the runtime adapter retains
+    # the captured physical strides.
+    def ordered_axis_stride(term: ContractExpr) -> tuple[str, str] | None:
+        if term.op != "mul" or len(term.args) != 2:
+            return None
+        for axis_term, stride_term in (
+            (term.args[0], term.args[1]),
+            (term.args[1], term.args[0]),
+        ):
+            axis = (
+                axis_term.value
+                if axis_term.op == "ref"
+                and isinstance(axis_term.value, str)
+                and re.fullmatch(r"k[0-9]+", axis_term.value)
+                else None
+            )
+            stride = (
+                stride_term.value
+                if stride_term.op == "ref"
+                and isinstance(stride_term.value, str)
+                and stride_term.value in scalar_value_refs
+                else None
+            )
+            if axis is not None and stride is not None:
+                return axis, stride
+        return None
+
+    ordered_terms = tuple(ordered_axis_stride(term) for term in expression.args)
+    if all(term is not None for term in ordered_terms):
+        axes = tuple(term[0] for term in ordered_terms if term is not None)
+        strides = tuple(term[1] for term in ordered_terms if term is not None)
+        if len(set(axes)) == 2 and len(set(strides)) == 2:
+            return axes
+
     trailing_extent = target_shape[1]
     value_dimensions = dict(_value_dimension_pairs(j))
 
@@ -2515,6 +2597,24 @@ def functional_boundary_closure_issues(
             # Canonical elaboration/ordinary reference checking owns these
             # errors.  Do not duplicate them under the closure rule.
             continue
+        operation = nodes.get(access.node_ref) if access.node_ref else None
+        matching_index_bounds = [
+            item
+            for item in boundary.index_bounds
+            if operation is not None
+            and operation.op == "gather"
+            and access.kind.value == "load"
+            and item.node_ref == access.node_ref
+            and item.data == access.tensor
+            and len(operation.operands) > 1
+            and operation.operands[0] == access.tensor
+            and item.indices == operation.operands[1]
+        ]
+        bounded_gather_axis = (
+            matching_index_bounds[0].axis
+            if len(matching_index_bounds) == 1
+            else None
+        )
         coordinates = parsed_access.index.direct_coordinates
         if coordinates is None:
             # General affine/diagonal accesses are outside this projection
@@ -2540,8 +2640,8 @@ def functional_boundary_closure_issues(
             )
             continue
         has_static_coordinate_error = False
-        for coordinate, declared_extent in zip(
-            coordinates, tensor.shape, strict=True
+        for tensor_axis, (coordinate, declared_extent) in enumerate(
+            zip(coordinates, tensor.shape, strict=True)
         ):
             if isinstance(coordinate, int):
                 if (
@@ -2561,6 +2661,12 @@ def functional_boundary_closure_issues(
                 continue
             axis = coordinate
             domain_extent = domains.get(axis) if rectangular_domains else None
+            if tensor_axis == bounded_gather_axis:
+                # The consumer domain describes the typed gather result, not the
+                # full source-tensor extent on the gathered axis.  The exact
+                # data/index/axis ownership above and the ordinary index-bound
+                # checks retain the safety obligation.
+                continue
             if domain_extent is not None and domain_extent != declared_extent:
                 issues.append(
                     FunctionalBoundaryClosureIssue(
@@ -2585,7 +2691,6 @@ def functional_boundary_closure_issues(
             # J legality.  Other constant selections remain valid-but-unsupported.
             if len(non_singleton_constants) == 1:
                 coordinate_axis, coordinate = non_singleton_constants[0]
-                operation = nodes.get(access.node_ref) if access.node_ref else None
                 if (
                     operation is not None
                     and operation.op == "gather"
@@ -3566,6 +3671,71 @@ def _reduction_padding_analysis(
                     )
                 )
             continue
+        if op.op == "gather":
+            matching_bounds = [
+                relation
+                for relation in j.boundary.index_bounds
+                if (
+                    node_ref is not None
+                    and relation.node_ref == node_ref
+                    and len(op.operands) == 2
+                    and relation.data == op.operands[0]
+                    and relation.indices == op.operands[1]
+                    and relation.axis == op.attrs.get("axis")
+                )
+            ]
+            data_type = (
+                value_types.get(op.operands[0]) if len(op.operands) == 2 else None
+            )
+            index_type = (
+                value_types.get(op.operands[1]) if len(op.operands) == 2 else None
+            )
+            gather_axis = op.attrs.get("axis")
+            if (
+                len(matching_bounds) != 1
+                or data_type is None
+                or index_type is None
+                or isinstance(gather_axis, bool)
+                or not isinstance(gather_axis, int)
+                or gather_axis < 0
+                or gather_axis >= len(data_type.shape)
+                or result_type.shape != index_type.shape
+            ):
+                if padded_operands:
+                    consumer_issues.append(
+                        FunctionalBoundaryClosureIssue(
+                            f"j.intent.intent_function.{path}.op",
+                            "functional projection cannot propagate masked padding "
+                            "through an unclosed bounded gather",
+                            node_ref,
+                        )
+                    )
+                continue
+
+            projected: dict[str, set[int]] = {}
+            data_padding = operand_padding[op.operands[0]]
+            for access_ref, positions in data_padding.items():
+                # A padding axis other than the gathered axis remains the same
+                # logical result axis.  Padding on the gathered axis depends on
+                # the actual index values and is deliberately left unsupported.
+                if gather_axis in positions or any(
+                    axis >= len(result_type.shape)
+                    or data_type.shape[axis] != result_type.shape[axis]
+                    for axis in positions
+                ):
+                    consumer_issues.append(
+                        FunctionalBoundaryClosureIssue(
+                            f"j.intent.intent_function.{path}.op",
+                            "functional bounded gather cannot project padding on "
+                            "its gathered or shape-changing axis",
+                            node_ref,
+                        )
+                    )
+                    continue
+                projected.setdefault(access_ref, set()).update(positions)
+            merge_projected(projected, operand_padding[op.operands[1]])
+            padding_positions[op.result] = freeze(projected)
+            continue
         if op.op not in {"reduce", "scan"}:
             if padded_operands:
                 consumer_issues.append(
@@ -3764,9 +3934,19 @@ def _is_reduction_neutral(fn: str, value: Any) -> bool:
 
 
 _CONSUMER_EXTENSION_OPS = frozenset(
-    {"map_unary", "map_binary", "select", "cast", "transpose", "pad"}
+    {
+        "map_unary",
+        "map_binary",
+        "select",
+        "cast",
+        "transpose",
+        "pad",
+        "gather",
+    }
 )
-_CONSUMER_EXTENSION_FNS = frozenset({"sum", "max", "min"})
+_CONSUMER_EXTENSION_FNS = frozenset(
+    {"sum", "prod", "max", "min", "any", "all"}
+)
 
 
 def _same_closed_scalar(left: Any, right: Any) -> bool:
@@ -3805,6 +3985,16 @@ def _is_consumer_identity(fn: str, dtype: str, value: Any) -> bool:
             and isinstance(value, (int, float))
             and float(value) == 0.0
         )
+    if fn == "prod":
+        return value == "ONE" or (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and float(value) == 1.0
+        )
+    if fn == "any":
+        return value is False or value == "false"
+    if fn == "all":
+        return value is True or value == "true"
     if not _floating_dtype(dtype):
         return False
     if fn == "max":
@@ -3995,6 +4185,7 @@ def _consumer_extension_candidates(
 
 
 def _validate_consumer_path(
+    j: Any,
     path_operations: tuple[IntentOp, ...],
     *,
     outside_value: Any,
@@ -4006,6 +4197,23 @@ def _validate_consumer_path(
                 "consumer-domain provenance crosses unsupported J op "
                 f"{operation.op!r}"
             )
+        if operation.op == "gather":
+            matching_bounds = [
+                relation
+                for relation in j.boundary.index_bounds
+                if (
+                    len(operation.operands) == 2
+                    and relation.data == operation.operands[0]
+                    and relation.indices == operation.operands[1]
+                    and relation.axis == operation.attrs.get("axis")
+                    and _node_table(j).get(relation.node_ref) is operation
+                )
+            ]
+            if len(matching_bounds) != 1:
+                raise ValueError(
+                    "gather provenance requires one exact typed index-bounds relation"
+                )
+            continue
         if operation.op != "pad":
             continue
         if (
@@ -4139,7 +4347,8 @@ def _project_consumer_extensions(
             or fn not in _CONSUMER_EXTENSION_FNS
         ):
             raise ValueError(
-                "consumer extension requires a sum/max/min reduce or scan"
+                "consumer extension requires a supported reduce or scan with "
+                "a closed two-sided identity"
             )
         if extension.operand_index >= len(operation.operands):
             raise ValueError(
@@ -4180,6 +4389,7 @@ def _project_consumer_extensions(
                 "access provenance does not unambiguously reach this consumer operand"
             )
         _validate_consumer_path(
+            j,
             selected[1],
             outside_value=extension.outside.value,
             outside_dtype=extension.outside.dtype,
@@ -4539,6 +4749,7 @@ def _project_functional_boundary(
     elaboration = j_elaboration(j)
     parsed_accesses = elaboration.access_by_id
     value_types = elaboration.value_type_by_name
+    predicates_are_domain_total = access_predicates_are_logical_domain_total(j)
     expected_effect = {"load": "read", "store": "write"}
     for access in boundary.accesses:
         if access.kind.value == "update":
@@ -4562,70 +4773,80 @@ def _project_functional_boundary(
         )
         mixed_projection: MixedRadixAccessProjection | None = None
         bounded_gather_projection: IndexBoundedGatherProjection | None = None
-        if coordinates is None:
-            matching_bounds = [
-                item
-                for item in boundary.index_bounds
-                if op is not None
-                and op.op == "gather"
-                and access.kind.value == "load"
-                and item.node_ref == access.node_ref
-                and item.data == access.tensor
-                and bool(op.operands)
-                and op.operands[0] == access.tensor
-                and len(op.operands) > 1
-                and item.indices == op.operands[1]
-            ]
-            if len(matching_bounds) == 1:
-                bound = matching_bounds[0]
-                index_type = value_types.get(bound.indices)
-                if index_type is None:
-                    raise ValueError(
-                        "functional bounded gather index type is unavailable"
-                    )
-                consumer_axes: list[str] = []
-                for extent in index_type.shape:
-                    candidates = [
-                        axis
-                        for axis, domain_extent in domains.items()
-                        if domain_extent == extent and axis not in consumer_axes
-                    ]
-                    if len(candidates) != 1:
-                        raise NotImplementedError(
-                            "functional bounded gather cannot uniquely bind its "
-                            "index shape to logical domain axes"
-                        )
-                    consumer_axes.append(candidates[0])
-                authored_axes = _logical_index_axis_refs(
-                    parsed_accesses[access.access_id].index,
-                    domains,
+        matching_bounds = [
+            item
+            for item in boundary.index_bounds
+            if op is not None
+            and op.op == "gather"
+            and access.kind.value == "load"
+            and item.node_ref == access.node_ref
+            and item.data == access.tensor
+            and bool(op.operands)
+            and op.operands[0] == access.tensor
+            and len(op.operands) > 1
+            and item.indices == op.operands[1]
+        ]
+        if len(matching_bounds) == 1:
+            bound = matching_bounds[0]
+            index_type = value_types.get(bound.indices)
+            if index_type is None:
+                raise ValueError(
+                    "functional bounded gather index type is unavailable"
                 )
-                axes = tuple(dict.fromkeys((*authored_axes, *consumer_axes)))
-                coordinates = tuple(bound.indices for _ in tensor.shape)
-                bounded_gather_projection = IndexBoundedGatherProjection(
-                    access.access_id,
-                    access.node_ref,
-                    access.tensor,
-                    bound.axis,
-                    bound.indices,
-                    tuple(consumer_axes),
+            consumer_axes: list[str] = []
+            for extent in index_type.shape:
+                # A literal singleton dimension is only the broadcast carrier of
+                # the gather index (for example the trailing ``1`` in a diagonal
+                # index shaped ``[x0, 1]``).  It consumes no independent logical
+                # domain axis and therefore must not participate in the otherwise
+                # unique symbolic-extent matching below.
+                if extent == 1:
+                    continue
+                resolved_extent = _resolve_runtime_dimension_bound(
+                    extent, runtime_logical_dimensions
                 )
-                index_bounded_gathers.append(bounded_gather_projection)
-            else:
-                mixed = _mixed_radix_access_projection(
-                    access.access_id,
-                    parsed_accesses[access.access_id].index,
-                    tensor.shape,
-                    domain_products,
-                )
-                if mixed is None:
+                candidates = [
+                    axis
+                    for axis, domain_extent in domains.items()
+                    if domain_extent == resolved_extent and axis not in consumer_axes
+                ]
+                if len(candidates) != 1:
                     raise NotImplementedError(
-                        "functional dense access requires a direct ordered axis "
-                        "vector, a complete product-domain mixed-radix bijection, "
-                        "or one index-bounded J gather"
+                        "functional bounded gather cannot uniquely bind its "
+                        "index shape to logical domain axes"
                     )
-                coordinates, axes, mixed_projection = mixed
-                mixed_radix_accesses.append(mixed_projection)
+                consumer_axes.append(candidates[0])
+            authored_axes = _logical_index_axis_refs(
+                parsed_accesses[access.access_id].index,
+                domains,
+            )
+            axes = tuple(dict.fromkeys((*authored_axes, *consumer_axes)))
+            if coordinates is None:
+                coordinates = tuple(bound.indices for _ in tensor.shape)
+            bounded_gather_projection = IndexBoundedGatherProjection(
+                access.access_id,
+                access.node_ref,
+                access.tensor,
+                bound.axis,
+                bound.indices,
+                tuple(consumer_axes),
+            )
+            index_bounded_gathers.append(bounded_gather_projection)
+        elif coordinates is None:
+            mixed = _mixed_radix_access_projection(
+                access.access_id,
+                parsed_accesses[access.access_id].index,
+                tensor.shape,
+                domain_products,
+            )
+            if mixed is None:
+                raise NotImplementedError(
+                    "functional dense access requires a direct ordered axis "
+                    "vector, a complete product-domain mixed-radix bijection, "
+                    "or one index-bounded J gather"
+                )
+            coordinates, axes, mixed_projection = mixed
+            mixed_radix_accesses.append(mixed_projection)
         else:
             axes = tuple(
                 coordinate for coordinate in coordinates
@@ -4791,6 +5012,7 @@ def _project_functional_boundary(
                 and access.kind.value == "load"
                 and access.fill_value is None
                 and not runtime_predicate_proved
+                and not predicates_are_domain_total
             ):
                 if (
                     bounded_gather_projection is None
@@ -5211,9 +5433,9 @@ def _project_functional_boundary(
             for value_ref, dimension_ref in value_dimension_pairs
         ),
         *(
-            f"dimension_relation:{result}:{op}:{arg}:"
+            f"dimension_relation:{result}:{op}:{arg}:{rhs or ''}:"
             f"{value if value is not None else ''}"
-            for result, op, arg, value in dimension_relation_tuples
+            for result, op, arg, rhs, value in dimension_relation_tuples
         ),
         *(f"scope:{item}" for item in structured_scopes),
         *(f"storage:{item}" for item in structured_storage),
@@ -5264,10 +5486,11 @@ def _project_functional_boundary(
                         "expr": {
                             "op": op,
                             "arg": arg,
+                            **({"rhs": rhs} if rhs is not None else {}),
                             **({"value": value} if value is not None else {}),
                         },
                     }
-                    for result, op, arg, value in dimension_relation_tuples
+                    for result, op, arg, rhs, value in dimension_relation_tuples
                 ],
             }
         ),

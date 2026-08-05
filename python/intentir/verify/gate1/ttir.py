@@ -1808,14 +1808,17 @@ def _bounded_normalize_operations(
     removed_nodes: set[int] = set()
     normalization_constant_nodes: set[int] = set()
 
-    # Rule N0: Triton 3.6 lowers ``tl.extra.libdevice.rsqrt`` to the exact
-    # ``tt.extern_elementwise`` symbols below, while replaying the semantic
-    # ``rsqrt`` rule produces ``math.rsqrt``.  Only the one-input/one-output
-    # signatures whose symbol and result type agree are normalized; all other
-    # extern calls remain distinct hard evidence.
-    extern_rsqrt_types = {
-        "__nv_rsqrtf": "f32",
-        "__nv_rsqrt": "f64",
+    # Rule N0: Triton may spell the same closed unary math operation either as a
+    # typed ``tt.extern_elementwise`` libdevice call or as a ``math.*`` op.
+    # Canonicalize only the explicitly named one-input/one-output symbols whose
+    # input and result types agree; every unknown extern remains hard evidence.
+    extern_unary_ops = {
+        "__nv_rsqrtf": ("math.rsqrt", "f32"),
+        "__nv_rsqrt": ("math.rsqrt", "f64"),
+        "__nv_exp2f": ("math.exp2", "f32"),
+        "__nv_exp2": ("math.exp2", "f64"),
+        "__nv_expf": ("math.exp", "f32"),
+        "__nv_exp": ("math.exp", "f64"),
     }
     for operation in operations:
         if (
@@ -1834,18 +1837,23 @@ def _bounded_normalize_operations(
         )
         if symbol_match is None or signature_match is None:
             continue
-        expected_type = extern_rsqrt_types.get(symbol_match.group("symbol"))
+        canonical = extern_unary_ops.get(symbol_match.group("symbol"))
         input_type = _normalize_space(signature_match.group("input"))
         result_type = _normalize_space(signature_match.group("result"))
+        element_match = re.fullmatch(
+            r"(?:tensor<[^>]*x)?(?P<dtype>f32|f64)>?",
+            input_type,
+        )
         if (
-            expected_type is None
-            or input_type != expected_type
-            or result_type != expected_type
+            canonical is None
+            or input_type != result_type
+            or element_match is None
+            or element_match.group("dtype") != canonical[1]
         ):
             continue
-        operation.name = "math.rsqrt"
+        operation.name = canonical[0]
         operation.local_signature = _normalize_space(
-            f"math.rsqrt % : {result_type}"
+            f"{canonical[0]} % : {result_type}"
         )
         operation.header_operand_count = 1
 
@@ -4295,6 +4303,40 @@ class TTIRParser:
         representation_anchor_exemptions: frozenset[str],
         runtime_values: Mapping[str, int | bool] | None,
     ) -> TTIRFingerprint:
+        raw_argument_aliases = (
+            python_interface.get("ttir_argument_aliases", {})
+            if isinstance(python_interface, Mapping)
+            else {}
+        )
+        if raw_argument_aliases:
+            if not isinstance(raw_argument_aliases, Mapping) or not all(
+                isinstance(key, str) and isinstance(value, str)
+                for key, value in raw_argument_aliases.items()
+            ):
+                raise TTIRParseError("TTIR argument alias map is malformed")
+            missing_aliases = [
+                name.removeprefix("%")
+                for name, _type, _attrs in function.arguments
+                if name.removeprefix("%") not in raw_argument_aliases
+            ]
+            if missing_aliases:
+                raise TTIRParseError(
+                    "TTIR runtime arguments lack J/Harness ABI aliases: "
+                    + ", ".join(missing_aliases)
+                )
+            # Alpha-normalize only the public ABI leaves.  Reachable-call
+            # expansion may already have added region block arguments (for
+            # example a tt.reduce combiner); replacing the whole map here made
+            # those valid leaves unresolved during operand fingerprinting.
+            leaf_labels.update(
+                {
+                    name: (
+                        f"arg[{raw_argument_aliases[name.removeprefix('%')]}]:"
+                        f"{type_text}"
+                    )
+                    for name, type_text, _attrs in function.arguments
+                }
+            )
         node_by_id = {operation.node_id: operation for operation in operations}
         value_if_ids = {
             operation.node_id
@@ -4324,6 +4366,9 @@ class TTIRParser:
             result_to_node,
             terminal_forks,
             anchor_exemptions=representation_anchor_exemptions,
+        )
+        normalize_access_addresses = (
+            "tt.addptr" in representation_anchor_exemptions
         )
         structural_cache: dict[int, str] = {}
         semantic_cache: dict[int, str] = {}
@@ -4479,6 +4524,24 @@ class TTIRParser:
         pointer_cache: dict[
             str, tuple[str, dict[tuple[str, ...], int]] | None
         ] = {}
+        loop_carried_initials: dict[str, str] = {}
+        if normalize_access_addresses:
+            for candidate in operations:
+                if candidate.name != "scf.for":
+                    continue
+                # scf.for operands are lower/upper/step followed by init args;
+                # its entry block arguments are induction variable followed by
+                # the matching carried values.  Under the closed all-access
+                # address quotient, a pointer carry retains its public ABI base
+                # even when the Source advances it and Replay recomputes it.
+                for slot, block_argument in enumerate(
+                    candidate.region_block_args[1:]
+                ):
+                    operand_index = 3 + slot
+                    if operand_index < len(candidate.operands):
+                        loop_carried_initials[block_argument] = (
+                            candidate.operands[operand_index]
+                        )
 
         def pointer_form(
             name: str,
@@ -4490,9 +4553,14 @@ class TTIRParser:
             if name in active:
                 raise TTIRParseError("cyclic pointer representation expression")
             if name in leaf_labels:
-                result = (leaf_labels[name], {})
+                initial = loop_carried_initials.get(name)
+                result = (
+                    pointer_form(initial, active | {name})
+                    if initial is not None
+                    else (leaf_labels[name], {})
+                )
                 pointer_cache[name] = result
-                return result[0], dict(result[1])
+                return None if result is None else (result[0], dict(result[1]))
             node_id = result_to_node.get(name)
             if node_id is None:
                 pointer_cache[name] = None
@@ -4509,6 +4577,13 @@ class TTIRParser:
                 "tt.splat", "tt.broadcast", "tt.expand_dims", "tt.reshape",
             } and len(operation.operands) == 1:
                 result = pointer_form(operation.operands[0], next_active)
+            elif operation.name == "scf.for" and name in operation.result_names:
+                slot = operation.result_names.index(name)
+                operand_index = 3 + slot
+                if operand_index < len(operation.operands):
+                    result = pointer_form(
+                        operation.operands[operand_index], next_active
+                    )
             pointer_cache[name] = (
                 None if result is None else (result[0], dict(result[1]))
             )
@@ -4637,6 +4712,21 @@ class TTIRParser:
         ) -> list[str]:
             names = [*operation.operands, *operation.region_results]
             refs = [operand_ref(name, semantic=semantic) for name in names]
+            if (
+                normalize_access_addresses
+                and names
+                and (
+                    operation.name in {"tt.load", "tt.store"}
+                    or operation.name.startswith("tt.atomic")
+                )
+            ):
+                # A closed all-access ``address_recomputed``/``pointer_advanced``
+                # witness authorizes only the address-form quotient.  Preserve
+                # the public pointer base (so swapping logical tensors remains
+                # hard), while dropping the particular addptr/polynomial tree.
+                pointer = pointer_form(names[0])
+                if pointer is not None:
+                    refs[0] = f"address-base[{pointer[0]}]"
             if operation.cmp_flipped and len(refs) >= 2:
                 refs[0], refs[1] = refs[1], refs[0]
             if (
@@ -5515,7 +5605,7 @@ class TTIRParser:
             function, operations, result_to_node, leaf_labels, node_by_id
         )
         interface_arguments: list[InterfaceArgument] = []
-        for position, (_, type_text, attrs) in enumerate(function.arguments):
+        for position, (name, type_text, attrs) in enumerate(function.arguments):
             dtype = _pointer_dtype(type_text)
             if dtype is not None:
                 kind = "pointer"
@@ -5533,6 +5623,13 @@ class TTIRParser:
                     rank = 0
                     dtype = type_text
                 argument_access = "value"
+                # The exact Python ABI is checked before observation.  At TTIR,
+                # Triton may specialize or retain scalar carriers differently
+                # for equivalent block-pointer and direct-address forms.  Their
+                # compiled-function signature presence is therefore not a
+                # J/C-owned structural atom; semantic scalar use remains visible
+                # through the operation/dataflow fingerprint below.
+                continue
             interface_arguments.append(
                 InterfaceArgument(
                     position,

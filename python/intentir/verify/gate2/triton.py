@@ -37,6 +37,7 @@ class TritonArgument:
     shape: tuple[int, ...] | None = None
     value: int | float | bool | None = None
     output_key: str | None = None
+    strides: tuple[int, ...] | None = None
 
     def __post_init__(self) -> None:
         if not self.name.isidentifier():
@@ -50,6 +51,13 @@ class TritonArgument:
                 raise ValueError("output argument requires shape and dtype")
             if not self.output_key:
                 object.__setattr__(self, "output_key", self.name)
+        if self.strides is not None:
+            strides = tuple(int(value) for value in self.strides)
+            if self.shape is not None and len(strides) != len(self.shape):
+                raise ValueError("Triton argument strides must match its rank")
+            if any(value < 0 for value in strides):
+                raise ValueError("negative Triton strides require a storage offset")
+            object.__setattr__(self, "strides", strides)
         if self.role is ArgumentRole.SCALAR and self.value_key is None and self.value is None:
             raise ValueError("scalar argument requires value_key or fixed value")
         if self.role is ArgumentRole.NONE and any(
@@ -60,9 +68,63 @@ class TritonArgument:
                 self.shape,
                 self.value,
                 self.output_key,
+                self.strides,
             )
         ):
             raise ValueError("none argument forbids value/dtype/shape/output fields")
+
+
+def _storage_size(shape: tuple[int, ...], strides: tuple[int, ...]) -> int:
+    if len(shape) != len(strides):
+        raise ValueError("physical tensor shape/stride ranks differ")
+    if not shape:
+        return 1
+    return 1 + sum((extent - 1) * stride for extent, stride in zip(shape, strides, strict=True))
+
+
+def _physical_offsets(shape: tuple[int, ...], strides: tuple[int, ...]) -> np.ndarray:
+    if not shape:
+        return np.asarray(0, dtype=np.int64)
+    offsets = np.zeros(shape, dtype=np.int64)
+    for axis, (extent, stride) in enumerate(zip(shape, strides, strict=True)):
+        axis_values = np.arange(extent, dtype=np.int64)
+        axis_values = axis_values.reshape((1,) * axis + (extent,) + (1,) * (len(shape) - axis - 1))
+        offsets += axis_values * stride
+    return offsets
+
+
+def _input_tensor(
+    torch: Any,
+    raw: np.ndarray,
+    *,
+    dtype: Any,
+    device: str,
+    strides: tuple[int, ...] | None,
+) -> Any:
+    if strides is None:
+        return torch.as_tensor(raw, dtype=dtype, device=device)
+    shape = tuple(int(value) for value in raw.shape)
+    offsets = _physical_offsets(shape, strides)
+    storage = np.zeros(_storage_size(shape, strides), dtype=raw.dtype)
+    storage[offsets.reshape(-1)] = raw.reshape(-1)
+    if not np.array_equal(storage[offsets], raw, equal_nan=True):
+        raise ValueError("logical input values conflict under captured overlapping strides")
+    base = torch.as_tensor(storage, dtype=dtype, device=device)
+    return torch.as_strided(base, size=shape, stride=strides)
+
+
+def _output_tensor(
+    torch: Any,
+    *,
+    shape: tuple[int, ...],
+    dtype: Any,
+    device: str,
+    strides: tuple[int, ...] | None,
+) -> Any:
+    if strides is None:
+        return torch.empty(shape, dtype=dtype, device=device)
+    base = torch.empty(_storage_size(shape, strides), dtype=dtype, device=device)
+    return torch.as_strided(base, size=shape, stride=strides)
 
 
 @dataclass(frozen=True)
@@ -182,14 +244,10 @@ def _launch_by_name(
         raise ValueError(
             "missing Triton replay interface arguments: " + ", ".join(missing)
         )
-    expected_runtime_order = [
-        name for name in declared_names if name in runtime
-    ]
-    if list(runtime) != expected_runtime_order:
-        raise ValueError(
-            "runtime argument order differs from the Triton replay ABI: "
-            f"{list(runtime)!r} != {expected_runtime_order!r}"
-        )
+    # Triton may canonicalize an interleaved Python signature by placing
+    # runtime arguments before constexpr arguments.  Launches below are fully
+    # name-keyed, so dictionary/declaration order is not part of the ABI.  The
+    # completeness, overlap, and unknown-name checks above remain authoritative.
     launch_kwargs = {**runtime, **frozen_schedule}
     kernel[grid](**launch_kwargs)
 
@@ -234,15 +292,24 @@ class TritonRunner:
                             continue
                         dtype = _torch_dtype(torch, argument.dtype or "float32")
                         if argument.role is ArgumentRole.OUTPUT:
-                            tensor = torch.empty(
-                                tuple(argument.shape or ()), dtype=dtype, device=spec.device
+                            tensor = _output_tensor(
+                                torch,
+                                shape=tuple(argument.shape or ()),
+                                dtype=dtype,
+                                device=spec.device,
+                                strides=argument.strides,
                             )
                             outputs[argument.output_key or argument.name] = tensor
                         else:
                             raw = np.asarray(values[argument.value_key])
-                            tensor = torch.as_tensor(raw, dtype=dtype, device=spec.device)
+                            tensor = _input_tensor(
+                                torch,
+                                raw,
+                                dtype=dtype,
+                                device=spec.device,
+                                strides=argument.strides,
+                            )
                             if argument.role is ArgumentRole.INOUT:
-                                tensor = tensor.clone()
                                 outputs[argument.output_key or argument.name] = tensor
                         launch_args[argument.name] = tensor
                     _launch_by_name(

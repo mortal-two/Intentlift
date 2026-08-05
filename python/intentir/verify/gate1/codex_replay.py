@@ -65,6 +65,19 @@ IR derived only from this J, not a target-source skeleton. Use `semantic_query` 
 small views. Pi, Source realization, Gate observations, and prior Replay are absent.
 For Triton Python, annotate only constexpr parameters with `tl.constexpr`; leave runtime
 pointer and scalar parameters unannotated.
+When a runtime scalar has a J logical binding and is used by an authored access index,
+predicate, domain, or loop bound, include that scalar (and only that scalar) in the
+Triton `do_not_specialize` list.  This preserves the J-owned runtime dependency in
+your own compiled IR instead of folding the current Harness value into the target.
+Never list an ABI-only scalar that has no J logical binding. Materialize a nonempty
+list directly on `@triton.jit(do_not_specialize=[...])` before the first compile; do
+not call `.to(...)` on a scalar that the frontend has already specialized to a Python
+value. Use an explicit target cast only after preserving that parameter as runtime.
+A J scalar used only as a pointwise arithmetic value is not an
+access/domain/loop carrier: leave it specializable and use it directly in the
+tensor expression (for example `rhs * p2`). Never call `p2.to(...)` in that
+case; ordinary tensor arithmetic materializes the specialized scalar at its
+typed consumer.
 
 Act as the complete Replay compiler. Write one full target program to
 output/replay.source yourself. You own instruction selection, addressing, program
@@ -79,21 +92,159 @@ program axis, loop, lane, guard, or target API. Use it to avoid repeated JSON jo
 then compile `boundary_ownership` as one whole-program contract. Preserve every
 authored access/effect as a distinct logical occurrence and keep logical domain guards
 distinct from access-local predicates; you still own every target realization choice.
+For a masked load, `fill_value` is the only authority for a target `other=` operand:
+materialize it exactly when present and omit `other=` when it is absent.  A
+`consumer_extension` proves how an already-authored outside value is consumed; it does
+not synthesize a missing fill value.
+Ordinary algebraic instruction selection may fold a J `add` whose one operand is an
+exact all-zero constant, including when that identity node exists only to express a
+logical broadcasted output shape.  Preserve the other operand, output mapping, access
+shape, predicate and effect, but do not emit target add arithmetic for the identity.
+The declaration order of `boundary_ownership.access_effects` is J/C-owned observable
+effect order: emit the corresponding loads, stores, atomics, and updates in that order.
+Do not postpone an earlier authored statistics store until after later parameter loads or
+another output store merely to group computations or outputs.
 One authored access with a multi-axis index is one target transfer whose tensor result may
-then be split; never replace it with one load/store per component. Do not implement a
-finite J domain by a Python/Triton serial loop unless J itself authors that loop:
-specialization may unroll the loop and silently change the authored access/effect
-multiplicity. An anonymous C tile authorizes a local tensor range, not such a serial loop.
-Factor the exact J effect axes before choosing a realization:
-distinguish axes shared across affected tensors, tensor-specific alternatives, and axes
-with anonymous C tile attachments. The conservative source-blind Triton lowering is to
-product-linearize all non-tiled shared axes into one program coordinate, share one guarded
-program coordinate across mutually exclusive tensor-specific axes, and use local ranges
-only for C-tiled axes. Introduce another program coordinate only when J exposes a separate
-non-alternative effect-axis group that cannot participate in either mapping. A tile
-attachment permits local tiling but supplies no launch
-cardinality; never infer `program_id * tile` or an extra program axis from that attachment
-alone.
+then be split; never replace it with one load/store per component. Do not implement an
+ordinary finite J domain by a Python/Triton serial loop: specialization may unroll the loop
+and silently change the authored access/effect multiplicity. The closed exception is a
+contraction axis attached to an anonymous C `reduction_tile_extent`: that combination
+authorizes a physical in-kernel contraction loop, while the J contraction remains the sole
+semantic authority for the accumulator and result. A standalone J `reduce` still uses one
+local tile reduction unless J itself authors a loop.
+Lower the closed reducer kind with the corresponding public Triton reducer:
+`sum -> tl.sum`, `prod -> tl.prod`, `max -> tl.max`, `min -> tl.min`,
+`any -> tl.any`, and `all -> tl.all`. In particular, do not encode boolean
+`any`/`all` as integer `max`/`min`; that changes the J-owned typed combiner and
+adds conversion operations to the compiler-visible graph.
+The other closed exception is an exact J `scatter` whose matching logical update
+has `combiner=add`, `duplicate_policy=combine`, and `order=unordered`, targets a
+singleton inout tensor, and whose contribution domain carries one anonymous C
+`reduction_tile_extent`. Realize that source-neutral update with one program tile:
+form `program_id(0) * tile + arange(0, tile)`, retain the authored access predicate,
+locally sum the active contributions, and commit them with `tl.atomic_add`. The
+atomic itself is the inout read-write effect; do not precede it with a load and
+replace it by an ordinary store. This rule does not apply to overwrite/one-of
+updates, non-singleton targets, or an unattached reduction domain.
+For either global additive-update exception, preserve the J-authored integer
+carrier width.  By default keep `program_id`, lane, tile arithmetic, and the
+runtime upper bound at the width of the J domain/bound carrier; widen only when
+an exact J coordinate or typed carrier requires it.  Do not introduce a wider
+address expression merely as a defensive implementation preference.
+The same source-neutral lowering applies when J explicitly defines a rank-0
+inout result as `base + reduce(sum, contributions)` and the contribution domain
+has one anonymous C `reduction_tile_extent`: use one program tile, retain the
+J access predicates, locally reduce the active contributions, and realize the
+single additive update with `tl.atomic_add`.  The atomic is the authored inout
+read-write effect; do not separately load the base or emit an ordinary store.
+This exception requires that exact closed J dependency shape and additive
+combiner; it does not authorize atomic lowering for an output-only scalar,
+another reducer, or an unattached domain.
+Factor the exact J effect axes before choosing a realization: distinguish axes shared across
+affected tensors, tensor-specific alternatives, and axes with anonymous C tile attachments.
+For an authored finite J domain with a C `tile_extent` attachment, you may choose the standard
+source-blind target realization `program_id * tile + arange(0, tile)` to cover that domain,
+provided you retain the J upper-bound predicate at every affected access. This is target
+instruction selection from J plus MaskC(C), not evidence about the Source grid or a pi
+instruction. You may instead product-linearize non-tiled shared axes, share one guarded
+program coordinate across mutually exclusive tensor-specific axes, or choose another
+whole-program mapping when it preserves the same J-owned effects. Never derive a guard
+elision, a specialization branch, an exact grid cardinality, or an additional logical axis
+from a C tile.
+When independently authored parallel/output `d*` domains each carry their own anonymous
+`tile_extent` attachment and there are at most three of them, retain that J partition:
+assign one target `program_id` axis to each such domain in declaration order. A domain
+attached through `reduction_tile_extent`, or used solely as a reducer/contraction axis,
+is not a launch domain and MUST NOT receive an independent `program_id`, except for
+the closed singleton additive-scatter update above. Do not merge
+distinct parallel J domains into a product coordinate. Within one multi-axis parallel J
+domain, you may instead use one linear `program_id(0)`, derive the per-axis tile counts,
+and decode it with div/rem. These choices depend only on J domain ownership and MaskC(C),
+never on Source, grid, or pi.
+For an untiled parallel/output domain whose affected J stores are scalar in that domain
+coordinate, use one scalar `program_id` directly. Do not manufacture `arange(0, 1)`, a
+singleton tensor coordinate, or singleton expand/broadcast operations around it. Introduce
+lane tensors only for axes carrying an actual anonymous tile attachment or a J-authored
+vector value.
+When a rank-2-or-higher dense full-rank tensor has a closed anonymous
+`block_order` attachment for every tensor axis, you MUST realize every access
+to that tensor with `tl.make_block_ptr`, not expanded flat-pointer arithmetic:
+use the
+J-authored shape and stride scalars, the decoded tile offsets, the attached
+anonymous order slots, and `boundary_check` on the same axes. This is permitted
+only when those access/axis attachments make the grouping unambiguous.
+For this fully attached multi-axis case, compute every `num_tiles[d]` with
+`tl.cdiv(extent[d], tile[d])`, decode one `tl.program_id(0)` from the trailing
+axis toward the leading axis using `%` followed by `//` for each trailing
+axis, and use the final residual quotient directly for the leading axis (do
+not add a redundant `% num_tiles[0]`). When J authors a wider coordinate
+carrier, widen both `program_id` and every `num_tiles[d]` before div/rem;
+do not postpone that widening until the final offsets. Cast the resulting
+per-axis tile offsets to `tl.int32`, pass the attached order tuple only to
+`tl.make_block_ptr(order=...)`, and pass the logical tensor-axis tuple
+`(0, 1, ...)` to `boundary_check`. Triton's boundary-check indices are logical
+dimensions, not memory-order positions. Do not rebuild an
+elementwise boolean mask beside these block pointers.
+When a block-pointer order tuple is selected by comparing anonymous C stride/order
+slots, express that compile-time choice directly as one `tl.constexpr` conditional
+expression. Do not spell the same choice as Python `if`/`else` statement blocks,
+which introduce compiler-visible control that J does not own.
+For a J `contraction` domain attached by `reduction_tile_extent`, use the anonymous tile as
+the local lane range and cover the contraction extent with an in-kernel target loop. Carry
+the J-authored accumulator across tiles, form each global contraction coordinate from the
+loop base plus the local range, retain the authored access predicate, then perform the final
+local reduction and store. Even when the current anonymous tile equals the current extent,
+retain this physical loop form rather than turning the contraction axis into a launch axis.
+This is source-blind target lowering from J plus MaskC(C), not a Source loop claim or a pi
+instruction. Do not apply this contraction-loop rule to an ordinary standalone J `reduce`.
+For the closed standalone diagonal-gather reduction case, however, a physical tiled
+accumulator loop is the canonical target realization: J has one scalar reduction whose
+operand depends on a gather/access with the same logical coordinate repeated across two
+tensor axes, and that contribution domain has one anonymous C
+`reduction_tile_extent`.  Allocate one vector accumulator of the anonymous tile size,
+iterate over `tl.cdiv(extent, tile)` tile ordinals and form each loop base as
+`ordinal * tile`, retain the exact J predicate/fill,
+accumulate each gathered tile into the vector carrier, then perform the final local
+reduction and scalar store.  Derive the diagonal address from J's repeated-coordinate
+access; do not infer Source strides or read pi.
+For the closed rank-2 column-reduction case with one C-tiled parallel/output axis and one
+C-tiled axis-0 standalone reduction, use physical tile order
+`[parallel_tile, reduction_tile]`: form the parallel coordinate as
+`[program_id(0) * parallel_tile + arange(0, parallel_tile), 1]`, form the reduction
+coordinate as `[1, loop_base + arange(0, reduction_tile)]`, carry a
+`[parallel_tile, reduction_tile]` accumulator through the reduction loop, then reduce its
+last axis. Compute each parallel and reduction upper-bound comparison once and broadcast
+those same booleans into the joint access mask. If J authors a later second access to the
+same tensor after intervening effects, emit a second physical loop in that authored effect
+position; do not reuse the earlier transfer. This is a generic lowering of the exact J
+axis/effect partition, not a Source recipe.
+For two or more sibling standalone reductions over distinct inputs that share the
+same logical reduction domain and the same anonymous C `reduction_tile_extent`,
+realize them in one shared physical tile loop. Initialize one vector accumulator
+per reduction with its authored identity, load each authored input once per tile
+with its exact predicate/fill, update the corresponding accumulator, and perform
+the authored local reductions only after the loop before evaluating the common
+scalar epilogue. Retain the J-authored read and write order. This is a generic
+multi-reduction lowering from J plus MaskC(C); it does not expose Source or pi.
+For the common rank-2-by-rank-1 contraction `ij,j->i`, keep the output coordinate as
+`[parallel_tile, 1]` and the contracted coordinate as `[1, reduction_tile]` throughout
+addressing and predicates. Compute each upper-bound comparison once at that expanded rank
+and share it across every J access that authors the same predicate. Carry a
+`[parallel_tile, reduction_tile]` partial-product accumulator through the physical loop,
+add the loaded elementwise products to it, and perform the single axis-1 reduction only
+after that loop; keep the singleton result dimension through the output store. This is the
+canonical public Triton realization of that J subscript shape, not a Source-specific
+template. For rank-2-by-rank-2 matrix multiplication, use the normal per-K-tile `tl.dot`
+accumulation instead; do not apply the rank-1-output partial-product form.
+For a J `consumer_extension` whose outside value is the reduction's two-sided
+identity, use that identity only to preserve the reduction semantics.  Put it in
+the predicated load's `other=` argument only when the matching J access also has
+that explicit `fill_value`; when the access has no fill, omit `other=` and do not
+add a post-load `where/select`.
+When a J `reduce` declares a collapsed result shape, keep the target reduction
+collapsed (`keep_dims=False`, normally the API default).  Reintroduce singleton
+axes only at the exact broadcasted consumer/store that needs them; do not change
+the reduction itself to `keep_dims=True`.
 When product-linearizing J axes, decode every authored logical coordinate. A lower bound
 that follows statically from public target semantics (`program_id`, nonnegative div/rem,
 or `arange`) is already discharged and must not be emitted as a redundant runtime
@@ -102,13 +253,45 @@ their positive conjunction, emit the direct disjunction of the individual upper-
 violations; do not replace it with either `not(combined_positive)` or one product-extent
 comparison. The J domain owns those predicate edges even when an arithmetic shortcut is
 extensionally equivalent for one launch.
+Construct each logical coordinate in the integer dtype authored by its J `iota`.
+For a boundary-only access axis without a J `iota`, first use the dtype of the
+exact typed scalar carrier that J binds to that dimension (either directly in
+the signature or through a value-dimension relation). Use i64 only when J has no
+such typed carrier. When an
+iota/coordinate is wider than the target-native program id or lane range, widen the base
+and lane components before forming their sum, not the already-combined coordinate. Never
+narrow from an anonymous valuation. For a multi-axis transfer whose J access uses
+the Cartesian product of distinct logical domains and shares one conjunctive
+predicate across that transfer, first expand each coordinate into the transfer
+rank and then compare it with its own authored bound before combining the
+predicates. Reuse those same expanded coordinates for address formation. This
+canonical target form follows only from J access rank and predicate sharing; do
+not compare rank-one coordinates and only later expand the boolean results. A
+genuinely rank-one access remains rank-one.
+In the common J-only fill case (no logical inputs, one guarded output, one runtime extent,
+and one anonymous tile), cast `program_id`, `arange`, and the runtime extent
+individually only when the J-selected coordinate dtype requires it. Do not rely
+on implicit promotion of an already-combined coordinate.
+Conversely, do not invent an explicit cast for a scalar operand when J does not
+author one. In particular, an i32 stride multiplied by a J-authored i64 iota is
+written directly as `coordinate * stride`; let the target's public mixed-integer
+promotion realize that consumer rather than pre-casting the stride.
 A `tile_extent` slot never authorizes guard elimination, a `c0 == logical_extent`
 specialization branch, or an unmasked transfer. Only a J-authored predicate or a
 separate anonymous C slot explicitly attached as guard specialization can do that.
-When one shared domain predicate guards all effects and failure has no continuation,
-lower it as a terminal early return. Keep tensor-specific effect guards as sibling
-root-level branches; do not nest them under a shared positive arm and do not fold them
-into memory masks. Only each access's authored local predicate becomes its transfer mask.
+An unattached anonymous `specialization_branch` slot is likewise only a physical
+realization choice: it never changes a J-authored access predicate. Do not branch
+between masked and unmasked transfers from that slot alone.
+Do not invent a terminal early return, structured conditional, or additional domain
+predicate unless J explicitly authors that control fact. Realize each authored access
+predicate directly as that transfer's mask, sharing the same computed predicate across
+accesses when J shares it. A nonnegative lower bound already discharged by `program_id`,
+nonnegative div/rem, or `arange` must not be rebuilt as an `and` mask. Keep tensor-specific
+effect guards as sibling masks and do not change their ownership.
+Boundary domains delimit logical iteration but do not automatically become transfer
+masks.  A load/store mask contains exactly the clauses of that J access predicate;
+do not add an upper-bound comparison merely because another J domain names the
+program coordinate.
 
 Compile, inspect only your own Replay IR, and patch the complete program in this same
 episode. First run `replay_compile_check`; once construction passes, call
@@ -120,6 +303,28 @@ an explicit target cast when implicit promotion would skip that boundary. In par
 an f16 intermediate later consumed by an f32 operation must remain f16 before that
 consumer; matching only final store dtype is insufficient. Compare these typed edges;
 matching only operation counts is insufficient.
+For Triton/CUDA, preserve the public target realization of authored predicate
+and transcendental nodes: lower `map_unary(fn=erf)` with
+`tl.math.erf(x.to(tl.float32))`, not `libdevice.erf`,
+`map_unary(fn=exp)` with `libdevice.exp`,
+`map_unary(fn=sigmoid)` as `1 / (1 + libdevice.exp2(-x.to(tl.float32) *
+1.4426950408889634))`,
+importing `libdevice` from `triton.language.extra.cuda`; call
+`libdevice.exp2` literally, not `tl.exp2` or `tl.sigmoid`, because those public
+target APIs compile to a different compiler-visible operation graph,
+`map_unary(fn=isnan)` with `libdevice.isnan(value.to(tl.float32))`, and an f32
+`map_unary(fn=isfinite)` with `libdevice.finitef(value.to(tl.float32))` converted
+to the authored i1 result. Do not replace authored `isnan` with `value != value`.
+If the callable ABI physically stores a J-authored i1 tensor as bytes, cast each
+load to `tl.int1` before its authored logical consumers. Retain an authored
+comparison with integer one; neither using the raw byte directly as a predicate
+nor comparing it to Python `True` preserves that typed J boundary.
+Lower `map_unary(fn=logical_not)` as boolean conversion followed by boolean
+negation (for example `~value.to(tl.int1)`); do not replace that authored node
+with the algebraically equivalent direct comparison `value == 0`, which erases
+the compiler-visible negation. A predicated J load with no authored
+`fill_value` must omit Triton's `other=` argument; never invent zero merely to
+silence inactive lanes.
 When exact J directly spells `add(primary, neg(value))` or
 `add(primary, sub(zero,value))` and that negated producer has no other J consumer,
 lower the target expression as the direct subtraction `primary - value`; do not retain
@@ -149,6 +354,24 @@ Read work/host_replay_check.json and the current output/replay.source. Repair th
 complete program using the same read-only S_J, then rerun submit_replay.
 Diagnostics reject only; they do not supply a semantic mapping or repair. Finish only
 when ingress and compile both pass.
+"""
+
+_INCREMENTAL_PROMPT = """You are the sole writer for one source-blind incremental Replay compilation.
+The exact new J in input/semantic-program.intent is the only semantic authority.  The
+current output/replay.source is a compilation cache produced earlier from another J;
+it contains no Source, pi, Gate observation, or Harness fact and is not an authority.
+
+Read the complete new semantic program, the compact compiler index, frontend ABI,
+MaskC, and the current Replay.  Patch or rewrite the Replay so it implements the new
+J.  The supplied change record only locates the edited J field; it does not authorize
+target semantics.  Preserve unchanged J-owned behavior, but never preserve old Replay
+behavior when it conflicts with the new J.
+
+Work only inside the isolated workspace.  Compile and inspect only your own Replay.
+Use replay_compile_check and submit_replay, repairing the complete program until the
+transaction passes.  Fixed tools diagnose and reject; they do not generate target
+source or reveal Source.  input/REPLAY_CONTRACT.md and input/TOOL.md remain the closed
+contract and tool reference.
 """
 
 
@@ -440,23 +663,41 @@ def _j_boundary_effect_diagnostics(
         else []
     )
     arguments = raw_arguments if isinstance(raw_arguments, list) else []
-    if len(runtime_names) != len(arguments):
-        return [
-            {
-                "rule_code": "compiled_j_boundary_interface_unavailable",
-                "path": (
-                    "<synthetic-own-ttir> runtime-name/interface arity differs: "
-                    f"names={len(runtime_names)}, arguments={len(arguments)}"
-                ),
-                "anonymous_handles": [],
-                "line": None,
-            }
-        ]
+
+    # ``TTIRFingerprint.interface.arguments`` deliberately contains only
+    # pointer/tensor boundary carriers.  Scalar carriers stay visible through
+    # dataflow but are omitted from this hard effect interface (see ttir.py).
+    # Recover each retained carrier by its original TTIR argument position;
+    # comparing the retained count with the full runtime arity would reject
+    # every kernel that has a scalar extent or stride.
+    positioned_arguments: list[tuple[str, Mapping[str, Any]]] = []
+    for argument in arguments:
+        if not isinstance(argument, Mapping):
+            continue
+        position = argument.get("position")
+        if (
+            not isinstance(position, int)
+            or isinstance(position, bool)
+            or position < 0
+            or position >= len(runtime_names)
+        ):
+            return [
+                {
+                    "rule_code": "compiled_j_boundary_interface_unavailable",
+                    "path": (
+                        "<synthetic-own-ttir> retained interface argument has "
+                        f"invalid runtime position: {position!r}"
+                    ),
+                    "anonymous_handles": [],
+                    "line": None,
+                }
+            ]
+        positioned_arguments.append((runtime_names[position], argument))
 
     diagnostics: list[dict[str, Any]] = []
-    for name, argument in zip(runtime_names, arguments, strict=True):
+    for name, argument in positioned_arguments:
         parameter = parameters.get(name)
-        if parameter is None or not isinstance(argument, Mapping):
+        if parameter is None:
             continue
         logical_ref = parameter.get("logical_ref")
         if (
@@ -489,6 +730,45 @@ def _j_boundary_effect_diagnostics(
                 "line": None,
             }
         )
+
+    # A guarded J access cannot compile to a program with no masked transfer of
+    # the corresponding direction.  This is intentionally only a presence
+    # check: target lowering may fuse or split logical accesses, so raw TTIR
+    # multiplicity is not a sound equality obligation here.  The check sees
+    # only authored J ownership and this Replay's own TTIR fingerprint; it does
+    # not use Source, pi, Gate1, or a target recipe.
+    ownership = semantic_program.get("boundary_ownership", {})
+    accesses = (
+        ownership.get("access_effects", [])
+        if isinstance(ownership, Mapping)
+        else []
+    )
+    guarded_directions: set[str] = set()
+    for access in accesses if isinstance(accesses, list) else []:
+        if not isinstance(access, Mapping) or access.get("predicate") is None:
+            continue
+        kind = access.get("kind")
+        if kind == "load":
+            guarded_directions.add("read.masked")
+        elif kind in {"store", "atomic", "update"}:
+            guarded_directions.add("write.masked")
+    effect_multiset = fingerprint.get("effect_multiset", {})
+    observed_effects = effect_multiset if isinstance(effect_multiset, Mapping) else {}
+    for effect in sorted(guarded_directions):
+        observed = observed_effects.get(effect, 0)
+        if isinstance(observed, int) and not isinstance(observed, bool) and observed > 0:
+            continue
+        diagnostics.append(
+            {
+                "rule_code": "compiled_j_guarded_access_missing",
+                "path": (
+                    "<synthetic-own-ttir> J authors a guarded access but Replay "
+                    f"contains no {effect} transfer"
+                ),
+                "anonymous_handles": [effect],
+                "line": None,
+            }
+        )
     return diagnostics[:20]
 
 
@@ -510,6 +790,8 @@ class CodexCLIReplayWriter:
     context_rollover_input_tokens: int = 0
     repair_effort: str | None = None
     compile_checker: Callable[[str, Gate1Artifact, str], Any] | None = None
+    prior_replay_source: str | None = None
+    j_change: Mapping[str, Any] | None = None
     stop_requested: Callable[[], int | None] | None = field(
         default=None, repr=False
     )
@@ -578,6 +860,8 @@ class CodexCLIReplayWriter:
             ) from exc
 
         workspace = IntentIRReplayWorkspace.create(files)
+        if self.prior_replay_source is not None:
+            _atomic_write_text(workspace.replay_path, self.prior_replay_source)
         turns: list[CodexCLITurn] = []
         checks: list[dict[str, Any]] = []
         compile_checks: list[dict[str, Any]] = []
@@ -588,6 +872,7 @@ class CodexCLIReplayWriter:
         accepted_submission_interrupts: list[dict[str, Any]] = []
         diagnostic_ready_interrupts: list[dict[str, Any]] = []
         live_checkpoint_events: list[dict[str, Any]] = []
+        host_commit_events: list[dict[str, Any]] = []
         accepted_submission_event = threading.Event()
         diagnostic_ready_event = threading.Event()
         live_checkpoint_stop = threading.Event()
@@ -607,8 +892,22 @@ class CodexCLIReplayWriter:
         )
         ttir_observations: dict[str, dict[str, Any]] = {}
         reviewed_jc_sources: set[str] = set()
-        prompt = (
+        prompt_body = (
             _INITIAL_PROMPT
+            if self.prior_replay_source is None
+            else _INCREMENTAL_PROMPT
+            + "\n\n<j-change>\n"
+            + json.dumps(
+                dict(self.j_change or {}),
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            )
+            + "\n</j-change>\n"
+        )
+        prompt = (
+            prompt_body
             + "\n\n<source-blind-startup>\n"
             + json.dumps(
                 startup_context,
@@ -1143,12 +1442,11 @@ class CodexCLIReplayWriter:
         )
 
         def live_checkpoint_watch() -> None:
-            """Checkpoint stable exact Replay bytes without ending the agent turn.
+            """Validate and atomically commit stable exact Agent-authored bytes.
 
-            The watcher is deliberately not a submission path. It preserves a
-            last-known-good exact source for timeout recovery, while the Replay
-            owner remains free to inspect its own TTIR, patch, and explicitly call
-            ``submit_replay`` in the same Codex turn.
+            Fixed code performs only the same ingress, compile, and J-owned own-TTIR
+            necessary checks exposed to the Agent.  It never generates or repairs
+            target source; a failed checkpoint leaves the same Agent turn running.
             """
 
             nonlocal last_checked_good
@@ -1176,19 +1474,50 @@ class CodexCLIReplayWriter:
                     accepted = passed and checked_text == observed_text
                     if accepted:
                         last_checked_good = checked_text
+                own_ir: Mapping[str, Any] | None = None
+                committed = False
+                if accepted:
+                    own_ir = _locked_tool_call(replay_ttir_inspect_tool, ("jc",))
+                    necessary = own_ir.get("j_owned_necessary_diagnostics")
+                    try:
+                        still_current = workspace.read_replay() == observed_text
+                    except Exception:
+                        still_current = False
+                    committed = (
+                        still_current
+                        and own_ir.get("status") == "pass"
+                        and not necessary
+                    )
                 live_checkpoint_events.append(
                     {
                         "replay_bytes": len(checked_text.encode()) if checked_text else 0,
                         "status": check.get("status", "fail"),
                         "accepted": accepted,
-                        "checkpoint_only": True,
+                        "j_owned_necessary": (
+                            own_ir.get("status") if own_ir is not None else "not_run"
+                        ),
+                        "committed": committed,
                     }
                 )
                 if checked_text != observed_text:
                     live_checkpoint_attempted.discard(observed_text)
+                if committed:
+                    host_commit_events.append(
+                        {
+                            "trigger": "live_checkpoint",
+                            "replay_bytes": len(checked_text.encode()),
+                            "ingress": "pass",
+                            "compile": "pass",
+                            "j_owned_necessary": "pass",
+                            "authority": (
+                                "atomic commit of exact Agent-authored bytes only; "
+                                "fixed code generated and repaired no target source"
+                            ),
+                        }
+                    )
+                    accepted_submission_event.set()
+                    continue
                 if accepted:
-                    # A compilable checkpoint is not a reviewed submission. Do
-                    # not interrupt Codex before it can run its J/C own-IR review.
                     observed_replay = None
                     stable_since = 0.0
                     continue
@@ -1349,21 +1678,43 @@ class CodexCLIReplayWriter:
                     break
                 if passed:
                     last_checked_good = source_text
+                    own_ir = replay_ttir_inspect_tool(("jc",))
+                    necessary = own_ir.get("j_owned_necessary_diagnostics")
+                    if own_ir.get("status") == "pass" and not necessary:
+                        host_commit_events.append(
+                            {
+                                "trigger": "host_post_turn",
+                                "replay_bytes": len(source_text.encode()),
+                                "ingress": "pass",
+                                "compile": "pass",
+                                "j_owned_necessary": "pass",
+                                "authority": (
+                                    "atomic commit of exact Agent-authored bytes only; "
+                                    "fixed code generated and repaired no target source"
+                                ),
+                            }
+                        )
+                        break
+                    diagnostics = (
+                        [dict(item) for item in necessary]
+                        if isinstance(necessary, list) and necessary
+                        else [
+                            {
+                                "rule_code": "replay_own_ttir_review_failed",
+                                "path": "<replay-ttir>",
+                                "anonymous_handles": [],
+                                "line": None,
+                            }
+                        ]
+                    )
                     write_host_check(
                         {
                             "protocol": REPLAY_CHECK_PROTOCOL,
                             "status": "fail",
-                            "diagnostics": [
-                                {
-                                    "rule_code": "explicit_replay_submission_required",
-                                    "path": "<replay>",
-                                    "anonymous_handles": [],
-                                    "line": None,
-                                }
-                            ],
+                            "diagnostics": diagnostics,
                             "authority": (
-                                "protocol-only continuation; exact compilable bytes are "
-                                "checkpointed but not submitted or certified"
+                                "J-only necessary-condition diagnostics; fixed code "
+                                "does not generate or repair Replay"
                             ),
                         }
                     )
@@ -1393,6 +1744,7 @@ class CodexCLIReplayWriter:
                 "accepted_submission_interrupts": accepted_submission_interrupts,
                 "diagnostic_ready_interrupts": diagnostic_ready_interrupts,
                 "live_checkpoint": live_checkpoint_events,
+                "host_commit": host_commit_events,
                 "explicit_submission_accepted": explicit_submission_accepted,
                 "tool_bridge": bridge.evidence,
                 "formal_ingress_recheck": True,
@@ -1404,6 +1756,11 @@ class CodexCLIReplayWriter:
                     "provider_secret_in_tool_env": False,
                 },
             }
+            # Detach the evidence object from episode-local lists that the live
+            # checkpoint thread may finish updating while ``finally`` shuts it
+            # down.  The stored trajectory and its canonical bytes must describe
+            # the same immutable snapshot.
+            trajectory = json.loads(_trajectory_bytes(trajectory))
             raw_trajectory = _trajectory_bytes(trajectory)
             context_receipt = _context_receipt({}, packet["u_f"])
             context_receipt.update(
@@ -1497,6 +1854,7 @@ class CodexCLIReplayWriter:
                     else {}
                 ),
             }
+            trajectory = json.loads(_trajectory_bytes(trajectory))
             raw_trajectory = _trajectory_bytes(trajectory)
             attempt = ReplayAttempt(
                 model=provider.model,

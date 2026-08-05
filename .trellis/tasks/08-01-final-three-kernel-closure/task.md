@@ -1,17 +1,27 @@
-# Final Task：剩余三核逐核 SCRC 闭合
+# Final Task：剩余 Kernel 逐核 SCRC 闭合
 
 > 状态：`IN_PROGRESS`
-> 当前 Kernel：`high_performance:flash_attn.flash_attn_triton._fwd_kernel`
-> 方法依据：`doc/method/IntentIR_四核Lift瓶颈与pi归一化重构诊断.md`
+> 当前 Kernel：`high_performance:flash_attn.flash_attn_triton._bwd_kernel`
+> 方法依据：`doc/method/IntentIR_J-only_Replay与JC结构Gate1_2026-07-31.md`、
+> `doc/method/IntentIR_Gate1归一化现状_证据归集与论文优先执行计划_2026-08-01.md`
 
 ## 1. 唯一目标
 
-按以下顺序逐个完成剩余三个 Kernel 的真实 Gate1 与 Gate2 三边闭合；一个 Kernel 完整闭合后，
-才进入下一个：
+逐个完成剩余 Kernel 的真实 Gate1 与 Gate2 三边闭合；一个 Kernel 完整闭合后才进入下一个。
 
-1. `high_performance:flash_attn.flash_attn_triton._fwd_kernel`
-2. `high_performance:flash_attn.flash_attn_triton._bwd_kernel`
-3. `high_performance:xformers.ops.fmha._triton.splitk_kernels._fwd_kernel_splitK`
+**已闭合（2026-08-01）**：
+
+- ✅ `high_performance:liger_llama4_rope`
+- ✅ `high_performance:flash_attn.flash_attn_triton._fwd_kernel`
+
+**剩余 4 项未闭合**（按当前证据重算；此前"剩余三核"的表述漏了 Flash linear）：
+
+1. `high_performance:flash_attn.flash_attn_triton._bwd_kernel`
+2. `high_performance:xformers.ops.fmha._triton.splitk_kernels._fwd_kernel_splitK`
+3. `high_performance:flash_attn.flash_attn_triton._bwd_kernel_one_col_block`
+4. `high_performance:flash_attn.ops.triton.linear.kernel_fwd`
+
+因此当前独立覆盖为 **24/28**（按 `/tmp` 证据文件重算，非任务卡自述）。
 
 TypeCheck、schema、工具、prompt、文档或中间 artifact 不计进展。
 
@@ -45,16 +55,24 @@ Gate2: Source-Replay && Source-J && Replay-J
 6. Gate1 closure 后运行 Source–Replay、Source–J、Replay–J；
 7. 最终候选必须由轻量 persistent Lift owner 自己作者化并复现闭合，手工候选只作诊断 oracle。
 
-## 4. 当前 Kernel：FlashAttention forward
+## 4. 当前 Kernel：FlashAttention backward
 
-已知但尚待真实证据裁决：
+FlashAttention forward 已于 2026-08-01 17:39 闭合（见 §6）。其可复用闭环：
+用精确 Source TTIR 分流 J-owned 语义与纯 realization → 只修所属层 → fresh source-blind Replay
+→ Gate1 → 三边 Gate2。forward 最终只需 `access_representation_bindings` 的
+`address_recomputed`（9 条 access 全绑定），Source/Replay 各归一 18 个 `tt.addptr`，
+其余五个 hard 类别保持 exact。
 
-- online-softmax 的 key-axis loop 与 running max/normalizer/accumulator 核心图可能合理；
-- `BLOCK_HEADDIM` 与 `BLOCK_M` attachment 基本合理；
-- `BLOCK_N` 应是 key-loop `tile_extent`，不是 `reduction_tile_extent`；
-- `EVEN_M/N/HEADDIM` 只可作为 specialization C 附着对应 logical domain，J 自己保留 predicate/fill；
-- tiled iteration、pointer-only carrier、scratch materialization 只有在 fixed unary consumer 唯一证明时才能归一；
-- RefJ 无法消费非 direct-J-operand load 时，先区分 J access 不足与 J-only consumer 缺口。
+backward 的已知边界：
+
+- inner query-block DK/DV recurrence、conditional DQ post-state 与多输出属于 J；
+  outer key-block program/iteration realization 才可能属于 C/π；
+- `BLOCK_HEADDIM`/`BLOCK_M`/`BLOCK_N` 数值合理，但 `BLOCK_M` 须在 J 补出 inner semantic loop
+  后改绑到该 loop；
+- `SEQUENCE_PARALLEL` 作为 implementation-selection C 分类合理，缺口在 closed consumer 尚不能
+  用该 slot 区分 serial outer iteration 与 program-axis distribution；
+- causal、bias interpretation、logical guard、atomic/inout effect 必须由 J 的
+  predicate/access/effect 闭合，不得通过新增 C slot 隐藏。
 
 ### 当前动作
 
@@ -76,13 +94,29 @@ Gate2: Source-Replay && Source-J && Replay-J
 
 | Kernel | Gate1 | Source–Replay | Source–J | Replay–J | evidence |
 |---|---|---|---|---|---|
-| FlashAttention forward | pending | pending | pending | pending | pending |
+| FlashAttention forward | pass | pass（out 2.05e-3） | pass（out 2.06e-3、lse 2.86e-6） | pass（out 2.06e-3、lse 2.86e-6） | `/tmp/intentir-flash-fwd-q-closure2-20260801/flash_attn_flash_attn_triton_fwd_kernel/gate2-recheck-001` |
 | FlashAttention backward | pending | pending | pending | pending | pending |
 | xFormers SplitK forward | pending | pending | pending | pending | pending |
+| Flash backward one-col | pending | pending | pending | pending | pending |
+| Flash linear kernel_fwd | pending | pending | pending | pending | pending |
+
+FlashAttention forward：observer profile `triton-ttir-3.6-gate1-v14`，五个 hard 类别
+（interface / op_multiset / dataflow / reduction / predicate_effect）differences 全空；
+Gate2 输入 profile `flashattention-B4-H16-S8192-D128-f16-v1`，f16 tolerance
+`rtol=0.02 / atol=0.003`。parent evidence
+`/tmp/intentir-flash-fwd-manual-access-pi-20260801/.../run-001/attempt-04`，recheck `model_calls=0`。
+
+所有 evidence 已于 2026-08-01 快照到
+`/mnt/hdd/kingdom/intentir-evidence/20260801-snapshot/`（`/tmp` 原件保留未动）。
 
 ## 7. 完成条件
 
-- 三个 Kernel 均有可审计的 Gate1 pass 与 Gate2 三边 pass artifact；
+- 剩余 4 个 Kernel 各有可审计的 Gate1 pass 与 Gate2 三边 pass artifact；
 - 最终 `(J,C,π)` 满足上述信息隔离与 ownership 合同；
 - 没有 Gate 放宽、Kernel 特化、Source/π 泄漏、假闭合或以 TypeCheck 代替进展；
 - authoritative evidence 写回本任务，代码与文档提交，工作区干净。
+
+若某个 Kernel 最终无法闭合，按
+`doc/method/IntentIR_Gate1归一化现状_证据归集与论文优先执行计划_2026-08-01.md` §2.6 的判断，
+如实报告为"Gate1 当前对 loop tiling / carrier / terminal control 无一元归一化，保持 hard，
+因而拒绝合法 realization 差异"的**测量结果**，不得为闭合而放宽 Gate 或加 per-Kernel 规则。

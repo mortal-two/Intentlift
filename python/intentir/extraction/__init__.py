@@ -1,12 +1,14 @@
 """LLM-based extraction: kernel source -> IntentIR JSON.
 
 The LLM directly extracts to tensor-level atomic IntentIR (this is the research
-core; see .trellis/spec/extraction/llm-extraction.md). This package owns the
+core; see .trellis/spec/extraction/lift-replay.md). This package owns the
 provider client, prompts, re-roll, and evidence-as-hint plumbing.
+
+The pre-SCRC ``extract``/``data`` campaign modules were archived on 2026-08-01;
+see ``archive/2026-08-01-pre-scrc-python/``.
 """
 
 from .providers.client import LLMReply, ProviderError, call_responses
-from .lifters.extract import Extraction, Provenance, extract_intent, smoke_interpret
 from .lifters.miniswe import (
     MINISWE_LIFT_BACKEND,
     MINISWE_LIFT_KNOWLEDGE,
@@ -48,10 +50,6 @@ __all__ = [
     "call_responses",
     "LLMReply",
     "ProviderError",
-    "extract_intent",
-    "Extraction",
-    "Provenance",
-    "smoke_interpret",
     "ResponsesSCRCRelifter",
     "ResponsesSCRCLiftAdapter",
     "SCRCCandidateCheckContext",
