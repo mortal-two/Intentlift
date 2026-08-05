@@ -132,10 +132,10 @@ _PROFILE_EXTENTS: dict[str, dict[str, int]] = {
     },
 }
 
-# One source-grounded/model-grounded headline valuation per Fresh14 J.  These
-# are not artificial size tiers: the exact shapes are the named configurations
-# in doc/IntentIR_后端能力建设与最终实验协议_2026-07-27.md.  SplitK keeps the
-# accepted vararg arity at two while using the decode-shaped tensor axes.
+# One source-grounded/model-grounded headline valuation per production J.  The
+# values are fixed, explicit model configurations rather than artificial size
+# tiers. SplitK keeps the accepted vararg arity at two while using the
+# decode-shaped tensor axes.
 _NATURAL_HEADLINE_EXTENTS: dict[str, dict[str, int]] = {
     "swiglu": {_ROW: 16384, _FEATURE: 11008},
     "liger_rms_norm": {_ROW: 2048, _FEATURE: 4096},

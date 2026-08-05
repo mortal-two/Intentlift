@@ -201,7 +201,6 @@ class SCRCWorkloadEntry:
     source_module: str
     source_alignment: str
     lowering_status: str
-    evidence_refs: tuple[str, ...]
     representative_tier: str = "catalog"
     adapter_readiness: str = "pending"
     frontend: str = "triton"
@@ -221,11 +220,6 @@ class SCRCWorkloadEntry:
             source_module=_source_module(capability),
             source_alignment=capability.source_alignment,
             lowering_status=capability.lowering_status,
-            evidence_refs=(
-                *capability.cuda_tests,
-                *capability.family_tests,
-                *capability.lit_tests,
-            ),
             representative_tier=_REPRESENTATIVE_TIERS.get(
                 capability.kernel_id, "catalog"
             ),
@@ -330,7 +324,6 @@ class SCRCWorkloadEntry:
             "lowering_status": self.lowering_status,
             "observer_profile": self.observer_profile,
             "q_policy": self.q_policy,
-            "evidence_refs": list(self.evidence_refs),
             "representative_tier": self.representative_tier,
             "adapter_readiness": self.adapter_readiness,
         }

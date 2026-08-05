@@ -1,11 +1,10 @@
 """LLM-based extraction: kernel source -> IntentIR JSON.
 
-The LLM directly extracts to tensor-level atomic IntentIR (this is the research
-core; see .trellis/spec/extraction/lift-replay.md). This package owns the
-provider client, prompts, re-roll, and evidence-as-hint plumbing.
-
-The pre-SCRC ``extract``/``data`` campaign modules were archived on 2026-08-01;
-see ``archive/2026-08-01-pre-scrc-python/``.
+The LLM directly extracts to tensor-level atomic IntentIR.  The current Lift,
+Replay, and closure contract is documented in ``docs/architecture.md`` and
+``docs/workflows.md``.  This package owns the provider client, prompts, re-roll,
+and evidence-as-hint plumbing; superseded campaign material is kept only in the
+ignored local archive.
 """
 
 from .providers.client import LLMReply, ProviderError, call_responses

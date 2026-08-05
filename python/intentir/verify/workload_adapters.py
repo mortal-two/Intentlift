@@ -748,7 +748,6 @@ def prepare_triton_source_workload(
         source_module="intentir.certified_canary",
         source_alignment="exact archived accepted Source",
         lowering_status="certified",
-        evidence_refs=(),
         representative_tier="certified_canary",
         adapter_readiness="declared",
     )
@@ -794,7 +793,6 @@ def prepare_captured_triton_workload(
         source_module="captured_triton",
         source_alignment="captured_launch",
         lowering_status="captured",
-        evidence_refs=(),
         representative_tier="zero_shot",
         adapter_readiness="captured",
     )

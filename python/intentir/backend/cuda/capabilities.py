@@ -78,9 +78,6 @@ class KernelLoweringCapability:
     candidate_fast_path_id: str | None
     selection: str
     generic_fallback: str
-    cuda_tests: tuple[str, ...]
-    family_tests: tuple[str, ...]
-    lit_tests: tuple[str, ...]
     performance_evidence: str
     performance_outcome: str
     blockers: tuple[str, ...]
@@ -136,28 +133,11 @@ class KernelLoweringCapability:
             candidate = _require_string(
                 candidate, "lowering.candidate_fast_path_id"
             )
-        cuda_tests = _require_string_list(
-            lowering.get("cuda_tests", []), "lowering.cuda_tests"
-        )
-        family_tests = _require_string_list(
-            lowering.get("family_tests", []), "lowering.family_tests"
-        )
-        lit_tests = _require_string_list(
-            lowering.get("lit_tests", []), "lowering.lit_tests"
-        )
         if status == "exact_variant_gap":
-            if cuda_tests:
-                raise CapabilityRegistryError(
-                    "exact_variant_gap must not claim exact CUDA tests"
-                )
             if fast_path is not None:
                 raise CapabilityRegistryError(
                     "exact_variant_gap must not claim a selected fast path"
                 )
-        elif not cuda_tests:
-            raise CapabilityRegistryError(
-                "executed lowering entries require at least one CUDA test"
-            )
         return cls(
             ordinal=ordinal,
             kernel_id=_require_string(value.get("kernel_id"), "kernel.kernel_id"),
@@ -174,9 +154,6 @@ class KernelLoweringCapability:
             generic_fallback=_require_string(
                 lowering.get("generic_fallback"), "lowering.generic_fallback"
             ),
-            cuda_tests=cuda_tests,
-            family_tests=family_tests,
-            lit_tests=lit_tests,
             performance_evidence=evidence,
             performance_outcome=outcome,
             blockers=_require_string_list(

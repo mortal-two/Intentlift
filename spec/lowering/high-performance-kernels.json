@@ -3,13 +3,13 @@
   "updated_on": "2026-07-27",
   "scope": "lowering_only",
   "backend_interpretation": {
-    "role": "source-workload identity and historical executable-capability inventory only",
-    "mechanism_labels": "taxonomy and historical evidence labels; they are not compiler objects, legality keys, candidate identities, or emitter selectors",
+    "role": "source-workload identity and executable-capability inventory only",
+    "mechanism_labels": "taxonomy only; they are not compiler objects, legality keys, candidate identities, or emitter selectors",
     "fast_path_ids": "historical pass/receipt identifiers only; production J search derives concrete post-pass MLIR states from A/B/current-state/target contracts",
     "forbidden": [
       "selecting a production lowering by kernel_id, source symbol, provider, or fast_path_id",
       "treating this 28-kernel inventory as the production J candidate universe",
-      "using family_tests or exact-variant labels as an implementation-family abstraction"
+      "using exact-variant labels as an implementation-family abstraction"
     ]
   },
   "counting": {
@@ -99,7 +99,7 @@
       "symbol": "_swiglu_forward_kernel",
       "mechanisms": ["elementwise"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_elementwise_pk.py::test_swiglu_pk_vs_liger"], "lit_tests": ["test/lower-elementwise-flat-vector-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "below_threshold"},
       "blockers": []
     },
@@ -110,7 +110,7 @@
       "symbol": "_rms_norm_forward_kernel",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_row_reduction_pk.py::test_rms_norm_pk_vs_liger"], "lit_tests": ["test/lower-rms-norm-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -121,7 +121,7 @@
       "symbol": "_fused_add_rms_norm_forward_kernel",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_fused_add_rms_norm_pk.py::test_fused_add_rms_norm_pk_vs_liger"], "lit_tests": ["test/lower-fused-add-rms-norm-to-gpu.mlir", "test/lower-row-output-staging-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -132,7 +132,7 @@
       "symbol": "_triton_rope",
       "mechanisms": ["rope_indexed_inplace"],
       "source_alignment": "upstream_compared_handwritten_mlir",
-      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound", "cuda_tests": ["python/tests/test_rope_pk.py::test_rope_pk_vs_liger"], "lit_tests": ["test/lower-rope-to-gpu.mlir"]},
+      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound"},
       "performance": {"evidence": "runtime_parity", "outcome": "guard_pass"},
       "blockers": ["exact captured stride/in-place graph is not yet emitted by the canonical extractor"]
     },
@@ -143,7 +143,7 @@
       "symbol": "liger_cross_entropy_kernel",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_cross_entropy_pk.py::test_cross_entropy_pk_vs_liger"], "lit_tests": ["test/lower-cross-entropy-to-gpu.mlir", "test/reject-row-gather-oob.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -154,7 +154,7 @@
       "symbol": "_geglu_tanh_forward_kernel",
       "mechanisms": ["elementwise"],
       "source_alignment": "upstream_compared_handwritten_mlir",
-      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound", "cuda_tests": ["python/tests/test_elementwise_pk.py::test_geglu_pk_vs_liger"], "lit_tests": ["test/lower-elementwise-to-gpu.mlir"]},
+      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound"},
       "performance": {"evidence": "runtime_parity", "outcome": "guard_pass"},
       "blockers": ["fresh exact-source extraction is not bound to the executed MLIR"]
     },
@@ -165,7 +165,7 @@
       "symbol": "_layer_norm_forward_kernel",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_layer_norm_pk.py::test_layer_norm_pk_vs_liger"], "lit_tests": ["test/lower-layer-norm-to-gpu.mlir", "test/lower-row-deferred-col-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -176,7 +176,7 @@
       "symbol": "_softmax_single_block_forward_kernel",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_row_reduction_pk.py::test_softmax_pk_vs_liger"], "lit_tests": ["test/lower-softmax-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -187,7 +187,7 @@
       "symbol": "_group_norm_forward_kernel",
       "mechanisms": ["grouped_row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_group_norm_pk.py::test_group_norm_pk_vs_liger"], "lit_tests": ["test/lower-row-grouped-reductions-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -198,7 +198,7 @@
       "symbol": "_dyt_fwd_kernel",
       "mechanisms": ["elementwise"],
       "source_alignment": "upstream_compared_handwritten_mlir",
-      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound", "cuda_tests": ["python/tests/test_elementwise_pk.py::test_dyt_pk_vs_liger"], "lit_tests": ["test/lower-elementwise-to-gpu.mlir"]},
+      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound"},
       "performance": {"evidence": "runtime_parity", "outcome": "guard_pass"},
       "blockers": ["captured HAVE_BETA=true variant is not the executed handwritten slice"]
     },
@@ -209,7 +209,7 @@
       "symbol": "_triton_qwen2vl_mrope",
       "mechanisms": ["rope_indexed_inplace"],
       "source_alignment": "upstream_compared_handwritten_mlir",
-      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound", "cuda_tests": ["python/tests/test_qwen2vl_mrope_pk.py::test_qwen2vl_mrope_pk_vs_liger"], "lit_tests": []},
+      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound"},
       "performance": {"evidence": "runtime_parity", "outcome": "guard_pass"},
       "blockers": ["exact captured multi-position stride/in-place graph is not extractor-bound"]
     },
@@ -220,7 +220,7 @@
       "symbol": "_sparsemax_forward_kernel",
       "mechanisms": ["sorted_prefix_scan"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_scan.sparsemax.sorted_prefix.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_sparsemax_pk.py::test_sparsemax_fwd_pk_vs_liger"], "lit_tests": ["test/lower-sparsemax-sorted-prefix-to-gpu.mlir", "test/lower-sparsemax-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_scan.sparsemax.sorted_prefix.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -231,7 +231,7 @@
       "symbol": "_kldiv_kernel_forward",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_loss_divergence_pk.py::test_kl_div_pk_vs_liger"], "lit_tests": ["test/lower-kl-div-to-gpu.mlir", "test/lower-kl-div-per-row-to-gpu.mlir", "test/lower-log-sub-to-nvvm.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -242,7 +242,7 @@
       "symbol": "_jsd_kernel",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_loss_divergence_pk.py::test_jsd_pk_vs_liger"], "lit_tests": ["test/lower-jsd-partial-writeback-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "below_threshold"},
       "blockers": []
     },
@@ -253,7 +253,7 @@
       "symbol": "_llama4_rope_kernel",
       "mechanisms": ["rope_indexed_inplace"],
       "source_alignment": "upstream_compared_handwritten_mlir",
-      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound", "cuda_tests": ["python/tests/test_llama4_rope_pk.py::test_llama4_rope_pk_vs_liger"], "lit_tests": []},
+      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound"},
       "performance": {"evidence": "runtime_parity", "outcome": "guard_pass"},
       "blockers": ["exact even/odd captured stride and in-place contract is not extractor-bound"]
     },
@@ -264,7 +264,7 @@
       "symbol": "_poly_norm_forward_kernel",
       "mechanisms": ["grouped_row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_poly_norm_pk.py::test_poly_norm_pk_vs_liger"], "lit_tests": ["test/lower-poly-norm-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -275,7 +275,7 @@
       "symbol": "_tv_distance_kernel",
       "mechanisms": ["elementwise"],
       "source_alignment": "upstream_compared_handwritten_mlir",
-      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound", "cuda_tests": ["python/tests/test_tvd_pk.py::test_tvd_pk_vs_liger"], "lit_tests": ["test/lower-tvd-to-gpu.mlir"]},
+      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.elementwise.row.vectorized.v1", "selection": "explicit_pass", "generic_fallback": "available_not_bound"},
       "performance": {"evidence": "runtime_parity", "outcome": "guard_pass"},
       "blockers": ["captured reduction=3 variant is not the executed reduction=none slice"]
     },
@@ -286,7 +286,7 @@
       "symbol": "kernel_fwd",
       "mechanisms": ["tensor_core_contraction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.linear.f16_f32.bias_saved.mma_sync.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_linear_pk.py::test_linear_epilogue_correctness"], "lit_tests": ["test/lower-bf16-matmul-to-gpu-mma.mlir", "test/lower-matmul-to-gpu-mma.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.linear.f16_f32.bias_saved.mma_sync.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -297,7 +297,7 @@
       "symbol": "_fwd_kernel",
       "mechanisms": ["flash_forward"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.flash_forward.flat_rank4.mma.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_flash_fwd_mma_pk.py::test_flash_fwd_mma_pk"], "lit_tests": ["test/lower-flash-mma-flat-fwd-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.flash_forward.flat_rank4.mma.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -308,7 +308,7 @@
       "symbol": "_bwd_kernel_one_col_block",
       "mechanisms": ["attention_backward"],
       "source_alignment": "upstream_compared_handwritten_mlir",
-      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.flash_backward.flat_rank4.mma.v1", "candidate_fast_path_id": null, "selection": "explicit_pass", "generic_fallback": "unavailable", "cuda_tests": ["python/tests/test_flash_bwd_one_col_pk.py::test_flash_bwd_one_col_exact_symbol_lowering"], "family_tests": ["python/tests/test_flash_bwd_pk.py::test_flash_bwd_pk", "python/tests/test_flash_bwd_dualmode_pk.py::test_flash_bwd_dualmode_gate"], "lit_tests": []},
+      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.flash_backward.flat_rank4.mma.v1", "candidate_fast_path_id": null, "selection": "explicit_pass", "generic_fallback": "unavailable"},
       "performance": {"evidence": "correctness_only", "outcome": "not_measured"},
       "blockers": ["exact symbol/config execution is closed; live extraction, automatic selection binding, generic fallback, and performance remain open"]
     },
@@ -319,7 +319,7 @@
       "symbol": "_bwd_kernel",
       "mechanisms": ["attention_backward"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.flash_backward.flat_rank4.mma.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_flash_bwd_pk.py::test_flash_bwd_pk"], "lit_tests": ["test/lower-flash-bwd-flat-rank4-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.flash_backward.flat_rank4.mma.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "below_threshold"},
       "blockers": []
     },
@@ -330,7 +330,7 @@
       "symbol": "_bwd_preprocess_do_o_dot",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_bwd_preprocess_pk.py::test_bwd_preprocess_pk_vs_flash"], "lit_tests": ["test/lower-bwd-preprocess-rank4-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -341,7 +341,7 @@
       "symbol": "_layer_norm_fwd_1pass_kernel",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_layer_norm_pk.py::test_layer_norm_pk_vs_liger"], "lit_tests": ["test/lower-row-dependent-reductions-compact-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "below_threshold"},
       "blockers": []
     },
@@ -352,7 +352,7 @@
       "symbol": "_rms_norm_kernel",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_xformers_rms_norm_pk.py::test_xformers_rms_norm_pk"], "lit_tests": ["test/lower-row-single-reduce-compact-to-gpu.mlir", "test/lower-row-col-vec4-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -363,7 +363,7 @@
       "symbol": "_rms_norm_add_kernel",
       "mechanisms": ["row_reduction"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_xformers_rms_norm_pk.py::test_xformers_rms_norm_add_pk"], "lit_tests": ["test/lower-row-output-staging-to-gpu.mlir", "test/lower-row-col-vec4-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.row_reduction.normalization_loss.read_once.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -374,7 +374,7 @@
       "symbol": "_fwd_kernel_splitK",
       "mechanisms": ["splitk_forward"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.xformers.splitk-forward.flat-rank5.mma.v2", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_splitk_pk.py::test_splitk_fwd_pk"], "lit_tests": ["test/lower-live-splitk-forward-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.xformers.splitk-forward.flat-rank5.mma.v2", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -385,7 +385,7 @@
       "symbol": "_splitK_reduce_varargs",
       "mechanisms": ["splitk_reduce"],
       "source_alignment": "exact_capture",
-      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.splitk.reduce-varargs.v1", "selection": "automatic", "generic_fallback": "executed", "cuda_tests": ["python/tests/test_splitk_pk.py::test_splitk_reduce_vs_xformers"], "lit_tests": ["test/lower-splitk-reduce-varargs-to-gpu.mlir"]},
+      "lowering": {"status": "automatic_executed", "fast_path_id": "cuda.splitk.reduce-varargs.v1", "selection": "automatic", "generic_fallback": "executed"},
       "performance": {"evidence": "archived_formal", "outcome": "pass"},
       "blockers": []
     },
@@ -396,7 +396,7 @@
       "symbol": "_splitK_reduce_varargs_backward",
       "mechanisms": ["splitk_reduce_backward"],
       "source_alignment": "upstream_compared_semantic_subset",
-      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.splitk.reduce-backward.v1", "selection": "explicit_pass", "generic_fallback": "unproven_exact_layout", "cuda_tests": ["python/tests/test_splitk_reduce_bwd_pk.py::test_splitk_reduce_bwd_pk", "python/tests/test_splitk_reduce_bwd_pk.py::test_splitk_reduce_bwd_vs_xformers"], "lit_tests": []},
+      "lowering": {"status": "explicit_pass_executed", "fast_path_id": "cuda.splitk.reduce-backward.v1", "selection": "explicit_pass", "generic_fallback": "unproven_exact_layout"},
       "performance": {"evidence": "correctness_only", "outcome": "not_measured"},
       "blockers": ["executed slice is H=G=1; captured H=4 G=1 varargs layout and performance remain open"]
     }

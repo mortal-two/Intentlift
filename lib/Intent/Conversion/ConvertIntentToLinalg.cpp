@@ -1128,9 +1128,8 @@ struct ContractionLowering : OpRewritePattern<ContractionOp> {
 /// tensor `iter_args`. Each trip slices the scanned inputs (`tensor.extract_slice`
 /// along `scan_axes`, `tile_hint` rows) and the body's intent ops are cloned in
 /// (they lower to linalg via the patterns above). This is the natural tensor-
-/// level lowering; the *fused* device kernel is a separate schedule (see
-/// python/intentir/backend/cuda/flash.py plus the host-driven body path in
-/// python/tests/test_flash_loop_*).
+/// level lowering; the fused CUDA schedule is selected later by the production
+/// lowering pipeline and implemented by LowerFlashAttentionToLoops.cpp.
 struct LoopLowering : OpRewritePattern<LoopOp> {
   using OpRewritePattern::OpRewritePattern;
 
