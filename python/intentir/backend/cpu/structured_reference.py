@@ -1159,6 +1159,8 @@ class _Evaluator:
             return self._reduce(op, env)
         if op.op == "scan":
             return self._scan(op, env)
+        if op.op == "scatter":
+            return self._scatter(op, env)
         if op.op == "contraction":
             return self._contraction(op, env)
         if op.op == "select":

@@ -28,7 +28,8 @@ LogicalResult MapBinaryOp::verify() {
   // logical family (logical_and/or/xor) and isclose, which likewise yield i1.
   static constexpr llvm::StringRef kCmpFns[] = {
       "gt",          "ge",         "lt",          "le",      "eq", "ne",
-      "logical_and", "logical_or", "logical_xor", "isclose"};
+      "logical_and", "logical_or", "logical_xor", "and", "or", "xor",
+      "isclose"};
   bool isCmp = false;
   for (llvm::StringRef f : kCmpFns)
     if (getFn() == f)

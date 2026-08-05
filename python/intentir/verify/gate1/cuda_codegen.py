@@ -36,8 +36,9 @@ _ALLOWED_HEADERS = {
 }
 _FUNCTION_RE = re.compile(
     r"(?P<prefix>(?:(?:extern\s+\"C\"|__global__|__device__|__forceinline__|"
-    r"static|inline)\s+)*)"
+    r"__launch_bounds__\s*\([^)]*\)|static|inline)\s+)*)"
     r"(?P<return>[A-Za-z_][A-Za-z0-9_:<>]*)\s+"
+    r"(?P<attributes>(?:__launch_bounds__\s*\([^)]*\)\s+)?)"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(",
     re.MULTILINE,
 )
@@ -108,9 +109,42 @@ def validate_cuda_module(
 
     globals_: list[str] = []
     helpers: list[str] = []
+    # This pass owns the host/device declaration surface, not CUDA symbol
+    # resolution. Call targets (declared helpers and public compiler intrinsics)
+    # are resolved by the mandatory nvcc compile before Gate1 can accept Replay;
+    # duplicating that evolving intrinsic catalog here would be incomplete.
+    brace_depth: list[int] = [0] * (len(inspected) + 1)
+    depth = 0
+    for index, character in enumerate(inspected):
+        brace_depth[index] = depth
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth = max(0, depth - 1)
+    brace_depth[len(inspected)] = depth
     for match in _FUNCTION_RE.finditer(inspected):
+        # Calls inside a validated device/global body are not new function
+        # declarations.  Only translation-unit declarations belong here.
+        if brace_depth[match.start()] != 0:
+            continue
         prefix = match.group("prefix")
+        attributes = match.group("attributes")
         name = match.group("name")
+        launch_bounds = re.findall(
+            r"__launch_bounds__\s*\([^)]*\)", prefix + attributes
+        )
+        if len(launch_bounds) > 1 or any(
+            re.fullmatch(
+                r"__launch_bounds__\s*\(\s*[1-9][0-9]*"
+                r"(?:\s*,\s*[1-9][0-9]*)?\s*\)",
+                item,
+            )
+            is None
+            for item in launch_bounds
+        ):
+            raise UnsafeCudaReplayCodeError(
+                "CUDA __launch_bounds__ requires one or two positive integer literals"
+            )
         if "__" in name and name != required_kernel:
             raise UnsafeCudaReplayCodeError("dunder CUDA function names are forbidden")
         if "__global__" in prefix:

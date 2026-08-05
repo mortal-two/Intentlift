@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 import importlib.util
 from pathlib import Path
+import re
+import subprocess
 import sys
 import tempfile
 from typing import Any, Mapping
@@ -28,6 +30,43 @@ class NativeArgumentRole(str, Enum):
     OUTPUT = "output"
     INOUT = "inout"
     SCALAR = "scalar"
+    TENSOR_MAP = "tensor_map"
+
+
+@dataclass(frozen=True)
+class NativeTensorMapSpec:
+    """Closed rank-2 row-major CUDA TensorMap construction profile.
+
+    Dimensions are in TMA coordinate order (contiguous/minor first), not the
+    logical row-major tensor order.  The tensor base address and global extents
+    remain runtime values supplied by the logical J input.
+    """
+
+    box_dim: tuple[int, int]
+    element_strides: tuple[int, int] = (1, 1)
+    interleave: str = "none"
+    swizzle: str = "128b"
+    l2_promotion: str = "128b"
+    float_oob_fill: str = "none"
+
+    def __post_init__(self) -> None:
+        box = tuple(int(value) for value in self.box_dim)
+        strides = tuple(int(value) for value in self.element_strides)
+        if len(box) != 2 or any(value <= 0 for value in box):
+            raise ValueError("native TensorMap box_dim must contain two positive extents")
+        if strides != (1, 1):
+            raise ValueError("native TensorMap profile requires unit element strides")
+        if self.interleave != "none" or self.swizzle not in {
+            "none",
+            "32b",
+            "64b",
+            "128b",
+        }:
+            raise ValueError("native TensorMap profile has an unsupported swizzle")
+        if self.l2_promotion != "128b" or self.float_oob_fill != "none":
+            raise ValueError("native TensorMap cache/OOB profile is unsupported")
+        object.__setattr__(self, "box_dim", box)
+        object.__setattr__(self, "element_strides", strides)
 
 
 @dataclass(frozen=True)
@@ -38,6 +77,7 @@ class NativeArgument:
     shape: tuple[int, ...] | None = None
     value: int | float | bool | None = None
     output_key: str | None = None
+    tensor_map: NativeTensorMapSpec | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.role, NativeArgumentRole):
@@ -51,6 +91,13 @@ class NativeArgument:
                 raise ValueError("native output requires an observable output_key")
         if self.role is NativeArgumentRole.SCALAR and self.value_key is None and self.value is None:
             raise ValueError("native scalar requires value_key or fixed value")
+        if self.role is NativeArgumentRole.TENSOR_MAP:
+            if not self.value_key or self.dtype is None or self.shape is None:
+                raise ValueError("native TensorMap requires one logical input tensor")
+            if self.tensor_map is None:
+                raise ValueError("native TensorMap requires a construction spec")
+        elif self.tensor_map is not None:
+            raise ValueError("only a TensorMap native argument may carry a descriptor spec")
 
 
 @dataclass(frozen=True)
@@ -62,6 +109,10 @@ class NativeExecutionSpec:
     shared_mem: int = 0
     device: str = "cuda"
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    source_arguments: tuple[NativeArgument, ...] | None = None
+    source_grid: tuple[int, int, int] | None = None
+    source_block: tuple[int, int, int] | None = None
+    source_shared_mem: int | None = None
 
     def __post_init__(self) -> None:
         if not self.arguments:
@@ -73,6 +124,40 @@ class NativeExecutionSpec:
             object.__setattr__(self, label, dims)
         if not isinstance(self.shared_mem, int) or self.shared_mem < 0:
             raise ValueError("native shared memory must be a non-negative integer")
+        source_arguments = self.source_arguments
+        if source_arguments is not None:
+            source_arguments = tuple(source_arguments)
+            if not source_arguments:
+                raise ValueError("native Source argument override cannot be empty")
+            object.__setattr__(self, "source_arguments", source_arguments)
+        for field_name in ("source_grid", "source_block"):
+            dimensions = getattr(self, field_name)
+            if dimensions is None:
+                continue
+            dims = tuple(int(item) for item in dimensions)
+            if len(dims) != 3 or any(item <= 0 for item in dims):
+                raise ValueError(f"native {field_name} must contain three positive dimensions")
+            object.__setattr__(self, field_name, dims)
+        if self.source_shared_mem is not None and (
+            not isinstance(self.source_shared_mem, int) or self.source_shared_mem < 0
+        ):
+            raise ValueError("native Source shared memory must be non-negative")
+
+    def arguments_for(self, leg: str) -> tuple[NativeArgument, ...]:
+        if leg == "source" and self.source_arguments is not None:
+            return self.source_arguments
+        return self.arguments
+
+    def launch_for(
+        self, leg: str
+    ) -> tuple[tuple[int, int, int], tuple[int, int, int], int]:
+        if leg != "source":
+            return self.grid, self.block, self.shared_mem
+        return (
+            self.source_grid or self.grid,
+            self.source_block or self.block,
+            self.shared_mem if self.source_shared_mem is None else self.source_shared_mem,
+        )
 
 
 def _torch_dtype(torch: Any, dtype: str) -> Any:
@@ -129,12 +214,13 @@ def _scalar_ctype(dtype: str | None, value: Any) -> type[Any]:
 def _prepare_torch_arguments(
     spec: NativeExecutionSpec,
     values: Mapping[str, Any],
+    leg: str,
 ) -> tuple[list[Any], dict[str, Any]]:
     import torch
 
     arguments: list[Any] = []
     outputs: dict[str, Any] = {}
-    for index, argument in enumerate(spec.arguments):
+    for index, argument in enumerate(spec.arguments_for(leg)):
         if argument.role is NativeArgumentRole.SCALAR:
             value = values[argument.value_key] if argument.value_key is not None else argument.value
             if isinstance(value, np.ndarray) and value.ndim == 0:
@@ -165,11 +251,85 @@ def _copy_outputs(outputs: Mapping[str, Any]) -> dict[str, np.ndarray]:
     }
 
 
+def _encode_tensor_map(driver: Any, tensor: Any, spec: NativeTensorMapSpec) -> Any:
+    """Encode one by-value CUtensorMap while retaining its Python owner."""
+
+    if tensor.ndim != 2 or not tensor.is_contiguous():
+        raise ValueError("native TensorMap requires one contiguous rank-2 tensor")
+    dtype_key = str(tensor.dtype).removeprefix("torch.")
+    dtype_names = {
+        "float16": "CU_TENSOR_MAP_DATA_TYPE_FLOAT16",
+        "float32": "CU_TENSOR_MAP_DATA_TYPE_FLOAT32",
+        "bfloat16": "CU_TENSOR_MAP_DATA_TYPE_BFLOAT16",
+    }
+    dtype_name = dtype_names.get(dtype_key)
+    if dtype_name is None:
+        raise ValueError(f"unsupported native TensorMap dtype {tensor.dtype}")
+    rows, columns = (int(value) for value in tensor.shape)
+    major_stride_bytes = int(tensor.stride(0)) * int(tensor.element_size())
+    swizzles = {
+        "none": driver.CUtensorMapSwizzle.CU_TENSOR_MAP_SWIZZLE_NONE,
+        "32b": driver.CUtensorMapSwizzle.CU_TENSOR_MAP_SWIZZLE_32B,
+        "64b": driver.CUtensorMapSwizzle.CU_TENSOR_MAP_SWIZZLE_64B,
+        "128b": driver.CUtensorMapSwizzle.CU_TENSOR_MAP_SWIZZLE_128B,
+    }
+    error, tensor_map = driver.cuTensorMapEncodeTiled(
+        getattr(driver.CUtensorMapDataType, dtype_name),
+        2,
+        int(tensor.data_ptr()),
+        (driver.cuuint64_t(columns), driver.cuuint64_t(rows)),
+        (driver.cuuint64_t(major_stride_bytes),),
+        tuple(driver.cuuint32_t(value) for value in spec.box_dim),
+        tuple(driver.cuuint32_t(value) for value in spec.element_strides),
+        driver.CUtensorMapInterleave.CU_TENSOR_MAP_INTERLEAVE_NONE,
+        swizzles[spec.swizzle],
+        driver.CUtensorMapL2promotion.CU_TENSOR_MAP_L2_PROMOTION_L2_128B,
+        driver.CUtensorMapFloatOOBfill.CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE,
+    )
+    if int(error) != 0 or tensor_map is None:
+        raise RuntimeError(f"cuTensorMapEncodeTiled failed with {error}")
+    return tensor_map
+
+
 def _driver_check(result: tuple[Any, ...], operation: str) -> tuple[Any, ...]:
     error = result[0]
     if int(error) != 0:
         raise RuntimeError(f"CUDA driver {operation} failed with {error}")
     return result[1:]
+
+
+def _cuda_module_image(ptx: str, compiler: CudaCompiler) -> bytes:
+    """Assemble architecture-specific PTX before driver loading.
+
+    PTX targets suffixed with ``a`` contain architecture-specific instructions
+    (for example TMA/WGMMA).  The CUDA driver in the experiment environment
+    rejects their textual JIT image but accepts the cubin produced by the same
+    toolkit's ptxas.  Ordinary PTX keeps the existing driver-JIT path.
+    """
+
+    match = re.search(r"(?m)^\s*\.target\s+(sm_[0-9]+a)\b", ptx)
+    if match is None:
+        return ptx.encode("utf-8")
+    nvcc = getattr(compiler, "nvcc", None)
+    ptxas = Path(str(nvcc)).with_name("ptxas") if nvcc else None
+    if ptxas is None or not ptxas.is_file():
+        raise RuntimeError("architecture-specific PTX requires sibling ptxas")
+    with tempfile.TemporaryDirectory(prefix="intentir-native-ptxas-") as raw:
+        root = Path(raw)
+        source = root / "kernel.ptx"
+        image = root / "kernel.cubin"
+        source.write_text(ptx, encoding="utf-8")
+        completed = subprocess.run(
+            [str(ptxas), f"-arch={match.group(1)}", str(source), "-o", str(image)],
+            capture_output=True,
+            text=True,
+            timeout=120.0,
+            check=False,
+        )
+        if completed.returncode != 0 or not image.is_file():
+            diagnostic = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(f"ptxas failed: {diagnostic}")
+        return image.read_bytes()
 
 
 class CudaRunner:
@@ -204,30 +364,49 @@ class CudaRunner:
             torch.empty((), device=spec.device)
             _driver_check(driver.cuInit(0), "cuInit")
             module, = _driver_check(
-                driver.cuModuleLoadData(compiled.ptx.encode("utf-8")),
+                driver.cuModuleLoadData(_cuda_module_image(compiled.ptx, self.compiler)),
                 "cuModuleLoadData",
             )
             function, = _driver_check(
                 driver.cuModuleGetFunction(module, compiled.entry.encode("utf-8")),
                 "cuModuleGetFunction",
             )
-            arguments, outputs = _prepare_torch_arguments(spec, values)
+            definitions = spec.arguments_for(leg)
+            grid, block, shared_mem = spec.launch_for(leg)
+            if shared_mem:
+                _driver_check(
+                    driver.cuFuncSetAttribute(
+                        function,
+                        driver.CUfunction_attribute.CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                        int(shared_mem),
+                    ),
+                    "cuFuncSetAttribute(MAX_DYNAMIC_SHARED_SIZE_BYTES)",
+                )
+            arguments, outputs = _prepare_torch_arguments(spec, values, leg)
             packed_values: list[Any] = []
-            packed_types: list[type[Any]] = []
-            for definition, value in zip(spec.arguments, arguments, strict=True):
+            packed_types: list[type[Any] | None] = []
+            for definition, value in zip(definitions, arguments, strict=True):
                 if definition.role is NativeArgumentRole.SCALAR:
                     ctype = _scalar_ctype(definition.dtype, value)
                     packed_values.append(ctype(value))
                     packed_types.append(ctype)
+                elif definition.role is NativeArgumentRole.TENSOR_MAP:
+                    assert definition.tensor_map is not None
+                    packed_values.append(
+                        _encode_tensor_map(driver, value, definition.tensor_map)
+                    )
+                    # cuda.bindings treats a CUDA structure exposing getPtr()
+                    # with ctype=None as by-value kernel argument storage.
+                    packed_types.append(None)
                 else:
                     packed_values.append(ctypes.c_void_p(value.data_ptr()))
                     packed_types.append(ctypes.c_void_p)
             _driver_check(
                 driver.cuLaunchKernel(
                     function,
-                    *spec.grid,
-                    *spec.block,
-                    spec.shared_mem,
+                    *grid,
+                    *block,
+                    shared_mem,
                     0,
                     (tuple(packed_values), tuple(packed_types)),
                     0,
@@ -242,8 +421,8 @@ class CudaRunner:
                 metadata={
                     "frontend": "cuda",
                     "entry": compiled.entry,
-                    "grid": list(spec.grid),
-                    "block": list(spec.block),
+                    "grid": list(grid),
+                    "block": list(block),
                     **dict(spec.metadata),
                 },
             )
@@ -259,7 +438,12 @@ class CudaRunner:
                     pass
 
 
-def _load_tilelang_prim_func(program: TileLangKernelSource, temporary: Path) -> tuple[Any, str | None]:
+def _load_tilelang_prim_func(
+    program: TileLangKernelSource,
+    temporary: Path,
+    *,
+    schedule: Mapping[str, int | float | bool | str] | None = None,
+) -> tuple[Any, str | None]:
     if program.kind == "factory_file":
         assert program.path is not None
         path = Path(program.path).resolve()
@@ -272,6 +456,7 @@ def _load_tilelang_prim_func(program: TileLangKernelSource, temporary: Path) -> 
     if module_spec is None or module_spec.loader is None:
         raise ImportError(f"cannot load TileLang module {path}")
     module = importlib.util.module_from_spec(module_spec)
+    module.__dict__.update(dict(schedule or {}))
     sys.modules[module_name] = module
     try:
         module_spec.loader.exec_module(module)
@@ -302,10 +487,15 @@ class TileLangRunner:
             if not torch.cuda.is_available():
                 raise RuntimeError("CUDA is unavailable")
             with tempfile.TemporaryDirectory(prefix=f"intentir-tilelang-gate2-{leg}-") as raw:
-                prim_func, module_name = _load_tilelang_prim_func(program, Path(raw))
+                schedule = dict(getattr(spec.compile_case, "schedule", {}) or {})
+                prim_func, module_name = _load_tilelang_prim_func(
+                    program,
+                    Path(raw),
+                    schedule=schedule,
+                )
                 target = str(getattr(spec.compile_case, "target", "cuda"))
                 kernel = tilelang.compile(prim_func, target=target)
-                arguments, outputs = _prepare_torch_arguments(spec, values)
+                arguments, outputs = _prepare_torch_arguments(spec, values, leg)
                 kernel(*arguments)
                 torch.cuda.synchronize(spec.device)
                 return ExecutionResult(
@@ -331,5 +521,6 @@ __all__ = [
     "NativeArgument",
     "NativeArgumentRole",
     "NativeExecutionSpec",
+    "NativeTensorMapSpec",
     "TileLangRunner",
 ]

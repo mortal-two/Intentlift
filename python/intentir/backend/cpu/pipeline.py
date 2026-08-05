@@ -61,7 +61,7 @@ CPU_LOWERABLE_OPS = frozenset(
 
 @dataclass(frozen=True)
 class CPUExecutionResult:
-    """All logical outputs and non-verdict execution provenance for one call."""
+    """All logical outputs and execution metadata for one call."""
 
     outputs: Mapping[str, np.ndarray]
     metadata: Mapping[str, Any]
@@ -368,7 +368,10 @@ def execute_on_cpu_outputs(
         proven_index_bounds=proven_index_bounds,
     )
     compiled = compile_cpu_module(module)
-    runtime = execute_isolated(compiled, checked_inputs, output_storage)
+    try:
+        runtime = execute_isolated(compiled, checked_inputs, output_storage)
+    finally:
+        compiled.shared_object.unlink(missing_ok=True)
     logical_outputs = {
         tensor.name: value
         for tensor, value in zip(fn.outputs, runtime.outputs, strict=True)

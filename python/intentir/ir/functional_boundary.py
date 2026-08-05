@@ -1269,6 +1269,7 @@ def _project_constant_gather_load(
     tensor: Any,
     operation: IntentOp | None,
     direct_unit_dimensions: frozenset[str],
+    runtime_logical_dimensions: Mapping[str, int] | None = None,
 ) -> ConstantGatherProjection | None:
     """Prove one non-singleton constant coordinate through exact J dataflow."""
 
@@ -1325,9 +1326,17 @@ def _project_constant_gather_load(
             "functional constant load requires one exact index-bounds relation"
         )
     if static_index_bounds_status(j, matches[0]) is not True:
-        raise ValueError(
-            "functional constant load lacks a closed in-bounds proof"
+        declared_extent = tensor.shape[axis]
+        runtime_extent = (
+            runtime_logical_dimensions.get(declared_extent)
+            if runtime_logical_dimensions is not None
+            and isinstance(declared_extent, str)
+            else None
         )
+        if runtime_extent is None or coordinate < 0 or coordinate >= runtime_extent:
+            raise ValueError(
+                "functional constant load lacks a closed in-bounds proof"
+            )
 
     value_types = j_elaboration(j).value_type_by_name
     data_type = value_types.get(access.tensor)
@@ -2427,15 +2436,44 @@ def _runtime_predicate_tautology(
     return canonical, receipt
 
 
+def _boundary_referenced_axes(j: Any) -> frozenset[str]:
+    """Return logical axes that participate in an observable boundary use."""
+
+    referenced: set[str] = set()
+    for access in j_elaboration(j).accesses:
+        for component in access.index.components:
+            referenced.update(component.references)
+        if access.predicate is not None:
+            referenced.update(access.predicate.references)
+    return frozenset(referenced)
+
+
+def _domain_defined_axes(j: Any, expression: ContractExpr) -> frozenset[str]:
+    """Separate domain coordinates from extents and logical scalar inputs."""
+
+    external_refs = {
+        dimension
+        for tensor in [*j.intent.inputs, *j.intent.outputs]
+        for dimension in tensor.shape
+        if isinstance(dimension, str)
+    }
+    external_refs.update(item.name for item in j.intent.inputs)
+    return expression.references - external_refs
+
+
 def _full_domains(j: Any) -> dict[str, int | str]:
     result: dict[str, int | str] = {}
     logical_guards = _logical_boolean_guards(j)
+    boundary_axes = _boundary_referenced_axes(j)
     for domain_id, expression in j_elaboration(j).domains:
         try:
             contract = _j_predicate_projection(
                 j, expression, logical_guards=logical_guards
             )
         except NotImplementedError as exc:
+            domain_axes = _domain_defined_axes(j, expression)
+            if domain_axes and domain_axes.isdisjoint(boundary_axes):
+                continue
             raise NotImplementedError(
                 "functional dense domain requires complete logical axis bounds; "
                 f"unsupported domain {domain_id!r}"
@@ -4928,6 +4966,7 @@ def _project_functional_boundary(
                 tensor=tensor,
                 operation=op,
                 direct_unit_dimensions=direct_unit_dimensions,
+                runtime_logical_dimensions=runtime_logical_dimensions,
             )
             if access.kind.value == "load"
             else None
@@ -5123,6 +5162,7 @@ def _project_functional_boundary(
             raise ValueError("functional store does not target a J output")
         final_observable_value = returns.get(access.tensor, access.tensor)
         mapping = mappings.get(access.tensor)
+        dead_exact_overwrite = False
         if mapping is not None:
             final_observable_value = mapping.value
         paired_value = paired_store_values.get(access.access_id)
@@ -5150,9 +5190,35 @@ def _project_functional_boundary(
                 observable_value not in _result_names(op)
                 and access.access_id not in projected_guarded_store_accesses
             ):
+                update = next(
+                    (
+                        item
+                        for item in boundary.updates
+                        if item.node_ref == access.node_ref
+                    ),
+                    None,
+                )
+                op_results = _result_names(op)
+                dead_exact_overwrite = bool(
+                    update is not None
+                    and op.op == "scatter"
+                    and op.operands
+                    == [update.base, update.indices, update.values]
+                    and op.attrs.get("axis") == update.axis
+                    and op.attrs.get("mode", "along_axis") == "along_axis"
+                    and op.attrs.get("reduce", "none") == "none"
+                    and update.combiner.value == "overwrite"
+                    and update.duplicate_policy.value == "forbid"
+                    and update.order.value == "input_order"
+                    and all(
+                        result not in graph_operands
+                        and result not in returns.values()
+                        for result in op_results
+                    )
+                )
                 carry_results = [
                     result
-                    for result in _result_names(op)
+                    for result in op_results
                     if _store_result_reaches_output_through_enclosing_carry(
                         j,
                         operation=op,
@@ -5160,7 +5226,9 @@ def _project_functional_boundary(
                         observable_value=observable_value,
                     )
                 ]
-                if len(carry_results) == 1:
+                if dead_exact_overwrite:
+                    pass
+                elif len(carry_results) == 1:
                     pass
                 elif access.node_ref in effect_if_arm_nodes:
                     produced = _result_names(op)
@@ -5203,7 +5271,7 @@ def _project_functional_boundary(
             raise NotImplementedError(
                 "node-less store is supported only for direct identity J"
             )
-        if is_observable_store:
+        if is_observable_store and not dead_exact_overwrite:
             stores_by_output[access.tensor].append(access)
 
     if set(effects_by_access) != set(access_ids):

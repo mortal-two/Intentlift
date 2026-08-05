@@ -1,1 +1,0 @@
-SchemaError: SemanticArchive.intent.intent_function.body[13].operands reference value(s) outside the current scope: t4

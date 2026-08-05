@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 import glob
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -45,6 +46,10 @@ class CudaCompileCase:
     parameters: tuple[FrontendParameter, ...]
     grid: tuple[int, int, int] = (1, 1, 1)
     block: tuple[int, int, int] = (1, 1, 1)
+    # Opaque C-slot valuation used by the Harness and PTX observer.  These
+    # names are artifact handles, not CUDA preprocessor identifiers; launch
+    # roles are consumed through ``grid``/``block`` and actual nvcc flags
+    # through the separately allowlisted ``compiler_options``.
     schedule: Mapping[str, int | float | bool | str] = field(default_factory=dict)
     arch: str = "sm_80"
     compiler_options: tuple[str, ...] = ()
@@ -63,8 +68,19 @@ class CudaCompileCase:
                 raise ValueError(f"CUDA {label} must contain three positive dimensions")
             object.__setattr__(self, label, dims)
         schedule = dict(self.schedule)
-        if any(not isinstance(key, str) or not key for key in schedule):
-            raise ValueError("CUDA schedule keys must be non-empty strings")
+        if any(
+            not isinstance(key, str)
+            or not key.isidentifier()
+            or "__" in key
+            for key in schedule
+        ):
+            raise ValueError("CUDA schedule keys must be safe identifiers")
+        if any(
+            not isinstance(value, (bool, int, float, str))
+            or (isinstance(value, float) and not math.isfinite(value))
+            for value in schedule.values()
+        ):
+            raise TypeError("CUDA schedule values must be finite JSON scalars")
         allowed = (
             "--fmad=",
             "--ftz=",
@@ -187,7 +203,11 @@ def _normalize_arch(raw: str) -> str:
     digits = "".join(character for character in value if character.isdigit())
     if not digits:
         raise ValueError("CUDA arch must contain a compute capability")
-    return f"sm_{digits}"
+    # CUDA's architecture-specific targets (for example sm_90a/sm_120a) are
+    # not aliases of their portable counterparts.  Instructions such as
+    # setmaxnreg are rejected when the trailing ``a`` is silently discarded.
+    suffix = "a" if value.endswith("a") else ""
+    return f"sm_{digits}{suffix}"
 
 
 def find_nvcc() -> str | None:
@@ -267,6 +287,9 @@ class CudaCompiler:
                 "-O3",
                 "-lineinfo",
                 f"-arch={case.arch}",
+                # Never materialize opaque schedule handles as -D macros.
+                # A TU-global ``-Dc0=...`` also rewrites vendor headers and
+                # makes the compiler consume an artifact name as source code.
                 *case.compiler_options,
                 *(
                     item

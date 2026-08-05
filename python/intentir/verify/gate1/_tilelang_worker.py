@@ -26,6 +26,7 @@ def _load(request: dict):
             if spec is None or spec.loader is None:
                 raise RuntimeError("cannot create TileLang Replay module")
             module = importlib.util.module_from_spec(spec)
+            module.__dict__.update(dict(request["case"].get("schedule") or {}))
             spec.loader.exec_module(module)
             return getattr(module, source["function"])
     path = Path(source["path"]).resolve()
@@ -33,6 +34,7 @@ def _load(request: dict):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load TileLang source {path}")
     module = importlib.util.module_from_spec(spec)
+    module.__dict__.update(dict(request["case"].get("schedule") or {}))
     spec.loader.exec_module(module)
     factory = getattr(module, source["function"])
     return factory(**dict(source.get("factory_kwargs") or {}))

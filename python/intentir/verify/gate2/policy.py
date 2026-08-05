@@ -140,6 +140,59 @@ class ComparisonPolicy:
             ),
         )
 
+    @classmethod
+    def from_json(cls, value: Mapping[str, Any]) -> "ComparisonPolicy":
+        if not isinstance(value, Mapping):
+            raise ComparisonPolicyError("Gate2 Q JSON must be an object")
+        required = {"protocol", "policy_id", "tolerances"}
+        optional = {
+            "mixed_precision_compute_tolerances",
+            "mixed_precision_selection",
+        }
+        if not required.issubset(value) or set(value) - required - optional:
+            raise ComparisonPolicyError(
+                "Gate2 Q JSON has missing or unknown policy fields"
+            )
+        if value["protocol"] != GATE2_POLICY_PROTOCOL:
+            raise ComparisonPolicyError("unsupported Gate2 Q protocol")
+
+        def parse_tolerances(
+            raw: object, *, context: str
+        ) -> list[tuple[str, NumericTolerance]]:
+            if not isinstance(raw, Mapping):
+                raise ComparisonPolicyError(f"Gate2 Q {context} must be an object")
+            parsed: list[tuple[str, NumericTolerance]] = []
+            for dtype, record in raw.items():
+                if not isinstance(dtype, str) or not isinstance(record, Mapping):
+                    raise ComparisonPolicyError(
+                        f"Gate2 Q {context} entry is invalid"
+                    )
+                if set(record) != {"rtol", "atol", "equal_nan"}:
+                    raise ComparisonPolicyError(
+                        f"Gate2 Q {context} requires rtol, atol, and equal_nan"
+                    )
+                parsed.append(
+                    (
+                        dtype,
+                        NumericTolerance(
+                            record["rtol"],
+                            record["atol"],
+                            record["equal_nan"],
+                        ),
+                    )
+                )
+            return parsed
+
+        mixed = value.get("mixed_precision_compute_tolerances", {})
+        return cls.create(
+            str(value["policy_id"]),
+            parse_tolerances(value["tolerances"], context="tolerances"),
+            mixed_precision_tolerances=parse_tolerances(
+                mixed,
+                context="mixed-precision tolerances",
+            ),
+        )
+
     def rule_for(
         self,
         comparison_class: ResultRelationKind | str,
@@ -389,6 +442,37 @@ DEFAULT_GATE2_POLICY = ComparisonPolicy.create(
 )
 
 
+TF32_TENSORCORE_GATE2_POLICY = ComparisonPolicy.create(
+    "intentir.gate2.tf32-tensorcore.v1",
+    (
+        ("bf16", NumericTolerance(2.0e-2, 2.0e-3, equal_nan=True)),
+        ("f16", NumericTolerance(2.0e-2, 3.0e-3, equal_nan=True)),
+        ("f32", NumericTolerance(2.0e-2, 3.0e-3, equal_nan=True)),
+        ("f64", NumericTolerance(1.0e-12, 1.0e-12, equal_nan=True)),
+    ),
+    mixed_precision_tolerances=(
+        ("bf16", NumericTolerance(2.0e-2, 2.0e-3, equal_nan=True)),
+        ("f16", NumericTolerance(2.0e-2, 3.0e-3, equal_nan=True)),
+        ("f32", NumericTolerance(2.0e-2, 3.0e-3, equal_nan=True)),
+    ),
+)
+
+
+_GATE2_POLICIES = {
+    DEFAULT_GATE2_POLICY.policy_id: DEFAULT_GATE2_POLICY,
+    TF32_TENSORCORE_GATE2_POLICY.policy_id: TF32_TENSORCORE_GATE2_POLICY,
+}
+
+
+def gate2_policy_for(policy_id: str) -> ComparisonPolicy:
+    try:
+        return _GATE2_POLICIES[policy_id]
+    except KeyError as exc:
+        raise ComparisonPolicyError(
+            f"unknown trusted Gate2 Q {policy_id!r}"
+        ) from exc
+
+
 __all__ = [
     "CloseRule",
     "ComparisonPolicy",
@@ -396,5 +480,7 @@ __all__ = [
     "DEFAULT_GATE2_POLICY",
     "GATE2_POLICY_PROTOCOL",
     "NumericTolerance",
+    "TF32_TENSORCORE_GATE2_POLICY",
     "canonical_dtype",
+    "gate2_policy_for",
 ]

@@ -42,13 +42,19 @@ class FrontendGate1Capability:
         *,
         compiler: Any,
         writer: ReplayWriter,
+        masked_writer: ReplayWriter | None = None,
         config: Gate1Config | None = None,
     ) -> Any:
         if not isinstance(compiler, self.compiler_type):
             raise TypeError(
                 f"{self.frontend.value} requires {self.compiler_type.__name__}"
             )
-        return self.runner_type(compiler=compiler, writer=writer, config=config)
+        return self.runner_type(
+            compiler=compiler,
+            writer=writer,
+            masked_writer=masked_writer,
+            config=config,
+        )
 
 
 def _capabilities() -> dict[Frontend, FrontendGate1Capability]:

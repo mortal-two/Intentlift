@@ -86,7 +86,8 @@ static Value emitScalarCmp(OpBuilder &b, Location loc, StringRef fn, Value a,
 static bool isI1BinaryFn(StringRef fn) {
   return fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" || fn == "eq" ||
          fn == "ne" || fn == "logical_and" || fn == "logical_or" ||
-         fn == "logical_xor" || fn == "isclose";
+         fn == "logical_xor" || fn == "and" || fn == "or" || fn == "xor" ||
+         fn == "isclose";
 }
 
 /// True iff `emitScalarBinary` can lower `fn` for the operand element type.
@@ -95,7 +96,8 @@ static bool hasScalarBinary(StringRef fn, Type elementType) {
     return fn == "add" || fn == "sub" || fn == "mul" || fn == "div" ||
            fn == "max" || fn == "min" || fn == "gt" || fn == "ge" ||
            fn == "lt" || fn == "le" || fn == "eq" || fn == "ne" ||
-           fn == "logical_and" || fn == "logical_or" || fn == "logical_xor";
+           fn == "logical_and" || fn == "logical_or" || fn == "logical_xor" ||
+           fn == "and" || fn == "or" || fn == "xor";
   return fn == "add" || fn == "sub" || fn == "mul" || fn == "div" ||
          fn == "max" || fn == "min" || fn == "pow" || fn == "atan2" ||
          isI1BinaryFn(fn);
@@ -121,11 +123,11 @@ static Value emitScalarBinary(OpBuilder &b, Location loc, StringRef fn, Value a,
     if (fn == "gt" || fn == "ge" || fn == "lt" || fn == "le" ||
         fn == "eq" || fn == "ne")
       return emitScalarCmp(b, loc, fn, a, c);
-    if (fn == "logical_and")
+    if (fn == "logical_and" || fn == "and")
       return b.create<arith::AndIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
-    if (fn == "logical_or")
+    if (fn == "logical_or" || fn == "or")
       return b.create<arith::OrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
-    if (fn == "logical_xor")
+    if (fn == "logical_xor" || fn == "xor")
       return b.create<arith::XOrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
     return nullptr;
   }
@@ -151,11 +153,11 @@ static Value emitScalarBinary(OpBuilder &b, Location loc, StringRef fn, Value a,
       fn == "ne")
     return emitScalarCmp(b, loc, fn, a, c);
   // Logical family: truthy-cast each operand to i1, then the bitwise i1 op.
-  if (fn == "logical_and")
+  if (fn == "logical_and" || fn == "and")
     return b.create<arith::AndIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
-  if (fn == "logical_or")
+  if (fn == "logical_or" || fn == "or")
     return b.create<arith::OrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
-  if (fn == "logical_xor")
+  if (fn == "logical_xor" || fn == "xor")
     return b.create<arith::XOrIOp>(loc, truthy(b, loc, a), truthy(b, loc, c));
   if (fn == "isclose") {
     // |a-c| <= atol + rtol*|c|  (torch defaults rtol=1e-5, atol=1e-8).
@@ -325,6 +327,60 @@ struct IotaLowering : OpRewritePattern<IotaOp> {
           b.create<linalg::YieldOp>(l, value);
         });
     rewriter.replaceOp(op, generic.getResults());
+    return success();
+  }
+};
+
+/// Eliminate a full-cover identity scatter before lowering its index graph.
+///
+/// For an along-axis overwrite whose index is the right-aligned iota plus a
+/// zero splat, every source element is written exactly once to its own logical
+/// coordinate.  The functional result is therefore exactly `src`, independent
+/// of the old `data` value.  This canonical form occurs in certified graphs
+/// that expose an explicit padded-output update even when the active valuation
+/// has no padding.  Keep the proof deliberately narrow: last axis, identical
+/// static shapes, overwrite-only, and the literal zero+iota index construction.
+struct IdentityScatterLowering : OpRewritePattern<ScatterOp> {
+  explicit IdentityScatterLowering(MLIRContext *context)
+      : OpRewritePattern<ScatterOp>(context, PatternBenefit(2)) {}
+
+  LogicalResult matchAndRewrite(ScatterOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.getMode() != "along_axis" || op.getReduce() != "none")
+      return failure();
+    auto dataTy = dyn_cast<RankedTensorType>(op.getData().getType());
+    auto indexTy = dyn_cast<RankedTensorType>(op.getIndex().getType());
+    auto srcTy = dyn_cast<RankedTensorType>(op.getSrc().getType());
+    auto resultTy = dyn_cast<RankedTensorType>(op.getResult().getType());
+    if (!dataTy || !indexTy || !srcTy || !resultTy ||
+        !dataTy.hasStaticShape() || dataTy.getShape() != indexTy.getShape() ||
+        dataTy.getShape() != srcTy.getShape() ||
+        dataTy.getShape() != resultTy.getShape() || dataTy.getRank() == 0 ||
+        static_cast<int64_t>(op.getAxis()) != dataTy.getRank() - 1)
+      return failure();
+
+    auto add = op.getIndex().getDefiningOp<MapBinaryOp>();
+    if (!add || add.getFn() != "add")
+      return failure();
+    IotaOp iota = add.getLhs().getDefiningOp<IotaOp>();
+    Value zeroValue = add.getRhs();
+    if (!iota) {
+      iota = add.getRhs().getDefiningOp<IotaOp>();
+      zeroValue = add.getLhs();
+    }
+    auto iotaTy = iota ? dyn_cast<RankedTensorType>(iota.getResult().getType())
+                       : RankedTensorType();
+    auto zero = zeroValue.getDefiningOp<arith::ConstantOp>();
+    auto dense = zero ? dyn_cast<DenseElementsAttr>(zero.getValue())
+                      : DenseElementsAttr();
+    if (!iota || !iotaTy || iotaTy.getRank() != 1 ||
+        iotaTy.getDimSize(0) != dataTy.getDimSize(dataTy.getRank() - 1) ||
+        !dense || !dense.isSplat() ||
+        !isa<IntegerType>(dense.getElementType()) ||
+        !dense.getSplatValue<APInt>().isZero())
+      return failure();
+
+    rewriter.replaceOp(op, op.getSrc());
     return success();
   }
 };
@@ -534,12 +590,16 @@ struct GatherLowering : OpRewritePattern<GatherOp> {
 /// integers use signed max/min and integer add/mul. Boolean all/any remain the
 /// dedicated i1 reductions.
 static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a,
-                               Value c) {
+                               Value c,
+                               bool allowFloatReassociation = false) {
   bool isInteger = isa<IntegerType>(a.getType());
+  arith::FastMathFlags floatFlags =
+      allowFloatReassociation ? arith::FastMathFlags::reassoc
+                              : arith::FastMathFlags::none;
   if (fn == "sum" || fn == "mean") {
     if (isInteger)
       return b.create<arith::AddIOp>(loc, a, c);
-    return b.create<arith::AddFOp>(loc, a, c);
+    return b.create<arith::AddFOp>(loc, a, c, floatFlags);
   }
   if (fn == "max") {
     if (isInteger)
@@ -554,7 +614,7 @@ static Value emitReduceCombine(OpBuilder &b, Location loc, StringRef fn, Value a
   if (fn == "prod") {
     if (isInteger)
       return b.create<arith::MulIOp>(loc, a, c);
-    return b.create<arith::MulFOp>(loc, a, c);
+    return b.create<arith::MulFOp>(loc, a, c, floatFlags);
   }
   if (fn == "all")
     return b.create<arith::AndIOp>(loc, a, c);
@@ -606,7 +666,11 @@ static Value reduceIdentityConst(OpBuilder &b, Location loc, StringRef fn,
 /// axes as size-1 (keepdims, result rank == input rank), a tensor.expand_shape
 /// re-inserts them so downstream broadcasts (e.g. S - rowmax) line up.
 struct ReduceLowering : OpRewritePattern<ReduceOp> {
-  using OpRewritePattern::OpRewritePattern;
+  ReduceLowering(MLIRContext *context, bool reassociateFloatReductions)
+      : OpRewritePattern<ReduceOp>(context),
+        reassociateFloatReductions(reassociateFloatReductions) {}
+
+  bool reassociateFloatReductions;
 
   LogicalResult matchAndRewrite(ReduceOp op,
                                 PatternRewriter &rewriter) const override {
@@ -614,6 +678,9 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
     auto resTy = cast<RankedTensorType>(op.getResult().getType());
     Type elemTy = inTy.getElementType();
     StringRef fn = op.getFn();
+    bool allowFloatReassociation =
+        reassociateFloatReductions &&
+        op.getAssoc() == "float_nondeterministic";
     // Float supports numeric reductions; signless integer supports the
     // non-mean numeric reductions; i1 is reserved for all/any.
     bool supported =
@@ -715,7 +782,8 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
                   maps, iters,
                   [&](OpBuilder &b, Location l, ValueRange args) {
                     b.create<linalg::YieldOp>(
-                        l, emitReduceCombine(b, l, fn, args[1], args[0]));
+                        l, emitReduceCombine(b, l, fn, args[1], args[0],
+                                             allowFloatReassociation));
                   })
               .getResult(0);
 
@@ -812,7 +880,9 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
     auto generic = rewriter.create<linalg::GenericOp>(
         loc, TypeRange{reducedTy}, ValueRange{op.getInput()}, ValueRange{init},
         maps, iters, [&](OpBuilder &b, Location l, ValueRange args) {
-          b.create<linalg::YieldOp>(l, emitReduceCombine(b, l, fn, args[1], args[0]));
+          b.create<linalg::YieldOp>(
+              l, emitReduceCombine(b, l, fn, args[1], args[0],
+                                   allowFloatReassociation));
         });
     Value reduced = generic.getResult(0);
 
@@ -862,6 +932,74 @@ struct ReduceLowering : OpRewritePattern<ReduceOp> {
   }
 };
 
+/// Lower a static rank-2 last-axis inclusive scan to nested scf.for loops with
+/// one scalar accumulator per row.  This is the conservative generic baseline
+/// used when no target scan path is selected; target-specific row lowering
+/// still owns the cooperative/vector scan states.
+struct ScanLowering : OpRewritePattern<ScanOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ScanOp op,
+                                PatternRewriter &rewriter) const override {
+    auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
+    auto resultType = dyn_cast<RankedTensorType>(op.getResult().getType());
+    if (!inputType || !resultType || !inputType.hasStaticShape() ||
+        inputType != resultType || inputType.getRank() != 2 ||
+        op.getAxis() != 1)
+      return rewriter.notifyMatchFailure(
+          op, "generic scan requires one static rank-2 last axis");
+    StringRef fn = op.getFn();
+    Type elementType = inputType.getElementType();
+    bool supported =
+        (isa<FloatType>(elementType) && isNumericReduce(fn) && fn != "mean") ||
+        (isa<IntegerType>(elementType) && !elementType.isInteger(1) &&
+         isNumericReduce(fn) && fn != "mean") ||
+        (elementType.isInteger(1) && isBoolReduce(fn));
+    if (!supported)
+      return rewriter.notifyMatchFailure(op, "unsupported scan combiner/type");
+
+    Location location = op.getLoc();
+    Value zero = rewriter.create<arith::ConstantIndexOp>(location, 0);
+    Value one = rewriter.create<arith::ConstantIndexOp>(location, 1);
+    Value rows = rewriter.create<arith::ConstantIndexOp>(
+        location, inputType.getDimSize(0));
+    Value columns = rewriter.create<arith::ConstantIndexOp>(
+        location, inputType.getDimSize(1));
+    Value empty = rewriter.create<tensor::EmptyOp>(
+        location, resultType.getShape(), elementType);
+    auto outer = rewriter.create<scf::ForOp>(
+        location, zero, rows, one, ValueRange{empty},
+        [&](OpBuilder &outerBuilder, Location outerLocation, Value row,
+            ValueRange outerArgs) {
+          Value identity = reduceIdentityConst(
+              outerBuilder, outerLocation, fn, elementType);
+          auto inner = outerBuilder.create<scf::ForOp>(
+              outerLocation, zero, columns, one,
+              ValueRange{identity, outerArgs[0]},
+              [&](OpBuilder &innerBuilder, Location innerLocation, Value column,
+                  ValueRange innerArgs) {
+                Value current = innerBuilder.create<tensor::ExtractOp>(
+                    innerLocation, op.getInput(), ValueRange{row, column});
+                Value combined = emitReduceCombine(
+                    innerBuilder, innerLocation, fn, innerArgs[0], current);
+                Value first = innerBuilder.create<arith::CmpIOp>(
+                    innerLocation, arith::CmpIPredicate::eq, column, zero);
+                Value inclusive = innerBuilder.create<arith::SelectOp>(
+                    innerLocation, first, current, combined);
+                Value updated = innerBuilder.create<tensor::InsertOp>(
+                    innerLocation, inclusive, innerArgs[1],
+                    ValueRange{row, column});
+                innerBuilder.create<scf::YieldOp>(
+                    innerLocation, ValueRange{inclusive, updated});
+              });
+          outerBuilder.create<scf::YieldOp>(outerLocation,
+                                             inner.getResult(1));
+        });
+    rewriter.replaceOp(op, outer.getResult(0));
+    return success();
+  }
+};
+
 /// Lower an einsum-style contraction to a linalg.generic over the union of
 /// index labels: output labels are parallel iterators, contracted labels
 /// (present in inputs but not the output) are reduction iterators. Body is a
@@ -894,10 +1032,10 @@ struct ContractionLowering : OpRewritePattern<ContractionOp> {
       return rewriter.notifyMatchFailure(
           op, "non-numeric contraction operands not implemented");
     bool isFloat = isa<FloatType>(elemTy);
-    if (isFloat != isa<FloatType>(aElemTy) ||
-        isFloat != isa<FloatType>(bElemTy))
+    if (!isFloat &&
+        (isa<FloatType>(aElemTy) || isa<FloatType>(bElemTy)))
       return rewriter.notifyMatchFailure(
-          op, "mixed integer/float contraction not implemented");
+          op, "floating operands into integer contraction not implemented");
     if (!isFloat && (aElemTy != elemTy || bElemTy != elemTy))
       return rewriter.notifyMatchFailure(
           op, "mixed-width integer contraction not implemented");
@@ -950,8 +1088,17 @@ struct ContractionLowering : OpRewritePattern<ContractionOp> {
           auto castToAccumulator = [&](Value value) -> Value {
             if (!isFloat)
               return value;
-            auto srcTy = cast<FloatType>(value.getType());
             auto dstTy = cast<FloatType>(elemTy);
+            if (auto integer = dyn_cast<IntegerType>(value.getType())) {
+              // Mixed numeric no-reduction contractions are the canonical
+              // outer-mask spelling emitted for one-hot coefficient grids.
+              // i1 is an unsigned boolean (0/1); wider canonical integers are
+              // signed.  The result type owns the explicit numeric promotion.
+              if (integer.getWidth() == 1)
+                return b.create<arith::UIToFPOp>(l, dstTy, value);
+              return b.create<arith::SIToFPOp>(l, dstTy, value);
+            }
+            auto srcTy = cast<FloatType>(value.getType());
             if (srcTy == dstTy)
               return value;
             if (srcTy.getWidth() < dstTy.getWidth())
@@ -1253,11 +1400,13 @@ struct ConvertIntentToLinalgPass
 
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.add<IotaLowering, MapUnaryLowering, MapBinaryLowering, SelectLowering,
-                 GatherLowering, ReduceLowering, ContractionLowering,
+    patterns.add<IotaLowering, IdentityScatterLowering, MapUnaryLowering,
+                 MapBinaryLowering, SelectLowering, GatherLowering,
+                 ScanLowering, ContractionLowering,
                  LoopLowering, CastLowering, TransposeLowering, ConcatLowering,
                  PadLowering>(
         &getContext());
+    patterns.add<ReduceLowering>(&getContext(), reassociateFloatReductions);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

@@ -35,6 +35,7 @@ def ConvertIntentRowReductionToGPU
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
     "::mlir::vector::VectorDialect",
+    "::mlir::NVVM::NVVMDialect",
   ];
   let options = [
     Option<"blockThreads", "block-threads", "unsigned", "0",
@@ -44,12 +45,13 @@ def ConvertIntentRowReductionToGPU
     Option<"tileCols", "tile-cols", "unsigned", "32",
            "Max f32 columns held in registers per thread (register budget). "
            "When N/T exceeds this, the per-thread feature strip is split into "
-           "num_tiles tiles of <= tile-cols each: each reduce becomes an "
-           "scf.for over tiles accumulating a per-thread partial with ONE "
-           "gpu.all_reduce AFTER the loop, and the row is cached in a "
-           "workgroup (dynamic shared) buffer so the normalize epilogue does "
-           "not re-read it from HBM. num_tiles==1 (N/T <= tile-cols) keeps the "
-           "M1 register-tile path byte-identical.">,
+           "num_tiles tiles of <= tile-cols each. Independent reductions share "
+           "one scf.for over the tiles; dependent reductions start a new pass "
+           "over the same workgroup-cached row frontier. Warp shuffles plus "
+           "compact per-warp shared partials combine production geometries with "
+           "one barrier per dependency level; the epilogue reads the frontier "
+           "cache instead of re-reading it from HBM. num_tiles==1 "
+           "(N/T <= tile-cols) keeps the register-tile path byte-identical.">,
     Option<"vectorWidth", "vector-width", "unsigned", "0",
            "Register-path contiguous memory width: 0 = structurally selected "
            "auto, 1 = force scalar coalesced loads/stores, 4 = require legal "
@@ -58,20 +60,197 @@ def ConvertIntentRowReductionToGPU
            "forced-vector graphs fail closed.">,
     Option<"fuseFma", "fuse-fma", "bool", "false",
            "Emit explicit f32 math.fma for single-use mul+add epilogues and "
-           "sum-of-products reduction accumulation. Disabled by default; an "
-           "offline Layer-C candidate may enable it and must pass P6 before "
-           "performance selection.">,
+           "sum-of-products reduction accumulation. Disabled by default. The "
+           "production search may enable it as an observation-changing concrete "
+           "MLIR state; that state must pass Q on D_search before "
+           "performance selection and the fixed winner must pass D_cert.">,
+    Option<"approximateDiv", "approximate-div", "bool", "false",
+           "Lower f32 division to multiplication by a native approximate "
+           "reciprocal (or a rounded constant reciprocal for a proven static "
+           "divisor). Disabled by default because its allowed observations differ "
+           "from divf. Production search treats it as an observation-changing "
+           "precision state and requires Q/D_search and D_cert.">,
     Option<"deferEpilogueColLoads", "defer-epilogue-col-loads", "bool", "true",
            "Delay epilogue-only contiguous Col loads until after all row "
            "collectives, reducing cross-barrier register pressure. Set false "
            "to preload them before the reduction so small register-resident "
            "rows can overlap global-memory latency with the collective. This "
            "is a Layer-C candidate and must independently pass P6.">,
+    Option<"materializeSharedRowOutput", "materialize-shared-row-output", "bool", "true",
+           "When a required full-row output also feeds a single reduction and "
+           "its epilogue, true stores that row before the collective and reloads "
+           "it afterwards to shorten register live ranges. False keeps the same "
+           "pointwise values in SSA across the collective and emits only their "
+           "required final store, eliminating one full-row reload. The false "
+           "state is admitted only when that exact graph is proved; unsupported "
+           "graphs fail closed.">,
+    Option<"leaderFinalize", "leader-finalize", "bool", "false",
+           "For a multi-warp register reduction with two or more reduction ops, "
+           "let warp 0 fold the compact per-warp partials, publish one scalar per "
+           "reduction, and broadcast it after a workgroup barrier. False retains "
+           "the state in which every warp redundantly folds the same partials. "
+           "Both states preserve the same arithmetic tree; unsupported graphs "
+           "fail closed.">,
+    Option<"promoteRank0Scalars", "promote-rank0-scalars", "bool", "true",
+           "Load dynamic rank-0 inputs once in the host launch stub and pass "
+           "them to the outlined kernel by value. False retains device-side "
+           "uniform loads as an independently searchable ABI schedule.">,
     Option<"enableSortedPrefix", "enable-sorted-prefix", "bool", "true",
            "Enable the B-certified descending sparsemax early-stop fast path. "
            "Set false to force the general scan/reduction implementation for "
            "the same Intent graph, providing an independently executable "
            "generic correctness fallback.">,
+    Option<"allowExecutionDomainSortedPrefix",
+           "allow-execution-domain-sorted-prefix", "bool", "false",
+           "Permit the same graph-structural sorted-prefix lowering without a "
+           "Layer-B descending-order marker. This does not certify or infer the "
+           "ordering fact: the emitted state is explicitly marked as an "
+           "execution-domain assumption and production search must validate it "
+           "with Q/D before timing or selection.">,
+    Option<"requireSortedPrefix", "require-sorted-prefix", "bool", "false",
+           "Require this invocation to materialize the sorted-prefix topology. "
+           "If the exact structural matcher does not fire, fail the pass instead "
+           "of silently relabeling the complete generic scan lowering.">,
+    Option<"prefixThreads", "prefix-threads", "unsigned", "0",
+           "Physical threads used by the sorted-prefix scan. 0 keeps the scan "
+           "and output on the same block geometry. 32 assigns the prefix/support "
+           "work to one warp while the full block writes the row epilogue, "
+           "decoupling active-prefix work from full-row output parallelism. The "
+           "nonzero state is accepted only by the exact sorted-prefix matcher.">,
+    Option<"prefixPacketWidth", "prefix-packet-width", "unsigned", "4",
+           "Sorted-input elements loaded by each active prefix thread per scan "
+           "chunk. Legal values are 1, 2, or 4. This coordinate is independent "
+           "of the full-row X/output packet, which remains vector<4xf32>: a "
+           "narrow prefix packet can stop after 32 or 64 sorted values without "
+           "degrading the coalesced epilogue. Accepted only by the exact sorted-"
+           "prefix matcher.">,
+    Option<"crossMultiplySupportPredicate",
+           "cross-multiply-support-predicate", "bool", "false",
+           "For the exact sorted-prefix support test, replace z > (prefix-1)/rank "
+           "with rank*z > prefix-1 using the proved-positive rank. This removes "
+           "per-element floating division but changes rounding observations, so "
+           "it is an explicit Full numeric state that must pass Q/D. Unsupported "
+           "graphs fail closed.">,
+    Option<"replicatePrefixPerWarp", "replicate-prefix-per-warp", "bool", "false",
+           "For a 32-thread sorted-prefix scan with a wider one-row CTA, let every "
+           "output warp recompute the short active prefix and retain tau in warp-"
+           "local SSA. This removes the shared tau publication and workgroup "
+           "barrier at the cost of cache-local repeated prefix work. The state is "
+           "accepted only by the exact sorted-prefix matcher.">,
+    Option<"prefetchEpilogueInputBeforeSummary",
+           "prefetch-epilogue-input-before-summary", "bool", "false",
+           "For the exact sorted-prefix graph, issue each output thread's "
+           "coalesced X packet loads before prefix/support/tau evaluation and "
+           "keep those packets live until the epilogue. This overlaps the full-"
+           "row input fetch with the serial prefix state at the cost of register "
+           "pressure. Unsupported graphs fail closed.">,
+    Option<"frontierBallotSupport", "frontier-ballot-support", "bool", "false",
+           "For the exact descending sorted-prefix graph, replace the pairwise "
+           "XOR reduction of every lane's best (rank,sum) with a warp ballot of "
+           "threads containing supported values, followed by indexed broadcasts "
+           "of the last supported frontier pair. The warp leader then computes "
+           "tau once and broadcasts that live scalar instead of repeating the "
+           "same division in every lane. Descending order proves support is a "
+           "prefix; unsupported graphs fail closed.">,
+    Option<"crossRowFinalize", "cross-row-finalize", "bool", "false",
+           "For one float-nondeterministic axis-0 sum of row statistics, write "
+           "one contribution per row to compiler-owned scratch and finalize it "
+           "in a second GPU launch. False retains one atomic add per row. The "
+           "graph matcher fails closed for any other output topology.">,
+    Option<"rawMomentVariance", "raw-moment-variance", "bool", "false",
+           "For a proven two-reduction mean/centered-square graph, evaluate raw "
+           "sum and raw sum-of-squares in one independent reduction group, then "
+           "form the variance from the two summaries. This is an observation-"
+           "changing execution state and is admitted only for the exact typed "
+           "pattern; otherwise the pass fails closed.">,
+    Option<"compactReductionTopology", "compact-reduction-topology", "bool", "true",
+           "Select the compiler-owned compact shuffle/shared reduction topology. "
+           "False retains the standard MLIR gpu.all_reduce collective for every "
+           "row reduction while preserving the same read-once producer/epilogue "
+           "graph. C-Fixed and Schedule-Only use false; IntentIR may search both "
+           "concrete topologies under the same Q/D policy.">,
+    Option<"predicatePureValueIf", "predicate-pure-value-if", "bool", "true",
+           "Convert a runtime rank-0 pure tensor scf.if into eager arm "
+           "dataflow plus intent.select before row-graph admission. The "
+           "transformation is restricted to typed side-effect-free MLIR arms, "
+           "does not specialize the predicate, and records its actual count "
+           "in the concrete MLIR attributes.">,
+    Option<"rowsPerBlock", "rows-per-block", "unsigned", "1",
+           "Independent logical rows assigned to one block. 1 preserves the "
+           "one-block-per-row lowering. Values 2, 4, 8, 16, or 32 enable either "
+           "the fail-closed one-warp-per-row register path or a sorted-prefix "
+           "mapping with one prefix warp and a wider output group per row. "
+           "Unsupported graphs remain unmatched rather than falling back under "
+           "this candidate identity.">,
+    Option<"reductionParts", "reduction-parts", "unsigned", "1",
+           "Independent blocks assigned to one logical row for a true multi-stage "
+           "single-reduction lowering. Values 2--128 (powers of two) emit partial, "
+           "finalize, and—when a full-row result exists—epilogue launches sharing "
+           "compiler-managed global scratch. 1 preserves the single-launch paths. "
+           "Unsupported graphs fail closed; no atomic or Python-emitted fallback.">,
+    Option<"accumulatorChains", "accumulator-chains", "unsigned", "1",
+           "Independent per-thread accumulator chains used by the register row "
+           "reduction before the subgroup/workgroup tree. Legal values are 1, 2 "
+           "or 4. Values above one change the floating reduction tree, are Full-"
+           "only execution-domain candidates, and fail closed outside the single-"
+           "launch register path.">,
+  ];
+}
+
+def ConvertIntentPaddedRowReductionToGPU
+    : Pass<"convert-intent-padded-row-reduction-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lower a masked last-axis row dot followed by zero padding to "
+                "one gpu.launch.";
+  let description = [{
+    Recognizes the source-neutral structural family
+
+      masked A/B [1,M,P,N] -> f32 multiply -> sum(axis=3)
+      -> zero pad the P axis to Q
+
+    where the two dense-load masks are the same conjunction of `p < validP`
+    and `n < validN`.  It emits one destination-passing GPU kernel with one
+    or more blocks per M row and one thread per padded output column.  Full
+    short rows use aligned vector loads; runtime-short rows use guarded scalar
+    loads. Q-P threads write the authored zero pad. The matcher uses only
+    typed Intent/tensor dataflow and static shapes, never a function/kernel
+    name.  Non-matching graphs remain untouched for other registered families
+    or the generic lowering.
+  }];
+  let dependentDialects = [
+    "::mlir::gpu::GPUDialect",
+    "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect",
+    "::mlir::arith::ArithDialect",
+    "::mlir::func::FuncDialect",
+    "::mlir::vector::VectorDialect",
+  ];
+  let options = [
+    Option<"blockThreads", "block-threads", "unsigned", "0",
+           "Threads per block; 0 selects the smallest warp-multiple power of "
+           "two covering Q. Smaller values split Q across blocks; values must "
+           "be warp multiples not exceeding 1024.">,
+    Option<"vectorizeFullFeatures", "vectorize-full-features", "bool", "true",
+           "Use aligned vector loads on the full-feature scalar-thread path.">,
+    Option<"promoteRank0Scalars", "promote-rank0-scalars", "bool", "true",
+           "Capture valid-row/feature scalars by value from the host stub; "
+           "false loads their rank-0 buffers inside the GPU kernel.">,
+    Option<"reductionTopology", "reduction-topology", "std::string",
+           "\"serial-row\"",
+           "Concrete dot-reduction mapping. serial-row assigns one thread to "
+           "one padded output row and accumulates its feature strip serially. "
+           "subgroup-feature assigns one subgroup to a row and uses subgroup "
+           "shuffle reduction over contiguous feature lanes. The latter is an "
+           "observation-changing compiler state and must pass the backend Q/D "
+           "gate before performance selection.">,
+    Option<"rowsPerSubgroup", "rows-per-subgroup", "unsigned", "1",
+           "Number of independent output rows accumulated by each subgroup in "
+           "the subgroup-feature topology. Legal values are 1, 2, 4, or 8; "
+           "serial-row requires 1. This changes launch granularity and exposes "
+           "row-level ILP without changing an individual reduction tree.">,
+    Option<"lanesPerRow", "lanes-per-row", "unsigned", "32",
+           "Power-of-two subgroup width used by subgroup-feature reduction. "
+           "Legal values are 4, 8, 16, or 32 and must divide a hardware warp. "
+           "Narrow subgroups let one warp reduce several independent rows.">,
   ];
 }
 
@@ -127,15 +306,72 @@ def ConvertIntentElementwiseToGPU
            "Map an admitted equal-shape contiguous Row-only graph over one "
            "linear vec4 domain instead of launching one block per row.">,
     Option<"flatVectorWidth", "flat-vector-width", "unsigned", "4",
-           "Vector width for flatten-contiguous (2 or 4). Ignored by the "
+           "Vector width for flatten-contiguous (2, 4, or 8). Ignored by the "
            "default row schedule.">,
+    Option<"rowVectorWidth", "row-vector-width", "unsigned", "0",
+           "Vector width for the ordinary row elementwise schedule. 0 lets "
+           "the pass choose the largest legal contiguous packet; 1 forces "
+           "scalar row loads/stores and 2 or 4 requests an explicit packet. "
+           "The request is checked against the exact static row tile and the "
+           "same MLIR path, so it is a real schedule coordinate.">,
+    Option<"gridStrideUnroll", "grid-stride-unroll", "unsigned", "1",
+           "Static elements-per-thread unroll for the scalar flat grid-stride "
+           "state. Legal values are 1, 2, 4, or 8. Each block covers "
+           "block-threads*unroll contiguous logical elements before advancing "
+           "by the complete grid stride; inactive tail elements are guarded. "
+           "This is a target schedule coordinate, not a graph transformation.">,
+    Option<"logicalTileElements", "logical-tile-elements", "unsigned", "0",
+           "Logical contiguous elements assigned to one block before target "
+           "thread mapping; 0 selects the compiler default. A nonzero tile must "
+           "be a power of two, be divisible by block-threads, and assign at most "
+           "32 scalar elements to each thread. This coordinate preserves a C "
+           "tile independently from CUDA thread count and enables true retile.">,
+    Option<"promoteUniformScalars", "promote-uniform-scalars", "bool", "false",
+           "Capture rank-0 or singleton broadcast inputs by value from the "
+           "host launch stub. False retains the historical per-thread device "
+           "load as the schedule-only control.">,
+    Option<"pairedHeadReuse", "paired-head-reuse", "bool", "false",
+           "For an admitted paired last-axis rotation, map threads over "
+           "(batch, sequence, head-group, rotary pair), load the shared angle "
+           "once, and reuse it for the Q/K outputs in that bounded head group. "
+           "This Full-only traversal preserves pair-contiguous memory access "
+           "and each output's arithmetic order.">,
+    Option<"pairedHeadGroupSize", "paired-head-group-size", "unsigned", "4",
+           "Number of Q/K heads visited by one admitted paired-head-reuse "
+           "lane. Legal values are 2, 4, 8, or 16. This changes the traversal/"
+           "reuse topology and is searched only by Full; it is ignored when "
+           "paired-head-reuse is false.">,
+    Option<"pairedDirectPlane", "paired-direct-plane", "bool", "false",
+           "For an admitted three-plane paired rotation, derive the selected "
+           "plane index from the certified static sections and load only that "
+           "plane. The original select/add arithmetic is retained, while "
+           "unobserved read-only plane loads are eliminated.">,
+    Option<"cancelShiftedExp", "cancel-shifted-exp", "bool", "false",
+           "Recognize the typed execution-domain pattern exp(x-s)*exp(s) and "
+           "replace it with exp(x) before the ordinary elementwise lowering. "
+           "This is an observation-changing algebraic candidate: it is admitted "
+           "only when the whole live graph becomes a pure elementwise graph and "
+           "the backend Q/D correctness policy accepts the resulting numeric "
+           "evaluation. The default is false.">,
+    Option<"rowMaskZeroFill", "row-mask-zero-fill", "bool", "false",
+           "For the exact typed graph cast(mask[M]:i1)->f32 followed by the "
+           "pointwise contraction X[M,N]*mask[M], emit a uniform row branch. "
+           "False preserves cast-and-multiply; true skips X loads for false rows "
+           "and writes zero. The latter is an execution-domain Full state and "
+           "must pass Q/D because NaN/Inf times zero is observably different.">,
+    Option<"tanhApproximation", "tanh-approximation", "std::string",
+           "\"stable-ex2\"",
+           "Concrete f32 tanh evaluation state. stable-ex2 uses the existing "
+           "overflow-safe ex2/reciprocal expansion. native-ptx marks tanh ops "
+           "for the single-instruction PTX tanh.approx.f32 lowering. native-ptx "
+           "is observation-changing and must pass Q/D before timing.">,
   ];
 }
 
 def ConvertIntentGatherToGPU
     : Pass<"convert-intent-gather-to-gpu", "::mlir::ModuleOp"> {
-  let summary = "Lower a single intent.gather / intent.scatter (data-dependent "
-                "addressing) to one block-cooperative gpu.launch.";
+  let summary = "Lower intent.gather / intent.scatter data-dependent addressing "
+                "and an admitted two-level gather chain to gpu.launch.";
   let description = [{
     The C3 data-dependent-addressing pass. Recognizes a `func.func` whose body is
     exactly one `intent.gather` or one `intent.scatter` over rank-2 data producing
@@ -173,6 +409,11 @@ def ConvertIntentGatherToGPU
     Option<"blockThreads", "block-threads", "unsigned", "0",
            "Threads per block (block size over the free/column axis); 0 = auto "
            "(largest power-of-two <= min(cols,256) dividing cols).">,
+    Option<"composeGatherChain", "compose-gather-chain", "bool", "false",
+           "For an exact take(axis=0) -> along_axis(axis=1) gather chain, "
+           "compose the two runtime index maps and load only the final scalar. "
+           "False keeps the deterministic eager first-gather row topology. "
+           "This structural state is searched only by Full.">,
   ];
 }
 
@@ -724,6 +965,21 @@ def ConvertIntentContractionToGPUMMA
            "(swizzle-free bank-conflict avoidance for the ldmatrix reads). "
            "Must be a multiple of 8 (16-byte cp.async alignment) or 0 to "
            "disable. Autotuner knob.">,
+    Option<"warpsN", "warps-n", "unsigned", /*default=*/"1",
+           "Warp partitions along the block N tile. 1 keeps one 16-row warp "
+           "responsible for the full block-N span. 2, 4, or 8 split that span "
+           "between more warps, reducing accumulator registers per lane while "
+           "preserving the same mma.sync and output tile.">,
+    Option<"groupM", "group-m", "unsigned", /*default=*/"8",
+           "Consecutive M tiles in the flat block-id L2 swizzle. This is a "
+           "target schedule coordinate: larger groups retain one W/N tile "
+           "across more M blocks, while smaller groups shorten A-tile reuse "
+           "distance.">,
+    Option<"splitKParts", "split-k-parts", "unsigned", /*default=*/"1",
+           "Number of independent K partitions for the mma.sync contraction. "
+           "1 emits the single-stage kernel. 2 or 4 emit an f32 partial "
+           "scratch kernel followed by an ordered additive finalize/epilogue "
+           "kernel; admitted only for the exact bias-plus-dual-output graph.">,
   ];
 }
 
@@ -913,6 +1169,114 @@ def ConvertIntentFlashMMAToGPU
            "is the CORRECTNESS extension (every key tile is still visited + "
            "masked; the STAGE=1 fully-masked-tile skip is not applied). "
            "R-FLASH-3 attention-coverage extension.">,
+    Option<"certifiedFullAxisOnly", "certified-full-axis-only", "bool",
+           /*default=*/"false",
+           "Require the exact batch/head-explicit full-axis graph materialized "
+           "from a certified prefix/loop/epilogue J. This structural-search "
+           "entry rejects the historical normalized loop and B=H=1 live graph "
+           "so DirectLower cannot silently acquire the fused topology.">,
+    Option<"blockM", "block-m", "unsigned", /*default=*/"64",
+           "Query rows assigned to one CTA. Must be a positive multiple of the "
+           "16-row MMA tile; changing it is a schedule choice and does not alter "
+           "the certified key-scan recurrence.">,
+    Option<"blockN", "block-n", "unsigned", /*default=*/"64",
+           "Key rows consumed by one semantic scan/update step. The certified "
+           "structured path requires this to equal intent.loop tile_hint; this "
+           "prevents a backend schedule tile from silently changing the authored "
+           "floating-point recurrence.">,
+    Option<"directVMatrixLoad", "direct-v-matrix-load", "bool",
+           /*default=*/"false",
+           "Use ldmatrix.trans to form the PV B operand directly from natural "
+           "shared V[key,feature]. False retains the canonical materialized V^T "
+           "buffer; true is a Full structural state that removes that buffer, "
+           "one complete shared-memory traversal and its barrier.">,
+    Option<"directVRowPadding", "direct-v-row-padding", "unsigned",
+           /*default=*/"0",
+           "Extra f16 elements in each natural shared V row when using the direct "
+           "ldmatrix.trans path. Legal values are 0 and 8. The padded state reuses "
+           "the proven Flash-backward D-stride padding mechanism to change the "
+           "shared-bank mapping without changing any J-visible value.">,
+    Option<"materializeTmpRoundtrip", "materialize-tmp-roundtrip", "bool",
+           /*default=*/"false",
+           "Retain the certified loop's observable TMP store/load materialization "
+           "at every recurrence step and before the output epilogue. DirectLower "
+           "uses true; Full may remove those round trips only as an explicitly "
+           "searched, Q/D-checked materialization state.">,
+    Option<"pairedBMatrixLoads", "paired-b-matrix-loads", "bool",
+           /*default=*/"false",
+           "Pack two adjacent n8 B fragments into one ldmatrix.x4 for both QK "
+           "and PV, then split the returned registers in SSA. This reuses the "
+           "validated attention-backward loader and is a Full instruction-layout "
+           "state; it requires direct-v-matrix-load.">,
+    Option<"vectorizedQStaging", "vectorized-q-staging", "bool",
+           /*default=*/"false",
+           "Stage Q to shared memory with 16-byte vector load/store packets. "
+           "False retains DirectLower's scalar canonical staging; true reuses "
+           "the validated wide transaction shape from Flash backward as a Full "
+           "instruction-layout state.">,
+    Option<"streamPFragments", "stream-p-fragments", "bool",
+           /*default=*/"false",
+           "Generate each two-n8 probability fragment after the row maximum is "
+           "known and consume it immediately in the corresponding PV MMA. "
+           "False retains DirectLower's whole-tile P register materialization; "
+           "true is a Full register-lifetime topology that preserves the authored "
+           "128-key recurrence while avoiding a whole P tile live across PV.">,
+    Option<"scoreFragmentColumns", "score-fragment-columns", "int64_t",
+           /*default=*/"0",
+           "When non-zero, keep one authored block-n recurrence update but compute "
+           "its score matrix in smaller column fragments. The lowering first "
+           "derives the row maximum across all fragments, then recomputes QK one "
+           "fragment at a time and immediately consumes P in PV. This trades extra "
+           "tensor-core work for a lower live-register peak without changing the "
+           "authored reduction/update order. It must divide block-n, be a multiple "
+           "of 16, be smaller than block-n, and requires stream-p-fragments.">,
+    Option<"hopperWarpgroup", "hopper-warpgroup", "bool",
+           /*default=*/"false",
+           "Use the stock MLIR NVGPU warpgroup MMA abstraction for the two "
+           "FlashAttention contractions. This is a Hopper-only Full structure: "
+           "four warps cooperate on 64 query rows, QK is emitted as K*Q^T to "
+           "reuse natural K staging, and the authored online-softmax recurrence "
+           "is preserved between the two warpgroup contractions.">,
+    Option<"hopperHybridPV", "hopper-hybrid-pv", "bool",
+           /*default=*/"false",
+           "With hopper-warpgroup, use WGMMA only for QK, assemble P in the "
+           "existing register fragment layout, and use mma.sync with direct "
+           "natural-V ldmatrix loads for PV. This Hopper-only Full state removes "
+           "the P and delta shared-memory round trips while preserving the same "
+           "authored 128-key online-softmax update.">,
+    Option<"normalizedSoftmaxCarry", "normalized-softmax-carry", "bool",
+           /*default=*/"false",
+           "Represent the certified online-softmax recurrence with the standard "
+           "register-resident (row max, scaled mass, weighted accumulator) state. "
+           "This removes the per-key-tile log/exp round trip used by the Source "
+           "realization and reconstructs LSE once in the epilogue. It is a "
+           "Full-only execution-domain candidate and must pass Source/Q-D output "
+           "checks before timing.">,
+    Option<"compactQueryWarpMapping", "compact-query-warp-mapping", "bool",
+           /*default=*/"false",
+           "For block-m=128, keep one four-warp CTA and assign two 16-row query "
+           "fragments to each warp. Both fragments reuse the same staged K/V "
+           "tile while retaining independent register-resident softmax carries. "
+           "This is a Full-only implementation-structure candidate; the default "
+           "mapping keeps one 16-row fragment per warp.">,
+    Option<"hopperRegisterQK", "hopper-register-qk", "bool",
+           /*default=*/"false",
+           "With the Hopper hybrid-PV path, emit the QK warpgroup contraction "
+           "as NVVM WGMMA and consume its per-thread accumulator registers "
+           "directly in online softmax. This removes the score shared-memory "
+           "store, barrier, and reload while retaining MLIR/NVVM codegen.">,
+    Option<"hopperRegisterPV", "hopper-register-pv", "bool",
+           /*default=*/"false",
+           "With hopper-register-qk, store the probability tile once to "
+           "swizzled shared memory, execute PV with NVVM WGMMA, and keep the "
+           "weighted output accumulator as per-thread registers across the key "
+           "scan. This removes mma.sync PV and the delta shared round trip.">,
+    Option<"hopperAsyncKV", "hopper-async-kv", "bool",
+           /*default=*/"false",
+           "Stage Hopper K/V tiles with 16-byte nvgpu.device_async_copy "
+           "transactions instead of generic vector load/store pairs. The "
+           "single-buffer state waits before WGMMA; it removes intermediate "
+           "register traffic and is the prerequisite for a multistage ring.">,
   ];
   let dependentDialects = [
     "::mlir::gpu::GPUDialect",
@@ -923,6 +1287,8 @@ def ConvertIntentFlashMMAToGPU
     "::mlir::arith::ArithDialect",
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
+    "::mlir::LLVM::LLVMDialect",
+    "::mlir::NVVM::NVVMDialect",
   ];
 }
 
@@ -1090,11 +1456,32 @@ def ConvertIntentSplitKReduceVarargsToGPU
     "::mlir::arith::ArithDialect",
     "::mlir::math::MathDialect",
     "::mlir::func::FuncDialect",
+    "::mlir::vector::VectorDialect",
   ];
   let options = [
     Option<"rowsPerBlock", "rows-per-block", "int64_t", /*default=*/"4",
            "Number of independent output rows assigned to one block. Must be "
            "one of 1, 2, 4 or 8; one warp owns each row.">,
+    Option<"warpsPerRow", "warps-per-row", "int64_t", /*default=*/"1",
+           "Number of warps cooperatively partitioning the contiguous D axis of "
+           "one output row in the typed unrolled graph. Legal values are 1, 2, "
+           "4 or 8. Values above one require rows-per-block=1 and form a distinct "
+           "multi-warp D topology; the runtime-stride legacy graph fails closed.">,
+    Option<"dPartitions", "d-partitions", "int64_t", /*default=*/"1",
+           "Number of independent CTAs partitioning the contiguous D packets of "
+           "one output row in the typed unrolled graph. Legal values are 1, 2, "
+           "4 or 8. Values above one require rows-per-block=1 and "
+           "warps-per-row=1; the runtime-stride legacy graph fails closed.">,
+    Option<"vectorWidth", "vector-width", "int64_t", /*default=*/"1",
+           "Contiguous output-D packet width for the typed unrolled graph. "
+           "Legal values are 1, 2 or 4 and D must be divisible by the width. "
+           "The runtime-stride legacy graph remains scalar unless contiguous "
+           "D strides are proven by a future typed contract.">,
+    Option<"warpBroadcastScalars", "warp-broadcast-scalars", "bool", "false",
+           "Compute the per-row LSE maximum, split weights, and denominator in "
+           "lane zero once, then broadcast them through warp shuffles before "
+           "the cooperative D merge. False redundantly computes them in every "
+           "lane and is the fixed-structure schedule baseline.">,
   ];
 }
 

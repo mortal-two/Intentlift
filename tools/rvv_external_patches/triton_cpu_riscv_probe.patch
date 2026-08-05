@@ -1,0 +1,200 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c4c9db6..a7333cf 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -21,6 +21,8 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+ option(TRITON_BUILD_PYTHON_MODULE "Build Python Triton bindings" OFF)
+ option(TRITON_BUILD_PROTON "Build the Triton Proton profiler" ON)
+ option(TRITON_BUILD_UT "Build C++ Triton Unit Tests" ON)
++option(TRITON_BUILD_TOOLS "Build standalone Triton tools" ON)
++option(TRITON_BUILD_GSAN_RUNTIME "Build NVIDIA GSan device runtime" ON)
+ option(TRITON_BUILD_WITH_CCACHE "Build with ccache (if available)" ON)
+ option(TRITON_OFFLINE_BUILD "Build without downloading dependencies" OFF)
+ option(TRITON_EXT_ENABLED "Build with default visibility for Triton+LLVM symbol exposure to plugin extensions" OFF)
+@@ -496,8 +498,10 @@ endif()
+ find_package(Threads REQUIRED)
+
+ add_subdirectory(third_party/f2reduce)
+-add_subdirectory(bin)
+-add_subdirectory(test)
++if(TRITON_BUILD_TOOLS)
++  add_subdirectory(bin)
++  add_subdirectory(test)
++endif()
+
+ if(TRITON_BUILD_UT)
+   add_subdirectory(unittest)
+diff --git a/python/src/llvm.cc b/python/src/llvm.cc
+index e154786..b1cf46f 100644
+--- a/python/src/llvm.cc
++++ b/python/src/llvm.cc
+@@ -31,6 +31,7 @@
+ #include "llvm/Support/TargetSelect.h"
+ #include "llvm/Target/TargetMachine.h"
+ #include "llvm/TargetParser/Host.h"
++#include "llvm/TargetParser/SubtargetFeature.h"
+ #include "llvm/Transforms/IPO/AlwaysInliner.h"
+ #include "llvm/Transforms/InstCombine/InstCombine.h"
+ #include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
+@@ -64,6 +65,22 @@ using namespace llvm;
+
+ namespace {
+
++std::string getHostCPUFeatureString() {
++  llvm::SubtargetFeatures features;
++  const bool conservativeRISCV =
++      llvm::Triple(llvm::sys::getProcessTriple()).isRISCV64();
++  for (const auto &feature : llvm::sys::getHostCPUFeatures()) {
++    if (conservativeRISCV && feature.getKey() != "i" &&
++        feature.getKey() != "m" && feature.getKey() != "a" &&
++        feature.getKey() != "f" && feature.getKey() != "d" &&
++        feature.getKey() != "c" && feature.getKey() != "v" &&
++        feature.getKey() != "zfh" && feature.getKey() != "zvfh")
++      continue;
++    features.AddFeature(feature.getKey(), feature.getValue());
++  }
++  return features.getString();
++}
++
+ // Set an LLVM command-line option using addOccurrence (simulates command-line)
+ // and return its original value. Using addOccurrence instead of setValue is
+ // necessary because some LLVM passes (like schedulers) check whether the option
+@@ -842,8 +859,10 @@ void init_triton_llvm(py::module_ &m) {
+     if (!target) {
+       throw std::runtime_error("target lookup error: " + error);
+     }
++    auto cpu = llvm::sys::getHostCPUName();
++    auto features = getHostCPUFeatureString();
+     std::unique_ptr<llvm::TargetMachine> machine{target->createTargetMachine(
+-        mod->getTargetTriple(), llvm::sys::getHostCPUName(), "", {},
++        mod->getTargetTriple(), cpu, features, {},
+         llvm::Reloc::PIC_)};
+     mod->setDataLayout(machine->createDataLayout());
+   });
+@@ -869,8 +888,10 @@ void init_triton_llvm(py::module_ &m) {
+                 "lineno: " + std::to_string(error.getLineNo()));
+           }
+           auto triple = getDefaultTargerOrProcessTriple();
++          auto cpu = llvm::sys::getHostCPUName().str();
++          auto features = getHostCPUFeatureString();
+           res = translateLLVMIRToASM(
+-              *module, triple, llvm::sys::getHostCPUName().str(), "", {},
++              *module, triple, cpu, features, {},
+               enable_fp_fusion, /*isObject=*/false, /*canonicalizeGEP=*/false,
+               enable_fast_math);
+         }
+diff --git a/third_party/cpu/CMakeLists.txt b/third_party/cpu/CMakeLists.txt
+index 16a18b2..dcd6cf1 100644
+--- a/third_party/cpu/CMakeLists.txt
++++ b/third_party/cpu/CMakeLists.txt
+@@ -58,13 +58,20 @@ endif()
+
+ add_library(TritonCPURuntime SHARED ${TRITON_CPU_RUNTIME_SOURCES})
+ target_link_libraries(TritonCPURuntime PRIVATE ${TRITON_CPU_RUNTIME_LIBS})
++if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_SYSTEM_PROCESSOR MATCHES "riscv64")
++  target_link_options(TritonCPURuntime PRIVATE -rtlib=compiler-rt)
++endif()
+
+ # Build and link sleef
+-set(SLEEF_BUILD_SHARED_LIBS ON CACHE BOOL "Build sleef shared lib" FORCE)
+-set(SLEEF_BUILD_DFT OFF CACHE BOOL "Don't build sleef DFT lib" FORCE)
+-set(SLEEF_BUILD_GNUABI_LIBS OFF CACHE BOOL "Don't build sleef gnuabi libs" FORCE)
+-set(SLEEF_BUILD_TESTS OFF CACHE BOOL "Don't build sleef tests" FORCE)
+-set(SLEEF_BUILD_SCALAR_LIB OFF CACHE BOOL "libsleefscalar will not be built." FORCE)
+-add_subdirectory("${CMAKE_SOURCE_DIR}/third_party/sleef" sleef)
+-# Override sleef's output directory with our own
+-set_target_properties(sleef PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
++if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/sleef/CMakeLists.txt")
++  set(SLEEF_BUILD_SHARED_LIBS ON CACHE BOOL "Build sleef shared lib" FORCE)
++  set(SLEEF_BUILD_DFT OFF CACHE BOOL "Don't build sleef DFT lib" FORCE)
++  set(SLEEF_BUILD_GNUABI_LIBS OFF CACHE BOOL "Don't build sleef gnuabi libs" FORCE)
++  set(SLEEF_BUILD_TESTS OFF CACHE BOOL "Don't build sleef tests" FORCE)
++  set(SLEEF_BUILD_SCALAR_LIB OFF CACHE BOOL "libsleefscalar will not be built." FORCE)
++  add_subdirectory("${CMAKE_SOURCE_DIR}/third_party/sleef" sleef)
++  # Override sleef's output directory with our own
++  set_target_properties(sleef PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
++else()
++  message(STATUS "SLEEF unavailable; using generic libm lowering")
++endif()
+diff --git a/third_party/cpu/backend/compiler.py b/third_party/cpu/backend/compiler.py
+index 7b0e144..112c214 100644
+--- a/third_party/cpu/backend/compiler.py
++++ b/third_party/cpu/backend/compiler.py
+@@ -1,6 +1,7 @@
+ import functools
+ import hashlib
+ import os
++import subprocess
+ import tempfile
+ from pathlib import Path
+
+@@ -216,7 +217,7 @@ class CPUBackend(BaseBackend):
+             cpu.passes.ttcpuir.add_convert_dot_to_ukernels(pm, ukernels)
+             passes.common.add_canonicalizer(pm)
+             passes.common.add_cse(pm)
+-        else:
++        elif self.cpu_arch == "x86_64":
+             cpu.passes.ttcpuir.add_convert_dot_to_nanokernel(pm, ",".join(self.cpu_features))
+         convert_bf16_dot_product = ((self.cpu_arch == "aarch64" or self.cpu_arch == "armv8")
+                                     and 'fp-armv8' in self.cpu_features and 'neon' in self.cpu_features)
+@@ -332,10 +333,30 @@ class CPUBackend(BaseBackend):
+         with tempfile.TemporaryDirectory() as tmpdir:
+             asm_path = os.path.join(tmpdir, "kernel.s")
+             Path(asm_path).write_text(src)
++            link_input = asm_path
+             lib_dirs = cpu_driver.library_dirs
+-            libs = ["m", "TritonCPURuntime", "sleef"]
+-            ccflags = []
+-            so = _build("kernel", asm_path, tmpdir, lib_dirs, cpu_driver.include_dirs, libs, ccflags)
++            # The generic/RVV path does not select a SLEEF vector mapping.
++            # Linking it unconditionally makes otherwise generic CPU kernels
++            # unavailable on platforms without a SLEEF package.
++            libs = ["m", "TritonCPURuntime"]
++            ccflags = (
++                ["-march=rv64gcv_zfh_zvfh", "-mabi=lp64d"]
++                if llvm.get_cpu_tripple().startswith("riscv64-")
++                else []
++            )
++            if llvm.get_cpu_tripple().startswith("riscv64-"):
++                object_path = os.path.join(tmpdir, "kernel.o")
++                llvm_mc = os.environ.get("TRITON_RISCV_LLVM_MC", "llvm-mc")
++                subprocess.check_call([
++                    llvm_mc,
++                    "-triple", llvm.get_cpu_tripple(),
++                    "-mattr=+m,+a,+f,+d,+c,+v,+zfh,+zvfh",
++                    "-filetype=obj",
++                    "-o", object_path,
++                    asm_path,
++                ])
++                link_input = object_path
++            so = _build("kernel", link_input, tmpdir, lib_dirs, cpu_driver.include_dirs, libs, ccflags)
+             with open(so, "rb") as f:
+                 return f.read()
+
+diff --git a/third_party/nvidia/CMakeLists.txt b/third_party/nvidia/CMakeLists.txt
+index 6224239..dcc7cd8 100644
+--- a/third_party/nvidia/CMakeLists.txt
++++ b/third_party/nvidia/CMakeLists.txt
+@@ -3,6 +3,7 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
+ add_subdirectory(include)
+ add_subdirectory(lib)
+ if(TRITON_BUILD_PYTHON_MODULE)
++  if(TRITON_BUILD_GSAN_RUNTIME)
+   set(GSAN_RUNTIME_SRC "${triton_SOURCE_DIR}/python/triton/experimental/gsan/src/GSanLibrary.cu")
+   set(GSAN_RUNTIME_HDRS
+     "${triton_SOURCE_DIR}/python/triton/experimental/gsan/src/GSan.h"
+@@ -46,10 +47,13 @@ if(TRITON_BUILD_PYTHON_MODULE)
+       COMMENT "Building GSan runtime"
+       VERBATIM)
+   add_custom_target(TritonNVIDIAGSanRuntime ALL DEPENDS "${GSAN_RUNTIME_IR}")
++  endif()
+
+   add_triton_plugin(TritonNVIDIA ${CMAKE_CURRENT_SOURCE_DIR}/triton_nvidia.cc LINK_LIBS TritonNVIDIAGPUToLLVM NVGPUToLLVM)
+   target_link_libraries(TritonNVIDIA PRIVATE Python3::Module nanobind-static)
+-  add_dependencies(TritonNVIDIA TritonNVIDIAGSanRuntime)
++  if(TRITON_BUILD_GSAN_RUNTIME)
++    add_dependencies(TritonNVIDIA TritonNVIDIAGSanRuntime)
++  endif()
+ endif()
+ if(TRITON_BUILD_UT)
+   add_subdirectory(unittest)

@@ -52,6 +52,7 @@ class BufferRole(str, Enum):
 
 class BufferInitializer(str, Enum):
     RANDOM = "random"
+    STANDARD_NORMAL = "standard_normal"
     ZEROS = "zeros"
 
 
@@ -220,8 +221,13 @@ class TritonWorkloadAdapter:
     protocol: str = TRITON_WORKLOAD_ADAPTER_PROTOCOL
 
     def __post_init__(self) -> None:
-        if not self.case_id.startswith("high_performance:"):
-            raise ValueError("adapter case_id must reference the active registry")
+        if not self.case_id.startswith(
+            ("high_performance:", "scrc_canary:", "tilelang:")
+        ):
+            raise ValueError(
+                "adapter case_id must reference the active registry or an accepted "
+                "external Source namespace"
+            )
         buffers = tuple(
             item if isinstance(item, BufferBinding) else BufferBinding(*item)
             for item in self.buffers
@@ -710,6 +716,48 @@ def prepare_triton_workload(
         source=source,
         source_location=resolution.location,
         search_roots=(module_root,),
+    )
+
+
+def prepare_triton_source_workload(
+    adapter: TritonWorkloadAdapter,
+    source_path: str | Path,
+    *,
+    source_symbol: str,
+    source_location: str | None = None,
+) -> PreparedTritonWorkload:
+    """Prepare one exact certified Source outside the active registry."""
+
+    if not adapter.case_id.startswith(("scrc_canary:", "tilelang:")):
+        raise ValueError(
+            "explicit Source preparation is reserved for certified canaries "
+            "and accepted TileLang workload adapters"
+        )
+    path = Path(source_path).resolve()
+    source = path.read_text(encoding="utf-8")
+    entry = SCRCWorkloadEntry(
+        ordinal=0,
+        case_id=adapter.case_id,
+        suite=(
+            "tilelang"
+            if adapter.case_id.startswith("tilelang:")
+            else "scrc_canary"
+        ),
+        symbol=source_symbol,
+        mechanisms=("certified_source_reuse",),
+        source_module="intentir.certified_canary",
+        source_alignment="exact archived accepted Source",
+        lowering_status="certified",
+        evidence_refs=(),
+        representative_tier="certified_canary",
+        adapter_readiness="declared",
+    )
+    return _prepare_triton_workload_source(
+        adapter,
+        entry=entry,
+        source=source,
+        source_location=(source_location or str(path)),
+        search_roots=(path.parent,),
     )
 
 
@@ -2390,5 +2438,7 @@ __all__ = [
     "TRITON_WORKLOAD_ADAPTERS",
     "ScalarBinding",
     "TritonWorkloadAdapter",
+    "prepare_captured_triton_workload",
+    "prepare_triton_source_workload",
     "prepare_triton_workload",
 ]

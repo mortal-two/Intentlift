@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -41,8 +42,22 @@ class TileLangCompileCase:
             object.__setattr__(self, label, dims)
         if self.target != "cuda":
             raise ValueError("active TileLang Gate1 profile lowers to CUDA")
+        schedule = dict(self.schedule)
+        if any(
+            not isinstance(key, str)
+            or not key.isidentifier()
+            or "__" in key
+            for key in schedule
+        ):
+            raise ValueError("TileLang schedule keys must be safe identifiers")
+        if any(
+            not isinstance(value, (bool, int, float, str))
+            or (isinstance(value, float) and not math.isfinite(value))
+            for value in schedule.values()
+        ):
+            raise TypeError("TileLang schedule values must be finite JSON scalars")
         object.__setattr__(self, "parameters", parameters)
-        object.__setattr__(self, "schedule", dict(self.schedule))
+        object.__setattr__(self, "schedule", schedule)
 
     @property
     def interface(self) -> dict[str, Any]:

@@ -1,8 +1,0 @@
-{"file":".trellis/spec/project/constitution.md","reason":"Review for Gate1 relaxation, backend coupling, or kernel special cases."}
-{"file":".trellis/spec/ir/layers-abc.md","reason":"Check correct ownership of typed domain semantics."}
-{"file":".trellis/spec/ir/intent-program.md","reason":"Check complete typed handoff and digest binding."}
-{"file":".trellis/spec/verification/scrc-gate1.md","reason":"Check hard closure and live zero-intervention invariants."}
-{"file":".trellis/spec/verification/scrc-gate2.md","reason":"Check source/replay and source/scalar evidence, statuses, and no CUDA dependency."}
-{"file":".trellis/spec/project/code-layout.md","reason":"Check mature target-separated package boundaries and no umbrellas."}
-{"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/typed-domain-audit.md","reason":"Check implementation against the observed invalid forms and no-auto-rewrite decision."}
-{"file":".trellis/tasks/07-20-typed-layer-b-gate2/research/scalar-shape-audit.md","reason":"Check scalar changes do not use interpreter or unsafe post-Gate1 shape shrinking."}

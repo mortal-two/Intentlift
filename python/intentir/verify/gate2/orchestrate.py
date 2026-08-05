@@ -58,7 +58,7 @@ def _input_digest(values: Mapping[str, Any]) -> str:
     return digest.hexdigest()
 
 
-def _clone_values(values: Mapping[str, Any]) -> dict[str, Any]:
+def clone_gate2_values(values: Mapping[str, Any]) -> dict[str, Any]:
     """Give every Gate2 leg an isolated view of the committed pre-state."""
 
     result: dict[str, Any] = {}
@@ -68,6 +68,9 @@ def _clone_values(values: Mapping[str, Any]) -> dict[str, Any]:
         else:
             result[name] = copy.deepcopy(value)
     return result
+
+
+_clone_values = clone_gate2_values
 
 
 @dataclass(frozen=True)
@@ -299,4 +302,5 @@ __all__ = [
     "Gate2Case",
     "Gate2Runner",
     "Gate2Suite",
+    "clone_gate2_values",
 ]

@@ -1,8 +1,27 @@
-"""RISC-V target backend boundary.
+"""RISC-V Vector production backend."""
 
-No RISC-V lowering is claimed yet.  The package exists so target-neutral
-callers can depend on an explicit namespace without adding RISC-V conditionals
-to the CUDA implementation when that backend is introduced.
-"""
+from .compile import (
+    RiscvCompiledObject,
+    RiscvLoweringCandidate,
+    RiscvSchedule,
+    RiscvTransformationRecord,
+    RiscvTransformationState,
+    compile_riscv_object,
+)
+from .contract import (
+    RiscvContractError,
+    RiscvContractView,
+    derive_riscv_contract_view,
+)
 
-__all__: list[str] = []
+__all__ = [
+    "RiscvCompiledObject",
+    "RiscvContractError",
+    "RiscvContractView",
+    "RiscvLoweringCandidate",
+    "RiscvSchedule",
+    "RiscvTransformationRecord",
+    "RiscvTransformationState",
+    "compile_riscv_object",
+    "derive_riscv_contract_view",
+]

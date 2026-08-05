@@ -342,8 +342,114 @@ class TritonRunner:
             return ExecutionResult(leg, False, error=f"{type(exc).__name__}: {exc}")
 
 
+class PreparedTritonInvocation:
+    """Load and bind once, then expose a no-synchronization launch closure."""
+
+    def __init__(
+        self,
+        program: KernelSource,
+        spec: TritonExecutionSpec,
+        values: Mapping[str, Any],
+    ) -> None:
+        import torch
+
+        self._temporary = tempfile.TemporaryDirectory(
+            prefix="intentir-triton-prepared-"
+        )
+        module, self._module_name, self.frontend_compat = _load_module(
+            program, Path(self._temporary.name)
+        )
+        self._kernel = getattr(module, program.function)
+        self._grid = tuple(int(dim) for dim in spec.grid)
+        self._schedule = dict(spec.schedule)
+        self._device = spec.device
+        self._launch_args: dict[str, Any] = {}
+        self.outputs: dict[str, Any] = {}
+        self._mutable_input_resets: list[tuple[Any, Any]] = []
+        for argument in spec.arguments:
+            if argument.role is ArgumentRole.NONE:
+                self._launch_args[argument.name] = None
+                continue
+            if argument.role is ArgumentRole.SCALAR:
+                scalar = (
+                    values[argument.value_key]
+                    if argument.value_key is not None
+                    else argument.value
+                )
+                if isinstance(scalar, np.ndarray) and scalar.size == 1:
+                    scalar = scalar.item()
+                elif isinstance(scalar, np.generic):
+                    scalar = scalar.item()
+                self._launch_args[argument.name] = scalar
+                continue
+            dtype = _torch_dtype(torch, argument.dtype or "float32")
+            if argument.role is ArgumentRole.OUTPUT:
+                tensor = _output_tensor(
+                    torch,
+                    shape=tuple(argument.shape or ()),
+                    dtype=dtype,
+                    device=spec.device,
+                    strides=argument.strides,
+                )
+                self.outputs[argument.output_key or argument.name] = tensor
+            else:
+                raw = np.asarray(values[argument.value_key])
+                tensor = _input_tensor(
+                    torch,
+                    raw,
+                    dtype=dtype,
+                    device=spec.device,
+                    strides=argument.strides,
+                )
+                if argument.role is ArgumentRole.INOUT:
+                    self.outputs[argument.output_key or argument.name] = tensor
+                    self._mutable_input_resets.append((tensor, tensor.clone()))
+            self._launch_args[argument.name] = tensor
+
+    def launch(self) -> None:
+        _launch_by_name(
+            self._kernel,
+            self._grid,
+            self._launch_args,
+            self._schedule,
+        )
+
+    def thunk(self):
+        return self.launch
+
+    def reset_mutable_inputs(self) -> None:
+        for destination, pristine in self._mutable_input_resets:
+            destination.copy_(pristine)
+
+    def copied_outputs(self) -> dict[str, np.ndarray]:
+        return {
+            key: tensor.detach().cpu().numpy().copy()
+            for key, tensor in self.outputs.items()
+        }
+
+    def close(self) -> None:
+        module_name = getattr(self, "_module_name", None)
+        if module_name is not None:
+            sys.modules.pop(module_name, None)
+            self._module_name = None
+        temporary = getattr(self, "_temporary", None)
+        if temporary is not None:
+            temporary.cleanup()
+            self._temporary = None
+
+    def __enter__(self) -> "PreparedTritonInvocation":
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
+
+
 __all__ = [
     "ArgumentRole",
+    "PreparedTritonInvocation",
     "TritonArgument",
     "TritonExecutionSpec",
     "TritonRunner",

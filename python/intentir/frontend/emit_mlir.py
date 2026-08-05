@@ -620,6 +620,24 @@ def _infer_op(
                 f"conflicts with declared shape {declared}"
             )
         return inferred
+    if op.op == "value_if":
+        if op.positive is None or op.negative is None:
+            raise ValueError("value_if requires two explicit arms")
+        if op.predicate in env and env[op.predicate] != []:
+            raise ValueError("value_if predicate must be a rank-0 tensor")
+        declared = _op_declared_shape(op, fold, extents)
+        yields = [op.positive.yield_value, op.negative.yield_value]
+        known = [env[name] for name in yields if name in env]
+        if any(shape != known[0] for shape in known[1:]):
+            raise ValueError("value_if arm yields have different shapes")
+        if declared is not None and any(shape != declared for shape in known):
+            raise ValueError(
+                f"value_if result {op.result!r} shape {declared} differs "
+                "from an arm yield"
+            )
+        return list(declared if declared is not None else known[0]) if (
+            declared is not None or known
+        ) else None
     if op.op == "concat":
         if any(o not in env for o in op.operands):
             return None
@@ -700,7 +718,8 @@ def _infer_op(
 
 
 _CMP_FNS = {"gt", "ge", "lt", "le", "eq", "ne",
-            "logical_and", "logical_or", "logical_xor", "isclose"}
+            "logical_and", "logical_or", "logical_xor", "and", "or", "xor",
+            "isclose"}
 # map_unary fns whose result is an i1 (finiteness predicates + i1 complement).
 _U_TO_I1 = {"isnan", "isinf", "isfinite", "logical_not"}
 
@@ -718,10 +737,10 @@ def _normalize_dtype(value: object, context: str) -> str:
     return dtype
 
 
-def _value_dimension_function_attr(
+def _value_dimension_attribute(
     fn: IntentFunction,
     equalities: Sequence[tuple[int, int]],
-) -> str:
+) -> str | None:
     """Render the closed J-derived rank-0 scalar equality contract.
 
     The pair index is an ``IntentFunction.inputs`` index, which is exactly the
@@ -780,17 +799,95 @@ def _value_dimension_function_attr(
         seen.add(argument_index)
         checked.append((argument_index, value))
     if not checked:
-        return ""
+        return None
     flattened = ", ".join(
         str(item)
         for equality in sorted(checked)
         for item in equality
     )
-    return (
-        " attributes {intent.scalar_equalities = array<i64: "
-        + flattened
-        + ">}"
-    )
+    return "intent.scalar_equalities = array<i64: " + flattened + ">"
+
+
+def _function_attributes(
+    fn: IntentFunction,
+    *,
+    value_dimension_equalities: Sequence[tuple[int, int]],
+    inplace_outputs: Sequence[int],
+    paired_rotation: tuple[str, tuple[int, int, int, int], tuple[int, ...]]
+    | None,
+) -> str:
+    attributes: list[str] = []
+    equality = _value_dimension_attribute(fn, value_dimension_equalities)
+    if equality is not None:
+        attributes.append(equality)
+
+    if inplace_outputs:
+        if len(inplace_outputs) != len(fn.outputs):
+            raise ValueError(
+                "emit_mlir: inplace output mapping must cover every result"
+            )
+        checked: list[int] = []
+        for output_index, argument_index in enumerate(inplace_outputs):
+            if (
+                isinstance(argument_index, bool)
+                or not isinstance(argument_index, int)
+                or argument_index < -1
+                or argument_index >= len(fn.inputs)
+            ):
+                raise ValueError("emit_mlir: invalid inplace input index")
+            if argument_index >= 0:
+                source = fn.inputs[argument_index]
+                output = fn.outputs[output_index]
+                if source.dtype != output.dtype or source.shape != output.shape:
+                    raise ValueError(
+                        "emit_mlir: inplace source/result tensor types differ"
+                    )
+            checked.append(argument_index)
+        flattened = ", ".join(str(item) for item in checked)
+        attributes.append(f"intent.inplace = array<i64: {flattened}>")
+
+    if paired_rotation is not None:
+        layout, input_indices, sections = paired_rotation
+        if layout not in {"shared_position", "three_plane", "interleaved"}:
+            raise ValueError("emit_mlir: unknown paired rotation layout")
+        if (
+            len(input_indices) != 4
+            or len(set(input_indices)) != 4
+            or any(
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or index < 0
+                or index >= len(fn.inputs)
+                for index in input_indices
+            )
+        ):
+            raise ValueError("emit_mlir: invalid paired rotation input mapping")
+        if layout == "three_plane":
+            if len(sections) != 3 or any(
+                isinstance(item, bool) or not isinstance(item, int) or item <= 0
+                for item in sections
+            ):
+                raise ValueError("emit_mlir: invalid three-plane sections")
+        elif sections:
+            raise ValueError(
+                "emit_mlir: non-three-plane rotation has no sections"
+            )
+        arguments = ", ".join(str(item) for item in input_indices)
+        attributes.extend(
+            (
+                'intent.paired_rotation_version = '
+                '"intentir.paired-last-axis-rotation.v1"',
+                f'intent.paired_rotation = "{layout}"',
+                f"intent.paired_rotation_inputs = array<i64: {arguments}>",
+            )
+        )
+        if sections:
+            values = ", ".join(str(item) for item in sections)
+            attributes.append(
+                f"intent.paired_rotation_sections = array<i64: {values}>"
+            )
+
+    return "" if not attributes else " attributes {" + ", ".join(attributes) + "}"
 
 
 def _promote_dtype(lhs: str | None, rhs: str | None) -> str | None:
@@ -882,6 +979,17 @@ def _infer_op_dtypes(op: IntentOp, dtypes: dict[str, str]) -> dict[str, str]:
         ]
     elif op.op == "select":
         inferred = [_merge_operand_dtypes(op, dtypes, start=1)]
+    elif op.op == "value_if":
+        if op.positive is None or op.negative is None:
+            raise ValueError("value_if requires two explicit arms")
+        arm_dtypes = [
+            dtypes.get(op.positive.yield_value),
+            dtypes.get(op.negative.yield_value),
+        ]
+        known = [dtype for dtype in arm_dtypes if dtype is not None]
+        if len(set(known)) > 1:
+            raise ValueError("value_if arm yields have different dtypes")
+        inferred = [_declared_op_dtype(op) or (known[0] if known else None)]
     elif op.op in {
         "scan", "transpose", "gather", "scatter", "masked_select",
         "masked_scatter", "concat", "pad", "tile", "flip", "triu",
@@ -945,6 +1053,61 @@ def _infer_body_dtypes(
 ) -> bool:
     changed = False
     for op in body:
+        if op.op == "loop":
+            # A semantic loop is a region operation.  Its scan block arguments
+            # inherit the source element type; carry block arguments and results
+            # inherit the authored state type (or, for older artifacts, the
+            # initializer/yield type).  Seed those region values before walking
+            # the body so nested loops use the same inference as top-level ones.
+            for scan in op.scan:
+                source_dtype = dtypes.get(scan.source)
+                if source_dtype is not None:
+                    changed |= _record_dtype(
+                        dtypes, scan.name, source_dtype, "loop scan slice"
+                    )
+            for state in op.carry:
+                declared = (
+                    _normalize_dtype(
+                        state.type.dtype, "loop carry result type"
+                    )
+                    if state.type is not None
+                    else None
+                )
+                state_dtype = declared or dtypes.get(state.init_value)
+                if state_dtype is not None:
+                    changed |= _record_dtype(
+                        dtypes,
+                        state.body_argument,
+                        state_dtype,
+                        "loop carry block argument",
+                    )
+                    changed |= _record_dtype(
+                        dtypes,
+                        state.result_value,
+                        state_dtype,
+                        "loop carry result",
+                    )
+            changed |= _infer_body_dtypes(op.body, dtypes)
+            for state in op.carry:
+                yielded_dtype = dtypes.get(state.next_value)
+                if yielded_dtype is None:
+                    continue
+                changed |= _record_dtype(
+                    dtypes,
+                    state.body_argument,
+                    yielded_dtype,
+                    "loop yielded carry",
+                )
+                changed |= _record_dtype(
+                    dtypes,
+                    state.result_value,
+                    yielded_dtype,
+                    "loop result",
+                )
+            continue
+        for arm in (op.positive, op.negative):
+            if arm is not None:
+                changed |= _infer_body_dtypes(arm.body, dtypes)
         for name, dtype in _infer_op_dtypes(op, dtypes).items():
             changed |= _record_dtype(dtypes, name, dtype, op.op)
     return changed
@@ -962,7 +1125,9 @@ def _flat_dtypes(fn: IntentFunction) -> dict[str, str]:
             _normalize_dtype(tensor.dtype, f"output {tensor.name!r}"),
             "function output ABI",
         )
-    _infer_body_dtypes(fn.body, dtypes)
+    for _ in range(len(fn.body) + 3):
+        if not _infer_body_dtypes(fn.body, dtypes):
+            break
     for tensor in fn.outputs:
         declared = _normalize_dtype(tensor.dtype, f"output {tensor.name!r}")
         actual = dtypes.get(tensor.name)
@@ -1080,12 +1245,48 @@ def _mlir_f(v, dtype: str = "f64") -> str:
     return s
 
 
+def _mlir_dense_float(v, dtype: str) -> str:
+    """Format one dense floating literal, including IEEE non-finite values."""
+
+    value = float(v)
+    if math.isfinite(value):
+        return _mlir_f(value)
+    normalized = dtype.removeprefix("torch.").lower()
+    encodings = {
+        "f16": ("0x7C00", "0xFC00", "0x7E00"),
+        "float16": ("0x7C00", "0xFC00", "0x7E00"),
+        "bf16": ("0x7F80", "0xFF80", "0x7FC0"),
+        "bfloat16": ("0x7F80", "0xFF80", "0x7FC0"),
+        "f32": ("0x7F800000", "0xFF800000", "0x7FC00000"),
+        "float32": ("0x7F800000", "0xFF800000", "0x7FC00000"),
+        "f64": (
+            "0x7FF0000000000000",
+            "0xFFF0000000000000",
+            "0x7FF8000000000000",
+        ),
+        "float64": (
+            "0x7FF0000000000000",
+            "0xFFF0000000000000",
+            "0x7FF8000000000000",
+        ),
+    }
+    if normalized not in encodings:
+        raise ValueError(
+            f"emit_mlir: non-finite dense literal has unsupported dtype {dtype!r}"
+        )
+    positive_inf, negative_inf, quiet_nan = encodings[normalized]
+    if math.isnan(value):
+        return quiet_nan
+    return negative_inf if value < 0 else positive_inf
+
+
 def _infer_body(
     body: list[IntentOp],
     env: dict[str, list[int]],
     fold: int,
     extents: dict[str, int] | None = None,
     broadcast_axes: BroadcastAxes | None = None,
+    loop_schedule_tile: int | None = None,
 ) -> None:
     for _ in range(len(body) + 2):
         changed = False
@@ -1137,6 +1338,85 @@ def _infer_body(
                     f"with result constraint {inferred_operand}"
                 )
         for op in body:
+            if op.op == "loop":
+                if op.trip is None:
+                    raise ValueError("emit_mlir: loop requires a semantic trip axis")
+                tile = _tile(op, extents or {}, loop_schedule_tile)
+                for scan in op.scan:
+                    source_shape = env.get(scan.source)
+                    if source_shape is None:
+                        continue
+                    axis = int(scan.axis) - fold
+                    if axis < 0 or axis >= len(source_shape):
+                        raise ValueError(
+                            "emit_mlir: loop scan axis is outside its source rank"
+                        )
+                    slice_shape = list(source_shape)
+                    slice_shape[axis] = tile
+                    if env.get(scan.name) != slice_shape:
+                        env[scan.name] = slice_shape
+                        changed = True
+                for state in op.carry:
+                    declared = None
+                    if state.type is not None:
+                        declared = _resolve(
+                            state.type.shape, extents or {}
+                        )[fold:]
+                    init_shape = env.get(state.init_value)
+                    state_shape = declared or init_shape
+                    if state_shape is not None:
+                        if init_shape is not None and declared is not None and (
+                            init_shape != declared
+                        ):
+                            raise ValueError(
+                                "emit_mlir: loop carry initializer shape differs "
+                                "from its authored state type"
+                            )
+                        if env.get(state.body_argument) != state_shape:
+                            env[state.body_argument] = list(state_shape)
+                            changed = True
+                before = dict(env)
+                body_extents = dict(extents or {})
+                body_extents[op.trip.axis] = tile
+                _infer_body(
+                    op.body,
+                    env,
+                    fold,
+                    body_extents,
+                    broadcast_axes,
+                    loop_schedule_tile,
+                )
+                changed |= env != before
+                for state in op.carry:
+                    state_shape = env.get(state.body_argument)
+                    yielded_shape = env.get(state.next_value)
+                    if (
+                        state_shape is not None
+                        and yielded_shape is not None
+                        and state_shape != yielded_shape
+                    ):
+                        raise ValueError(
+                            "emit_mlir: loop yielded value shape differs from carry"
+                        )
+                    result_shape = yielded_shape or state_shape
+                    if result_shape is not None and (
+                        env.get(state.result_value) != result_shape
+                    ):
+                        env[state.result_value] = list(result_shape)
+                        changed = True
+                continue
+            for arm in (op.positive, op.negative):
+                if arm is not None:
+                    before = dict(env)
+                    _infer_body(
+                        arm.body,
+                        env,
+                        fold,
+                        extents,
+                        broadcast_axes,
+                        loop_schedule_tile,
+                    )
+                    changed |= env != before
             sh = _infer_op(op, env, fold, extents, broadcast_axes)
             if sh is None:
                 continue
@@ -1157,6 +1437,7 @@ class _Printer:
         dtypes: dict[str, str],
         broadcast_axes: BroadcastAxes | None = None,
         proven_index_bounds: IndexBoundsProjection | None = None,
+        loop_schedule_tile: int | None = None,
     ) -> None:
         self.lines: list[str] = []
         self._n = 0
@@ -1164,6 +1445,7 @@ class _Printer:
         self.dtypes = dtypes
         self.broadcast_axes = broadcast_axes or {}
         self.proven_index_bounds = proven_index_bounds or frozenset()
+        self.loop_schedule_tile = loop_schedule_tile
 
     def _ttn(self, name: str, env: dict[str, list[int]]) -> str:
         """Tensor type for one JSON value from the inferred dtype environment."""
@@ -1268,6 +1550,168 @@ class _Printer:
                 extents: dict[str, int] | None = None,
                 node_ref: str | None = None) -> None:
         a = op.attrs
+        if op.op == "loop":
+            if op.trip is None or not op.carry or not op.scan:
+                raise ValueError(
+                    "emit_mlir: loop requires trip, scan inputs, and carry state"
+                )
+            if len(op.yields) != len(op.carry):
+                raise ValueError("emit_mlir: loop carry/yield arity mismatch")
+            resolved_extents = dict(extents or {})
+            tile = _tile(op, resolved_extents, self.loop_schedule_tile)
+            body_extents = dict(resolved_extents)
+            body_extents[op.trip.axis] = tile
+            scan_values: list[str] = []
+            scan_types: list[str] = []
+            scan_axes: list[str] = []
+            for scan in op.scan:
+                if scan.source not in self.ssa:
+                    raise ValueError(
+                        f"emit_mlir: loop scan source {scan.source!r} is unavailable"
+                    )
+                scan_values.append(self.ssa[scan.source])
+                scan_types.append(self._ttn(scan.source, env))
+                scan_axes.append(f"{int(scan.axis) - fold} : i64")
+
+            init_values: list[str] = []
+            init_types: list[str] = []
+            result_types: list[str] = []
+            for state in op.carry:
+                if state.init_value not in self.ssa:
+                    raise ValueError(
+                        f"emit_mlir: loop carry init {state.init_value!r} is unavailable"
+                    )
+                init_values.append(self.ssa[state.init_value])
+                init_types.append(self._ttn(state.init_value, env))
+                result_types.append(self._ttn(state.result_value, env))
+
+            self._n += 1
+            loop_value = f"%intentir_loop_{self._n}"
+            self.lines.append(
+                f"{indent}{loop_value}:{len(op.carry)} = intent.loop "
+                f"scan({', '.join(scan_values)} : {', '.join(scan_types)}) "
+                f"init({', '.join(init_values)} : {', '.join(init_types)}) "
+                f"{{scan_axes = [{', '.join(scan_axes)}], "
+                f"tile_hint = {tile} : i64}} -> {', '.join(result_types)} do {{"
+            )
+
+            outer_ssa = dict(self.ssa)
+            block_args: list[str] = []
+            for scan in op.scan:
+                block = self.fresh(scan.name)
+                block_args.append(f"{block}: {self._ttn(scan.name, env)}")
+            for state in op.carry:
+                block = self.fresh(state.body_argument)
+                block_args.append(
+                    f"{block}: {self._ttn(state.body_argument, env)}"
+                )
+            self.lines.append(f"{indent}^bb0({', '.join(block_args)}):")
+            for child_index, child in enumerate(op.body):
+                self.emit_op(
+                    child,
+                    env,
+                    fold,
+                    indent=indent + "  ",
+                    extents=body_extents,
+                    node_ref=(
+                        f"{node_ref}.body[{child_index}]"
+                        if node_ref is not None
+                        else None
+                    ),
+                )
+            yielded_values = []
+            yielded_types = []
+            for yielded in op.yields:
+                if yielded not in self.ssa:
+                    raise ValueError(
+                        f"emit_mlir: loop yield {yielded!r} is unavailable"
+                    )
+                yielded_values.append(self.ssa[yielded])
+                yielded_types.append(self._ttn(yielded, env))
+            self.lines.append(
+                f"{indent}  intent.yield {', '.join(yielded_values)} : "
+                f"{', '.join(yielded_types)}"
+            )
+            self.lines.append(f"{indent}}}")
+            self.ssa = outer_ssa
+            for index, state in enumerate(op.carry):
+                self.ssa[state.result_value] = f"{loop_value}#{index}"
+            return
+        if op.op == "value_if":
+            if (
+                not isinstance(op.result, str)
+                or op.positive is None
+                or op.negative is None
+                or not isinstance(op.predicate, str)
+            ):
+                raise ValueError(
+                    "emit_mlir: value_if requires one result, predicate, and two arms"
+                )
+            if env.get(op.predicate) != []:
+                raise ValueError(
+                    "emit_mlir: value_if predicate must be a rank-0 tensor"
+                )
+            if self.dtypes.get(op.predicate) != "i1":
+                raise ValueError("emit_mlir: value_if predicate must have i1 dtype")
+
+            condition_tensor = self.ssa[op.predicate]
+            self._n += 1
+            condition = f"%{op.result}_condition_{self._n}"
+            self.lines.append(
+                f"{indent}{condition} = tensor.extract {condition_tensor}[] : "
+                f"{self._ttn(op.predicate, env)}"
+            )
+            self._n += 1
+            result = f"%{op.result}_{self._n}"
+            result_type = self._ttn(op.result, env)
+            self.lines.append(
+                f"{indent}{result} = scf.if {condition} -> ({result_type}) {{"
+            )
+
+            outer_ssa = dict(self.ssa)
+
+            def emit_arm(arm, arm_name: str) -> None:
+                self.ssa = dict(outer_ssa)
+                for child_index, child in enumerate(arm.body):
+                    self.emit_op(
+                        child,
+                        env,
+                        fold,
+                        indent=indent + "  ",
+                        extents=extents,
+                        node_ref=(
+                            f"{node_ref}.{arm_name}[{child_index}]"
+                            if node_ref is not None
+                            else None
+                        ),
+                    )
+                yielded = arm.yield_value
+                if yielded not in self.ssa:
+                    raise ValueError(
+                        f"emit_mlir: value_if {arm_name} arm yield "
+                        f"{yielded!r} is unavailable"
+                    )
+                if env.get(yielded) != env[op.result]:
+                    raise ValueError(
+                        f"emit_mlir: value_if {arm_name} arm yield shape "
+                        "differs from its result"
+                    )
+                if self.dtypes.get(yielded) != self.dtypes.get(op.result):
+                    raise ValueError(
+                        f"emit_mlir: value_if {arm_name} arm yield dtype "
+                        "differs from its result"
+                    )
+                self.lines.append(
+                    f"{indent}  scf.yield {self.ssa[yielded]} : {result_type}"
+                )
+
+            emit_arm(op.positive, "positive")
+            self.lines.append(f"{indent}}} else {{")
+            emit_arm(op.negative, "negative")
+            self.lines.append(f"{indent}}}")
+            self.ssa = outer_ssa
+            self.ssa[op.result] = result
+            return
         if op.op == "cast":
             to = _cast_target_dtype(a)
             operand = op.operands[0]
@@ -1898,6 +2342,10 @@ def emit_module(
     proven_index_bounds: IndexBoundsProjection | None = None,
     value_dimension_equalities: Sequence[tuple[int, int]] = (),
     output_values: Mapping[str, str] | None = None,
+    inplace_outputs: Sequence[int] = (),
+    paired_rotation: tuple[str, tuple[int, int, int, int], tuple[int, ...]]
+    | None = None,
+    loop_schedule_tile: int | None = None,
 ) -> str:
     """A flat (loop-free) IntentFunction as an executable ``func.func``.
 
@@ -1906,8 +2354,6 @@ def emit_module(
     are returned. Covers softmax / layernorm / rmsnorm / silu / gelu / matmul /
     elementwise — every kernel whose body is a straight-line tensor graph.
     """
-    if any(o.op == "loop" for o in fn.body):
-        raise ValueError("emit_module: function has a loop; use emit_loop_module")
     extents = dict(dims)
     env: dict[str, list[int]] = {}
     for t in fn.inputs:
@@ -1949,10 +2395,22 @@ def emit_module(
                 "logical output shapes"
             )
         env[returned_value] = output_shape
-    _infer_body(fn.body, env, fold, extents, broadcast_axes)
+    _infer_body(
+        fn.body,
+        env,
+        fold,
+        extents,
+        broadcast_axes,
+        loop_schedule_tile,
+    )
 
     dtypes = _flat_dtypes(fn)
-    p = _Printer(dtypes, broadcast_axes, proven_index_bounds)
+    p = _Printer(
+        dtypes,
+        broadcast_axes,
+        proven_index_bounds,
+        loop_schedule_tile,
+    )
     args = [f"{p.arg(t.name)}: {p._ttn(t.name, env)}" for t in fn.inputs]
     for index, op in enumerate(fn.body):
         p.emit_op(
@@ -1986,8 +2444,11 @@ def emit_module(
     # function signature matches the value actually produced.
     otys = ", ".join(p._ttn(output, env) for output, _value in outs)
     name = _sanitize_mlir_symbol(fn.name if func_name is None else func_name)
-    function_attrs = _value_dimension_function_attr(
-        fn, value_dimension_equalities
+    function_attrs = _function_attributes(
+        fn,
+        value_dimension_equalities=value_dimension_equalities,
+        inplace_outputs=inplace_outputs,
+        paired_rotation=paired_rotation,
     )
 
     head = (f"// Generated by intentir.frontend.emit_mlir from {fn.name} "

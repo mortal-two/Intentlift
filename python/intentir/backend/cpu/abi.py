@@ -12,6 +12,8 @@ from typing import Sequence
 
 import numpy as np
 
+from intentir.runtime_dtype import numpy_bfloat16_dtype
+
 
 CPU_MEMREF_ABI_PROTOCOL = "intentir_cpu_ranked_memref_abi_v1"
 CPU_ENTRY_SYMBOL = "intentir_cpu_entry_v1"
@@ -79,13 +81,11 @@ def mlir_element_type(dtype: str) -> str:
 
 
 def numpy_dtype(dtype: str) -> np.dtype:
-    """Return the exact runtime dtype, rejecting non-portable BF16 storage."""
+    """Return the exact runtime dtype, including registered BF16 storage."""
 
     element_type = mlir_element_type(dtype)
     if element_type == "bf16":
-        raise CPUBackendUnsupportedError(
-            "CPU memref ABI does not have a portable NumPy bfloat16 storage type"
-        )
+        return numpy_bfloat16_dtype()
     return _NUMPY_DTYPES[element_type]
 
 

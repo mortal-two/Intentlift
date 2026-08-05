@@ -1,6 +1,0 @@
-{
-  "diagnostic": "Gate1 source compilation failed; it is not a closure verdict",
-  "failure_class": "SCRCInfrastructureError",
-  "lift_records": 1,
-  "replay_writers": 1
-}

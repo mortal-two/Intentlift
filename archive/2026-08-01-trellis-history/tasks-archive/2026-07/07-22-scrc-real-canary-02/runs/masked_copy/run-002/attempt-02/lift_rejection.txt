@@ -1,1 +1,0 @@
-SchemaError: portable scope 'q0' definitions must exactly match derived J values; missing=[], extra=['x0']

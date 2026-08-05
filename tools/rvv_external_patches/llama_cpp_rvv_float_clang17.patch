@@ -1,0 +1,49 @@
+diff --git a/ggml/src/ggml-cpu/CMakeLists.txt b/ggml/src/ggml-cpu/CMakeLists.txt
+index 836bae4..8a1a17b 100644
+--- a/ggml/src/ggml-cpu/CMakeLists.txt
++++ b/ggml/src/ggml-cpu/CMakeLists.txt
+@@ -437,10 +437,17 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
+         endif()
+     elseif (GGML_SYSTEM_ARCH STREQUAL "riscv64")
+         message(STATUS "riscv64 detected")
+-        list(APPEND GGML_CPU_SOURCES
+-            ggml-cpu/arch/riscv/quants.c
+-            ggml-cpu/arch/riscv/repack.cpp
+-            )
++        if (NOT GGML_RVV_FLOAT_ONLY)
++            list(APPEND GGML_CPU_SOURCES
++                ggml-cpu/arch/riscv/quants.c
++                ggml-cpu/arch/riscv/repack.cpp
++                )
++        else()
++            # Keep the public ggml CPU library link-complete while excluding
++            # RVV quant sources that require newer intrinsic tuple APIs.  The
++            # floating-point kernels still compile with rv64gcv below.
++            list(APPEND ARCH_FLAGS -DGGML_CPU_GENERIC)
++        endif()
+         if (GGML_CPU_RISCV64_SPACEMIT)
+             include(ggml-cpu/cmake/FindSMTIME.cmake)
+             target_compile_definitions(${GGML_CPU_NAME} PRIVATE GGML_USE_CPU_RISCV64_SPACEMIT ${RISCV64_SPACEMIT_IME_SPEC})
+diff --git a/ggml/src/ggml-cpu/arch-fallback.h b/ggml/src/ggml-cpu/arch-fallback.h
+index 152e0ba..1ac2745 100644
+--- a/ggml/src/ggml-cpu/arch-fallback.h
++++ b/ggml/src/ggml-cpu/arch-fallback.h
+@@ -71,6 +71,18 @@
+ #define ggml_gemm_mxfp4_8x8_q8_0_generic ggml_gemm_mxfp4_8x8_q8_0
+ #define ggml_gemm_q8_0_4x4_q8_0_generic ggml_gemm_q8_0_4x4_q8_0
+ #define ggml_gemm_q8_0_4x8_q8_0_generic ggml_gemm_q8_0_4x8_q8_0
++#define ggml_gemv_q4_0_16x1_q8_0_generic ggml_gemv_q4_0_16x1_q8_0
++#define ggml_gemm_q4_0_16x1_q8_0_generic ggml_gemm_q4_0_16x1_q8_0
++#define ggml_gemv_q8_0_16x1_q8_0_generic ggml_gemv_q8_0_16x1_q8_0
++#define ggml_gemm_q8_0_16x1_q8_0_generic ggml_gemm_q8_0_16x1_q8_0
++#define ggml_gemv_q2_K_16x1_q8_K_generic ggml_gemv_q2_K_16x1_q8_K
++#define ggml_gemm_q2_K_16x1_q8_K_generic ggml_gemm_q2_K_16x1_q8_K
++#define ggml_gemv_q4_K_16x1_q8_K_generic ggml_gemv_q4_K_16x1_q8_K
++#define ggml_gemm_q4_K_16x1_q8_K_generic ggml_gemm_q4_K_16x1_q8_K
++#define ggml_gemv_iq4_nl_16x1_q8_0_generic ggml_gemv_iq4_nl_16x1_q8_0
++#define ggml_gemm_iq4_nl_16x1_q8_0_generic ggml_gemm_iq4_nl_16x1_q8_0
++#define ggml_quantize_mat_q8_0_4x1_generic ggml_quantize_mat_q8_0_4x1
++#define ggml_quantize_mat_q8_K_4x1_generic ggml_quantize_mat_q8_K_4x1
+ #elif defined(__aarch64__) || defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64)
+ // repack.cpp
+ #define ggml_quantize_mat_q8_K_4x4_generic ggml_quantize_mat_q8_K_4x4

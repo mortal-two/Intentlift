@@ -1,13 +1,16 @@
-"""Strong, alpha-normalized PTX observer shared by CUDA and TileLang Gate1.
+"""Semantic, alpha-normalized PTX observer shared by CUDA and TileLang Gate1.
 
 The observer intentionally ignores presentation details (entry names, virtual
-register spelling, labels, debug directives, compiler banners) while retaining
-the ABI, instruction/dataflow topology, address spaces, predication, memory
-effects, collectives, synchronization and thread/block coordinate usage.
+register spelling, labels, debug directives, compiler banners, cache hints and
+equivalent address-algebra spelling) while retaining the ABI, value-operation
+topology, address spaces, predication, memory effects, collectives,
+synchronization and thread/block coordinate usage. Exact normalized
+instructions remain diagnostic evidence.
 """
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import Counter
 from dataclasses import dataclass
 import hashlib
@@ -16,7 +19,7 @@ import re
 from typing import Any, Mapping
 
 
-PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-topology-v1"
+PTX_FINGERPRINT_SCHEMA = "cuda-ptx-semantic-effects-v8"
 
 
 class PTXObservationError(ValueError):
@@ -37,9 +40,14 @@ _REGISTER_DECL_RE = re.compile(
     r"\.reg\s+(?P<type>\.[A-Za-z][A-Za-z0-9]*)\s+"
     r"(?P<base>%[A-Za-z_][A-Za-z0-9_.$]*)(?:<(?P<count>[0-9]+)>)?\s*;"
 )
+_INLINE_REGISTER_DECL_RE = re.compile(
+    r"^(?P<prefix>\s*\.reg\s+(?P<type>\.[A-Za-z][A-Za-z0-9]*)\s+)"
+    r"(?P<base>[A-Za-z_$][A-Za-z0-9_.$]*)"
+    r"(?:<(?P<count>[0-9]+)>)?(?P<suffix>\s*;\s*)$"
+)
 _OPCODE_RE = re.compile(
     r"^(?:(?P<predicate>@!?%[A-Za-z_][A-Za-z0-9_.$]*)\s+)?"
-    r"(?P<opcode>[A-Za-z][A-Za-z0-9_.]*)\s*(?P<operands>.*);$"
+    r"(?P<opcode>[A-Za-z][A-Za-z0-9_.:]*)\s*(?P<operands>.*);$"
 )
 _SPECIAL_REGISTERS = (
     "%clock",
@@ -58,6 +66,7 @@ _SPECIAL_REGISTERS = (
     "%tid",
     "%warpid",
 )
+_CACHE_HINTS = frozenset({"ca", "cg", "cs", "lu", "cv", "nc", "wb", "wt"})
 
 
 def _digest(value: Any) -> str:
@@ -81,6 +90,88 @@ def _balanced(text: str, opening: int, left: str, right: str) -> int:
 def _strip_comments(ptx: str) -> str:
     ptx = re.sub(r"/\*.*?\*/", "", ptx, flags=re.DOTALL)
     return "\n".join(line.split("//", 1)[0] for line in ptx.splitlines())
+
+
+def _normalize_scoped_registers(body: str) -> str:
+    """Give inline-PTX local registers ordinary alpha-normalizable names.
+
+    CUDA inline assembly may emit scoped declarations such as ``.reg .pred p``
+    and then use ``p`` rather than a percent-prefixed PTX register.  The same
+    spelling may be redeclared in many independent brace scopes.  Rewrite each
+    declaration and its scoped uses to a unique virtual register before the
+    normal PTX canonicalizer runs.  Standalone braces are treated as scopes only
+    at statement boundaries, so multiline tuple operands remain untouched.
+    """
+
+    scopes: list[dict[str, str]] = [{}]
+    scope_index = 0
+    pending = ""
+    output: list[str] = []
+
+    def replace_scoped_names(line: str) -> str:
+        names: dict[str, str] = {}
+        for scope in scopes:
+            names.update(scope)
+        for source, target in sorted(names.items(), key=lambda item: -len(item[0])):
+            line = re.sub(
+                rf"(?<![A-Za-z0-9_.$%]){re.escape(source)}(?![A-Za-z0-9_.$])",
+                target,
+                line,
+            )
+        return line
+
+    for raw in body.splitlines():
+        line = raw.strip()
+        if line == "{" and not pending:
+            scopes.append({})
+            output.append(raw)
+            continue
+        if line == "}" and not pending:
+            if len(scopes) == 1:
+                raise PTXObservationError("unmatched PTX local scope brace")
+            scopes.pop()
+            output.append(raw)
+            continue
+
+        declaration = _INLINE_REGISTER_DECL_RE.fullmatch(raw) if not pending else None
+        if declaration is not None:
+            base = declaration.group("base")
+            count = int(declaration.group("count") or 1)
+            synthetic = f"%__inline{scope_index}_{base}"
+            scope_index += 1
+            scopes[-1][base] = synthetic
+            if count > 1:
+                for index in range(count):
+                    scopes[-1][f"{base}{index}"] = f"{synthetic}{index}"
+            extent = f"<{count}>" if declaration.group("count") else ""
+            output.append(
+                declaration.group("prefix")
+                + synthetic
+                + extent
+                + declaration.group("suffix")
+            )
+            continue
+
+        rewritten = replace_scoped_names(raw)
+        output.append(rewritten)
+        stripped = rewritten.strip()
+        if not stripped:
+            continue
+        if not pending and (
+            stripped.endswith(":")
+            or stripped.startswith((".loc", ".file", ".pragma", ".reg"))
+            or (
+                stripped.startswith((".shared", ".local"))
+                and stripped.endswith(";")
+            )
+        ):
+            continue
+        pending = (pending + " " + stripped).strip()
+        while ";" in pending:
+            _statement, pending = pending.split(";", 1)
+            pending = pending.strip()
+
+    return "\n".join(output)
 
 
 def _entry_region(ptx: str, entry: str | None) -> tuple[str, str, str]:
@@ -124,6 +215,23 @@ def _statements(body: str) -> list[str]:
     for line in lines:
         if not line:
             continue
+        # NVCC can preserve an inline-assembly scope as standalone structural
+        # braces inside the entry body.  They are not PTX instructions.  Only
+        # discard them at a statement boundary: braces occurring while an
+        # instruction is being accumulated may be an operand tuple such as
+        # ``{%r1, %r2}`` and remain proof-relevant syntax.
+        if line in {"{", "}"} and not current:
+            continue
+        # NVCC 12.8 also emits one-instruction inline scopes on a single line,
+        # for example ``{ cvt.rn.f16.f32 %rs1, %f1; }``.  At a statement
+        # boundary these outer braces are structural, whereas braces inside an
+        # accumulated instruction (such as ``{%r1, %r2}``) remain operands.
+        if not current and line.startswith("{"):
+            line = line[1:].lstrip()
+        if not current and line.endswith("}") and ";" in line:
+            line = line[:-1].rstrip()
+        if not line:
+            continue
         if line.endswith(":"):
             if current:
                 raise PTXObservationError("label occurs inside PTX instruction")
@@ -154,6 +262,7 @@ def _canonical_instructions(
     *,
     parameters: Mapping[str, str],
 ) -> tuple[str, ...]:
+    body = _normalize_scoped_registers(body)
     register_types = _register_types(body)
     registers: dict[str, str] = {}
     type_counts: Counter[str] = Counter()
@@ -237,6 +346,8 @@ def _canonical_instructions(
         operands = re.sub(r"\s*,\s*", ",", operands)
         operands = re.sub(r"\[\s*", "[", operands)
         operands = re.sub(r"\s*\]", "]", operands)
+        operands = re.sub(r"\{\s*", "{", operands)
+        operands = re.sub(r"\s*\}", "}", operands)
         output.append(f"{predicate + ' ' if predicate else ''}{opcode}{(' ' + operands) if operands else ''};")
     if not output:
         raise PTXObservationError("PTX entry instruction sequence is empty")
@@ -256,6 +367,532 @@ def _category(instructions: tuple[str, ...], prefixes: tuple[str, ...]) -> tuple
     return tuple(item for item in instructions if _opcode(item).startswith(prefixes))
 
 
+def _split_operands(operands: str) -> tuple[str, ...]:
+    result: list[str] = []
+    start = 0
+    stack: list[str] = []
+    pairs = {")": "(", "]": "[", "}": "{"}
+    for index, character in enumerate(operands):
+        if character in "([{":
+            stack.append(character)
+        elif character in pairs:
+            if stack and stack[-1] == pairs[character]:
+                stack.pop()
+        elif character == "," and not stack:
+            result.append(operands[start:index].strip())
+            start = index + 1
+    tail = operands[start:].strip()
+    if tail:
+        result.append(tail)
+    return tuple(result)
+
+
+def _instruction_parts(
+    instruction: str,
+) -> tuple[str, str, tuple[str, ...]] | None:
+    if instruction.endswith(":") or instruction.startswith("."):
+        return None
+    match = _OPCODE_RE.match(instruction)
+    if match is None:
+        return None
+    return (
+        match.group("predicate") or "",
+        match.group("opcode"),
+        _split_operands(match.group("operands")),
+    )
+
+
+def _semantic_memory_opcode(opcode: str) -> str:
+    parts = opcode.split(".")
+    parts = [
+        part
+        for index, part in enumerate(parts)
+        if index == 0 or part not in _CACHE_HINTS
+    ]
+    # A non-atomic load/store transfers bits; signedness and float/integer register
+    # class become semantic only through downstream value operations, which the
+    # value def-use projection retains independently.  Normalize only an exact
+    # scalar bit width and preserve address space, vector width, volatility and
+    # every atomic/reduction opcode.
+    if parts and parts[0] in {"ld", "st", "suld", "sust"}:
+        dtype = re.fullmatch(r"[bsuf](8|16|32|64|128)", parts[-1])
+        if dtype is not None:
+            parts[-1] = f"b{dtype.group(1)}"
+    return ".".join(parts)
+
+
+_NO_DESTINATION_PREFIXES = (
+    "st.", "sust.", "red.", "bra", "brx", "ret", "exit", "bar.",
+    "barrier.", "mbarrier.", "fence.", "membar.",
+)
+
+
+def _destination_registers(
+    opcode: str,
+    operands: tuple[str, ...],
+) -> tuple[str, ...]:
+    if not operands or opcode.startswith(_NO_DESTINATION_PREFIXES):
+        return ()
+    destination = operands[0]
+    if destination.startswith("["):
+        return ()
+    # Vector loads and tuple-producing instructions define every register in the
+    # first operand.  Treating only a singleton destination leaves a preceding
+    # zero-initialization spuriously observable after an unconditional vector load.
+    return tuple(_REGISTER_RE.findall(destination))
+
+
+def _instruction_predicate_truths(
+    instructions: tuple[str, ...],
+) -> tuple[bool | None, ...]:
+    """Prove straight-line constant predicates without inferring a source guard.
+
+    ``True`` includes an unpredicated instruction or a predicate proven true;
+    ``False`` is a proven-disabled instruction; ``None`` retains an unknown
+    predicate.  Constants are discarded at control boundaries and on every
+    unsupported write, so absence of a proof remains fail-closed.
+    """
+
+    records = [_instruction_parts(item) for item in instructions]
+    constants: dict[str, int] = {}
+    truths: list[bool | None] = []
+
+    def operand_constant(operand: str) -> int | None:
+        literal = _ptx_integer_literal(operand)
+        if literal is not None:
+            return literal
+        register = _REGISTER_RE.fullmatch(operand.strip())
+        return constants.get(register.group(0)) if register is not None else None
+
+    for instruction, record in zip(instructions, records):
+        if record is None:
+            truths.append(None)
+            if instruction.endswith(":"):
+                constants.clear()
+            continue
+        predicate, opcode, operands = record
+        predicate_truth: bool | None = True
+        if predicate:
+            registers = _REGISTER_RE.findall(predicate)
+            raw = constants.get(registers[0]) if len(registers) == 1 else None
+            predicate_truth = None if raw is None else bool(raw)
+            if predicate.startswith("@!") and predicate_truth is not None:
+                predicate_truth = not predicate_truth
+        truths.append(predicate_truth)
+
+        destinations = _destination_registers(opcode, operands)
+        if predicate_truth is not False and destinations:
+            produced: tuple[int, ...] | None = None
+            if (
+                predicate_truth is True
+                and opcode.split(".", 1)[0] == "mov"
+                and len(destinations) == 1
+                and len(operands) == 2
+            ):
+                source = operand_constant(operands[1])
+                if source is not None:
+                    produced = (source,)
+            comparison = re.fullmatch(r"setp\.(eq|ne)\.[bsu][0-9]+", opcode)
+            if (
+                predicate_truth is True
+                and comparison is not None
+                and len(destinations) == 1
+                and len(operands) >= 3
+            ):
+                left = operand_constant(operands[1])
+                right = operand_constant(operands[2])
+                if left is not None and right is not None:
+                    equal = left == right
+                    produced = (
+                        int(equal if comparison.group(1) == "eq" else not equal),
+                    )
+            for index, destination in enumerate(destinations):
+                if produced is not None and index < len(produced):
+                    constants[destination] = produced[index]
+                else:
+                    constants.pop(destination, None)
+
+        if opcode.startswith(("bra", "brx", "call", "ret", "exit")):
+            constants.clear()
+    return tuple(truths)
+
+
+def _semantic_memory_effects(
+    instructions: tuple[str, ...],
+) -> tuple[tuple[str, int], ...]:
+    effects: Counter[str] = Counter()
+    predicate_truths = _instruction_predicate_truths(instructions)
+    for instruction, predicate_truth in zip(instructions, predicate_truths):
+        parts = _instruction_parts(instruction)
+        if parts is None:
+            continue
+        predicate, opcode, _operands = parts
+        if not opcode.startswith(
+            (
+                "ld.",
+                "st.",
+                "atom.",
+                "red.",
+                "suld.",
+                "sust.",
+                "cp.async.bulk.tensor",
+            )
+        ):
+            continue
+        if predicate and predicate_truth is False:
+            continue
+        polarity = (
+            ""
+            if not predicate or predicate_truth is True
+            else "not_predicated:"
+            if predicate.startswith("@!")
+            else "predicated:"
+        )
+        effects[polarity + _semantic_memory_opcode(opcode)] += 1
+    return tuple(sorted(effects.items()))
+
+
+def _semantic_value_opcodes(
+    instructions: tuple[str, ...],
+) -> tuple[tuple[str, int], ...]:
+    """Retain operations that produce observable stored/control values.
+
+    Loads are leaves of the value graph, so pointer arithmetic feeding their
+    addresses is deliberately excluded.  Integer arithmetic still remains hard
+    whenever it feeds a stored value or a memory predicate.
+    """
+
+    records = [_instruction_parts(item) for item in instructions]
+    predicate_truths = _instruction_predicate_truths(instructions)
+    definitions: dict[str, tuple[int, ...]] = {}
+    for index, record in enumerate(records):
+        if record is None:
+            continue
+        predicate, opcode, operands = record
+        destinations = _destination_registers(opcode, operands)
+        truth = predicate_truths[index]
+        for destination in destinations:
+            if predicate and truth is False:
+                continue
+            if predicate and truth is None:
+                definitions[destination] = (*definitions.get(destination, ()), index)
+            else:
+                definitions[destination] = (index,)
+
+    roots: set[str] = set()
+    for index, record in enumerate(records):
+        if record is None:
+            continue
+        predicate, opcode, operands = record
+        memory_opcode = opcode.startswith(
+            ("ld.", "st.", "atom.", "red.", "suld.", "sust.")
+        )
+        truth = predicate_truths[index]
+        if predicate and not (memory_opcode and truth is not None):
+            roots.update(_REGISTER_RE.findall(predicate))
+        if memory_opcode and predicate and truth is False:
+            continue
+        if opcode.startswith(("st.", "sust.")) and operands:
+            roots.update(_REGISTER_RE.findall(operands[-1]))
+        elif opcode.startswith(("atom.", "red.")):
+            for operand in operands:
+                if not operand.startswith("["):
+                    roots.update(_REGISTER_RE.findall(operand))
+        elif opcode.startswith(("bra", "brx")):
+            roots.update(_REGISTER_RE.findall(predicate))
+
+    selected: set[int] = set()
+
+    def select(register: str) -> None:
+        for index in definitions.get(register, ()):
+            if index in selected:
+                continue
+            selected.add(index)
+            record = records[index]
+            assert record is not None
+            predicate, opcode, operands = record
+            truth = predicate_truths[index]
+            if predicate and not (
+                opcode.startswith(("ld.", "suld.")) and truth is not None
+            ):
+                for dependency in _REGISTER_RE.findall(predicate):
+                    select(dependency)
+            # A load's address is not value dataflow. Its space/type/predicate is
+            # already retained by the semantic memory-effect projection.
+            if opcode.startswith(("ld.", "suld.")):
+                continue
+            for operand in operands[1:]:
+                for dependency in _REGISTER_RE.findall(operand):
+                    select(dependency)
+
+    for root in roots:
+        select(root)
+
+    opcodes: Counter[str] = Counter()
+    for index in sorted(selected):
+        record = records[index]
+        assert record is not None
+        _predicate, opcode, _operands = record
+        opcodes[_semantic_memory_opcode(opcode)] += 1
+    return tuple(sorted(opcodes.items()))
+
+
+def _ptx_integer_literal(value: str) -> int | None:
+    text = value.strip()
+    if re.fullmatch(r"-?[0-9]+", text):
+        return int(text, 10)
+    if re.fullmatch(r"-?0[xX][0-9A-Fa-f]+", text):
+        return int(text, 16)
+    return None
+
+
+def _coordinate_path_step(
+    opcode: str, operands: tuple[str, ...]
+) -> tuple[str, int] | None:
+    """Describe only transforms needed to normalize one coordinate-fold path."""
+
+    base = opcode.split(".", 1)[0]
+    literals = [
+        literal
+        for operand in operands[1:]
+        if (literal := _ptx_integer_literal(operand)) is not None
+    ]
+    if base == "and" and literals:
+        return ("and", literals[-1])
+    if base == "rem" and literals and literals[-1] > 0:
+        return ("rem", literals[-1])
+    if base == "shl" and literals and 0 <= literals[-1] <= 63:
+        return ("scale", 1 << literals[-1])
+    if base == "mul" and len(literals) == 1 and literals[0] > 0:
+        return ("scale", literals[0])
+    source_registers = [
+        register
+        for operand in operands[1:]
+        for register in _REGISTER_RE.findall(operand)
+    ]
+    if base == "mov" and len(source_registers) == 1:
+        return None
+    if base == "cvt" and len(source_registers) == 1:
+        # Only a same-signedness, non-narrowing integer conversion preserves the
+        # mathematical coordinate.  In particular, this admits NVCC's exact
+        # ``cvt.u64.u32`` between byte scaling and a scaled mask, but refuses
+        # truncation, float conversion, saturation, rounding, and reinterpretation.
+        conversion = re.fullmatch(r"cvt\.([us])([0-9]+)\.\1([0-9]+)", opcode)
+        if conversion is not None and int(conversion.group(2)) >= int(
+            conversion.group(3)
+        ):
+            return None
+    # Address-space conversion and every unproved conversion are deliberately
+    # opaque: missing an equivalent fold is safer than certifying a false one.
+    return ("opaque", 0)
+
+
+def _coordinate_fold_tags(steps: tuple[tuple[str, int], ...]) -> tuple[str, ...]:
+    """Resolve folds only through a pure, exactly scaled participant path.
+
+    ``steps`` are collected while walking backward from an address.  Reversing
+    them recovers coordinate-to-address order.  Opaque address arithmetic after
+    a fold does not erase that fold, while opaque mixing before a fold prevents
+    it from being mistaken for a pure participant projection.
+    """
+
+    scale = 1
+    pure_coordinate = True
+    tags: list[str] = []
+    for kind, value in reversed(steps):
+        if kind == "scale":
+            if pure_coordinate:
+                scale *= value
+            continue
+        if kind == "opaque":
+            pure_coordinate = False
+            continue
+        if kind == "and":
+            normalized_mask: int | None = None
+            if (
+                pure_coordinate
+                and value >= 0
+                and scale > 0
+                and scale & (scale - 1) == 0
+                and value % scale == 0
+            ):
+                candidate = value // scale
+                if candidate & (candidate + 1) == 0:
+                    normalized_mask = candidate
+            tags.append(
+                f"cyclic:{normalized_mask + 1}"
+                if normalized_mask is not None
+                else f"bitmask:{value}"
+            )
+            continue
+        if kind == "rem":
+            normalized_divisor: int | None = None
+            if (
+                pure_coordinate
+                and scale > 0
+                and scale & (scale - 1) == 0
+                and value % scale == 0
+                and value // scale > 0
+            ):
+                normalized_divisor = value // scale
+            tags.append(
+                f"cyclic:{normalized_divisor}"
+                if normalized_divisor is not None
+                else f"remainder:{value}"
+            )
+    return tuple(tags)
+
+
+def _coordinate_fold_tag(opcode: str, operands: tuple[str, ...]) -> str | None:
+    """Compatibility helper for one direct fold instruction."""
+
+    step = _coordinate_path_step(opcode, operands)
+    if step is None:
+        return None
+    tags = _coordinate_fold_tags((step,))
+    return tags[0] if tags else None
+
+
+def _semantic_address_coordinate_folds(
+    instructions: tuple[str, ...],
+) -> tuple[tuple[str, int], ...]:
+    """Trace only cyclic/bitmask coordinate folds that reach memory addresses."""
+
+    records = [_instruction_parts(item) for item in instructions]
+    # PTX virtual registers are not guaranteed to be SSA.  Retain every
+    # definition and resolve the reaching one at each use instead of silently
+    # attaching an earlier memory access to the register's final definition.
+    definitions: dict[str, list[int]] = {}
+    no_destination = (
+        "st.", "sust.", "red.", "bra", "brx", "ret", "exit", "bar.",
+        "barrier.", "mbarrier.", "fence.", "membar.",
+    )
+    for index, record in enumerate(records):
+        if record is None:
+            continue
+        _predicate, opcode, operands = record
+        if not operands or opcode.startswith(no_destination):
+            continue
+        destination = operands[0]
+        if destination.startswith("["):
+            continue
+        registers = _REGISTER_RE.findall(destination)
+        if len(registers) == 1:
+            definitions.setdefault(registers[0], []).append(index)
+
+    control_boundaries = tuple(
+        index
+        for index, (instruction, record) in enumerate(zip(instructions, records))
+        if instruction.endswith(":")
+        or (
+            record is not None
+            and record[1].startswith(("bra", "brx", "call", "ret", "exit"))
+        )
+    )
+
+    def crosses_control_boundary(start: int, end: int) -> bool:
+        position = bisect_left(control_boundaries, end)
+        return position > 0 and control_boundaries[position - 1] > start
+
+    def reaching_definition(register: str, before: int) -> int | None:
+        history = definitions.get(register, ())
+        position = bisect_left(history, before)
+        return history[position - 1] if position else None
+
+    def traces(
+        register: str,
+        before: int,
+        inherited: tuple[tuple[str, int], ...] = (),
+        active: frozenset[tuple[str, int]] = frozenset(),
+    ) -> set[tuple[str, tuple[str, ...]]]:
+        if _is_special_register(register):
+            return {(register, _coordinate_fold_tags(inherited))}
+        state = (register, before)
+        if state in active:
+            return set()
+        index = reaching_definition(register, before)
+        if index is None:
+            return set()
+        record = records[index]
+        assert record is not None
+        predicate, opcode, operands = record
+        if predicate or crosses_control_boundary(index, before):
+            return set()
+        step = _coordinate_path_step(opcode, operands)
+        next_steps = (*inherited, step) if step is not None else inherited
+        result: set[tuple[str, tuple[str, ...]]] = set()
+        for operand in operands[1:]:
+            for dependency in _REGISTER_RE.findall(operand):
+                result.update(
+                    traces(dependency, index, next_steps, active | frozenset({state}))
+                )
+        return result
+
+    folds: Counter[str] = Counter()
+    predicate_truths = _instruction_predicate_truths(instructions)
+    for instruction_index, record in enumerate(records):
+        if record is None:
+            continue
+        predicate, opcode, operands = record
+        if not opcode.startswith(("ld.", "st.", "atom.", "red.", "suld.", "sust.")):
+            continue
+        predicate_truth = predicate_truths[instruction_index]
+        if predicate and predicate_truth is False:
+            continue
+        address_operands = [operand for operand in operands if operand.startswith("[")]
+        polarity = (
+            ""
+            if not predicate or predicate_truth is True
+            else "not_predicated:"
+            if predicate.startswith("@!")
+            else "predicated:"
+            if predicate
+            else ""
+        )
+        observed: set[tuple[str, str]] = set()
+        for address in address_operands:
+            for register in _REGISTER_RE.findall(address):
+                for coordinate, tags in traces(register, instruction_index):
+                    for tag in tags:
+                        observed.add((coordinate, tag))
+        for coordinate, tag in observed:
+            folds[
+                f"{polarity}{_semantic_memory_opcode(opcode)}:{coordinate}:{tag}"
+            ] += 1
+    return tuple(sorted(folds.items()))
+
+
+def _semantic_collectives(instructions: tuple[str, ...]) -> tuple[str, ...]:
+    """Project collective effects without freezing one legal PTX algorithm."""
+
+    result: list[str] = []
+    for item in instructions:
+        opcode = _opcode(item)
+        if opcode.startswith("shfl."):
+            result.append("shuffle")
+        elif opcode.startswith("vote."):
+            result.append("vote")
+        elif opcode.startswith("match."):
+            result.append("match")
+        elif opcode.startswith("bar.warp."):
+            result.append("barrier.warp")
+        elif opcode.startswith(("bar.", "barrier.")):
+            result.append("barrier.cta")
+        elif opcode.startswith("mbarrier."):
+            result.append("barrier.memory")
+        elif opcode.startswith("cp.async"):
+            result.append("async_copy")
+        elif opcode.startswith("fence."):
+            result.append("fence")
+        elif opcode.startswith("wgmma."):
+            result.append("wgmma")
+        elif opcode.startswith("mma."):
+            result.append("mma")
+        elif opcode.startswith("elect."):
+            result.append("elect")
+    return tuple(sorted(result))
+
+
 @dataclass(frozen=True)
 class PTXFingerprint:
     schema_version: str
@@ -263,6 +900,9 @@ class PTXFingerprint:
     instructions: tuple[str, ...]
     opcode_multiset: tuple[tuple[str, int], ...]
     memory_effects: tuple[str, ...]
+    semantic_value_opcodes: tuple[tuple[str, int], ...]
+    semantic_memory_effects: tuple[tuple[str, int], ...]
+    semantic_address_coordinate_folds: tuple[tuple[str, int], ...]
     collectives: tuple[str, ...]
     control_flow: tuple[str, ...]
     coordinate_uses: tuple[str, ...]
@@ -277,6 +917,15 @@ class PTXFingerprint:
             "instructions": list(self.instructions),
             "opcode_multiset": [list(item) for item in self.opcode_multiset],
             "memory_effects": list(self.memory_effects),
+            "semantic_value_opcodes": [
+                list(item) for item in self.semantic_value_opcodes
+            ],
+            "semantic_memory_effects": [
+                list(item) for item in self.semantic_memory_effects
+            ],
+            "semantic_address_coordinate_folds": [
+                list(item) for item in self.semantic_address_coordinate_folds
+            ],
             "collectives": list(self.collectives),
             "control_flow": list(self.control_flow),
             "coordinate_uses": list(self.coordinate_uses),
@@ -324,20 +973,33 @@ def fingerprint_ptx(
     instructions = _canonical_instructions(body, parameters=param_names)
     opcodes = tuple(_opcode(item) for item in instructions if not item.endswith(":"))
     memory = _category(instructions, ("ld.", "st.", "atom.", "red.", "suld.", "sust."))
-    collectives = _category(
-        instructions,
-        ("bar.", "barrier.", "mbarrier.", "cp.async", "fence.", "shfl.", "vote.", "match.", "mma.", "wgmma.", "elect."),
+    semantic_value_opcodes = _semantic_value_opcodes(instructions)
+    semantic_memory_effects = _semantic_memory_effects(instructions)
+    semantic_address_coordinate_folds = _semantic_address_coordinate_folds(
+        instructions
     )
+    collectives = _semantic_collectives(instructions)
     control = tuple(
         item
         for item in instructions
         if item.endswith(":") or _opcode(item).startswith(("bra", "brx", "call", "ret", "exit"))
     )
+    # Coordinate usage is a vocabulary of physical participants, not an
+    # execution-order trace.  The instruction stream and register allocator may
+    # mention `%tid` before `%ctaid` in one otherwise equivalent address
+    # construction.  Address-coordinate folds, semantic memory effects, and
+    # value dataflow retain the ordering-sensitive obligations; this field only
+    # records which special coordinates are present, in one deterministic order.
     coordinates = tuple(
-        token
-        for item in instructions
-        for token in _REGISTER_RE.findall(item)
-        if _is_special_register(token)
+        sorted(
+            (
+                token
+                for item in instructions
+                for token in _REGISTER_RE.findall(item)
+                if _is_special_register(token)
+            ),
+            key=lambda token: (token.split(".", 1)[0], token),
+        )
     )
     target_view = tuple(
         sorted(
@@ -356,6 +1018,9 @@ def fingerprint_ptx(
         "interface": full_interface,
         "instructions": instructions,
         "memory": memory,
+        "semantic_value_opcodes": semantic_value_opcodes,
+        "semantic_memory_effects": semantic_memory_effects,
+        "semantic_address_coordinate_folds": semantic_address_coordinate_folds,
         "collectives": collectives,
         "control": control,
         "coordinates": coordinates,
@@ -367,6 +1032,9 @@ def fingerprint_ptx(
         instructions,
         tuple(sorted(Counter(opcodes).items())),
         memory,
+        semantic_value_opcodes,
+        semantic_memory_effects,
+        semantic_address_coordinate_folds,
         collectives,
         control,
         coordinates,
@@ -396,18 +1064,28 @@ class PTXDifference:
 class PTXComparison:
     hard_pass: bool
     hard_passes: Mapping[str, bool]
+    diagnostic_passes: Mapping[str, bool]
     differences: tuple[PTXDifference, ...]
     source_digest: str
     replay_digest: str
 
     @property
     def primary_difference_category(self) -> str | None:
-        return self.differences[0].category if self.differences else None
+        return next(
+            (
+                item.category
+                for item in self.differences
+                if item.category in self.hard_passes
+                and not self.hard_passes[item.category]
+            ),
+            None,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "hard_pass": self.hard_pass,
             "hard_passes": dict(self.hard_passes),
+            "diagnostic_passes": dict(self.diagnostic_passes),
             "primary_difference_category": self.primary_difference_category,
             "differences": [item.to_dict() for item in self.differences],
             "source_digest": self.source_digest,
@@ -422,15 +1100,36 @@ def compare_ptx_fingerprints(
     fields = (
         ("schema", source.schema_version, replay.schema_version),
         ("interface", source.interface, replay.interface),
-        ("instruction_topology", source.instructions, replay.instructions),
-        ("opcode_multiset", source.opcode_multiset, replay.opcode_multiset),
-        ("memory_effects", source.memory_effects, replay.memory_effects),
+        (
+            "value_operations",
+            source.semantic_value_opcodes,
+            replay.semantic_value_opcodes,
+        ),
+        (
+            "memory_effects",
+            source.semantic_memory_effects,
+            replay.semantic_memory_effects,
+        ),
+        (
+            "address_coordinate_folds",
+            source.semantic_address_coordinate_folds,
+            replay.semantic_address_coordinate_folds,
+        ),
         ("collectives", source.collectives, replay.collectives),
         ("control_flow", source.control_flow, replay.control_flow),
         ("coordinate_uses", source.coordinate_uses, replay.coordinate_uses),
         ("target", source.target_view, replay.target_view),
     )
     passes = {category: expected == actual for category, expected, actual in fields}
+    diagnostic_fields = (
+        ("raw_instruction_topology", source.instructions, replay.instructions),
+        ("raw_opcode_multiset", source.opcode_multiset, replay.opcode_multiset),
+        ("raw_memory_effects", source.memory_effects, replay.memory_effects),
+    )
+    diagnostic_passes = {
+        category: expected == actual
+        for category, expected, actual in diagnostic_fields
+    }
     differences = tuple(
         PTXDifference(
             category,
@@ -438,12 +1137,13 @@ def compare_ptx_fingerprints(
             actual,
             f"PTX {category} differs between Source and Replay",
         )
-        for category, expected, actual in fields
+        for category, expected, actual in (*fields, *diagnostic_fields)
         if expected != actual
     )
     return PTXComparison(
         all(passes.values()),
         passes,
+        diagnostic_passes,
         differences,
         source.digest,
         replay.digest,

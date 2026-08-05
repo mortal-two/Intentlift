@@ -1,0 +1,191 @@
+{
+  "protocol": "intentir.backend.ablation-plan.v3",
+  "scope": "J-grounded Q/D-certified concrete lowering-state search",
+  "correctness": {
+    "immutable_semantic_input": "J=A+B",
+    "compiler_inputs": ["J", "optional_C", "target_capabilities"],
+    "search_domain_edge": "target_ref_j",
+    "certification_domain_edges": [
+      "target_source",
+      "target_replay",
+      "target_ref_j"
+    ],
+    "domain_rule": "D_search and D_cert use disjoint explicitly named cases",
+    "comparison_rule": "every edge is direct; tolerance transitivity is forbidden",
+    "c_role": "candidate ordering only"
+  },
+  "candidate_space": {
+    "search_object": "concrete post-pass MLIR state plus schedule assignment and transformation trace",
+    "budget_unit": "one explicitly enumerated candidate",
+    "failed_attempt_rule": "one distinct exact candidate that fails before state formation consumes one budget unit",
+    "expanded_arm_nesting_rule": "bounded-search and anytime diagnostics visit the fixed-structure schedule spine in the same C-conditioned order before visiting other concrete lowering states; this order does not truncate the complete-space main performance envelope",
+    "c_fixed_rule": "the canonical structural path plus one mechanical legal projection of the authored C tile/schedule forms exactly one candidate and performs no search, workload-derived occupancy and cost heuristics are forbidden",
+    "abstraction_rule": "no implementation-family object, family id, or named emitter participates in generation, legality, or selection"
+  },
+  "measurement": {
+    "formal_panels": {
+      "cuda_external": ["Source", "IntentIR"],
+      "rvv_external": ["Native RVV", "IntentIR"],
+      "internal_attribution": ["C-Fixed", "Schedule-Only", "IntentIR"],
+      "c_prior_table": [
+        "best performance at fixed budget",
+        "candidates to 95% of final best"
+      ]
+    },
+    "external_match_rule": "operator, shape, dtype, layout, output relation, timed boundary, cache policy, device and profiler must match exactly",
+    "timed_scope": "prepared launch or prepared graph only; allocation and correctness synchronization are outside the timed closure",
+    "finalist_rule": "fresh round-robin remeasurement with alternating traversal; initial ranking samples are excluded",
+    "confirmation_rule": "equal-count fresh matched-baseline and target batches in alternating pair order",
+    "warmup_rule": "before confirmation, Source and target prepared thunks receive the same declared untimed time budget in round-robin order; cold-data timing then evicts L2 before every measured launch",
+    "e3_e2_comparison_rule": "the primary marginal E3/E2 gain selects the complete fixed-structure schedule-spine best and complete global best from one transported candidate universe and one target timing run; separately launched bounded E2/E3 searches remain anytime diagnostics",
+    "main_three_arm_rule": "C-Fixed, Schedule-Only and IntentIR are performance envelopes over one mechanical C projection, the complete canonical-path schedule space and the complete admitted lowering-state space respectively; Source remains the mandatory independent GPU external baseline",
+    "aggregation": "median per side with every paired batch retained"
+  },
+  "budget_rule": "C-Fixed receives exactly one mechanical legal projection of C; the caller-supplied equal budget governs bounded C-guided and Erase-C search-efficiency orders, while formal Schedule-Only and IntentIR performance envelopes use the complete admitted candidate space",
+  "arms": [
+    {
+      "arm": "E0",
+      "budget_class": "baseline",
+      "baseline_kind": "source",
+      "use_c_prior": false,
+      "search_structural_states": false,
+      "enable_local_b_transformations": false,
+      "search_reduction_topology": false,
+      "search_fma": false,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "E1",
+      "budget_class": "baseline",
+      "baseline_kind": "canonical",
+      "use_c_prior": false,
+      "search_structural_states": false,
+      "enable_local_b_transformations": false,
+      "search_reduction_topology": false,
+      "search_fma": false,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "CF",
+      "budget_class": "single_candidate",
+      "baseline_kind": "c_fixed",
+      "use_c_prior": true,
+      "search_structural_states": false,
+      "enable_local_b_transformations": false,
+      "search_reduction_topology": false,
+      "search_fma": false,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "E2",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": false,
+      "enable_local_b_transformations": false,
+      "search_reduction_topology": false,
+      "search_fma": false,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "E3",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": true,
+      "search_approximation": true
+    },
+    {
+      "arm": "E4",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": false,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": true,
+      "search_approximation": true
+    },
+    {
+      "arm": "L0",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": false,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": true,
+      "search_approximation": true
+    },
+    {
+      "arm": "L1",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": true,
+      "search_approximation": true
+    },
+    {
+      "arm": "N0",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": false,
+      "search_fma": false,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "N1",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": false,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "N2",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": false,
+      "search_approximation": false
+    },
+    {
+      "arm": "N3",
+      "budget_class": "equal_total",
+      "baseline_kind": null,
+      "use_c_prior": true,
+      "search_structural_states": true,
+      "enable_local_b_transformations": true,
+      "search_reduction_topology": true,
+      "search_fma": true,
+      "search_precision": true,
+      "search_approximation": true
+    }
+  ]
+}
