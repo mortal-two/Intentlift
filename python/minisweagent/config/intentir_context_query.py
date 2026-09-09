@@ -27,6 +27,21 @@ def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _mounted_source_kind(input_root: Path) -> str:
+    """Read source representation metadata from the complete Harness view."""
+
+    harness_path = input_root / "harness_view.json"
+    if harness_path.is_file():
+        value = _load_json(harness_path)
+        if isinstance(value, dict):
+            source_kind = value.get("source_kind")
+            if isinstance(source_kind, str) and source_kind:
+                return source_kind
+            if value.get("frontend") == "cuda":
+                return "cuda"
+    return "python"
+
+
 def _feedback_without_candidate(input_root: Path) -> dict[str, Any] | None:
     value = _load_json(input_root / "feedback.json")
     if value is None:
@@ -36,7 +51,7 @@ def _feedback_without_candidate(input_root: Path) -> dict[str, Any] | None:
     return {
         str(key): item
         for key, item in value.items()
-        if key != "previous_artifact"
+        if key not in {"previous_artifact", "previous_candidate"}
     }
 
 
@@ -57,13 +72,17 @@ def _previous_candidate(input_root: Path) -> dict[str, Any] | None:
     value = _load_json(input_root / "feedback.json")
     if not isinstance(value, dict):
         return None
-    candidate = value.get("previous_artifact")
+    candidate = value.get("previous_candidate")
+    candidate_field = "previous_candidate"
+    if candidate is None:
+        candidate = value.get("previous_artifact")
+        candidate_field = "previous_artifact"
     if isinstance(candidate, str):
         candidate = json.loads(candidate)
     if candidate is None:
         return None
     if not isinstance(candidate, dict):
-        raise TypeError("feedback previous_artifact must be an object")
+        raise TypeError(f"feedback {candidate_field} must be an object")
     return candidate
 
 
@@ -212,7 +231,7 @@ def _bootstrap(input_root: Path, output_root: Path) -> None:
             f"Use `{QUERY_COMMAND} harness-abi` for the exact compact p*/c*/shape-coordinate ledger.",
             f"Use `{QUERY_COMMAND} source-find TEXT --context 3` for literal Source lookup.",
             f"Use `{QUERY_COMMAND} source-outline --start 1 --count 32` to locate syntax-level control before paging a long Source.",
-            f"When available, use `{QUERY_COMMAND} source-observer` and `{QUERY_COMMAND} source-ttir-outline` before paging exact TTIR.",
+            f"When available for a Triton/TTIR branch, use `{QUERY_COMMAND} source-observer` and `{QUERY_COMMAND} source-ttir-outline` before paging exact TTIR.",
             f"After drafting, run `{QUERY_COMMAND} candidate-abi` for a read-only ABI diff.",
             f"Run `{QUERY_COMMAND} candidate-control` to audit authored control, time, effects, and outputs before CandidateCheck.",
             f"Inspect a draft with `{QUERY_COMMAND} candidate --path j.PATH` or `candidate-find HANDLE`.",
@@ -441,7 +460,9 @@ def _source_ttir_find(
 
 def _source_ttir_outline(input_root: Path, start: int, count: int) -> None:
     if start < 1 or count < 1 or count > 200:
-        raise ValueError("Source TTIR outline start/count must be positive and count <= 200")
+        raise ValueError(
+            "Source TTIR outline start/count must be positive and count <= 200"
+        )
     interesting = (
         "module ", "tt.func", "func.func", "^bb", "scf.for", "scf.if",
         "scf.while", "cf.br", "cf.cond_br", "tt.load", "tt.store",
@@ -463,8 +484,15 @@ def _source_ttir_outline(input_root: Path, start: int, count: int) -> None:
             "returned": len(selected),
             "total": len(rows),
             "rows": selected,
-            "next_start": start + len(selected) if start - 1 + len(selected) < len(rows) else None,
-            "authority": "syntax navigation over exact Source TTIR; no semantic classification or J/C/pi inference",
+            "next_start": (
+                start + len(selected)
+                if start - 1 + len(selected) < len(rows)
+                else None
+            ),
+            "authority": (
+                "syntax navigation over exact Source TTIR; no semantic "
+                "classification or J/C/pi inference"
+            ),
         }
     )
 
@@ -473,9 +501,7 @@ def _source_observer_value(input_root: Path) -> dict[str, Any]:
     value = _source_ttir_observation(input_root)
     ttir = value.get("ttir")
     summary = {
-        key: item
-        for key, item in value.items()
-        if key not in {"ttir", "fingerprint"}
+        key: item for key, item in value.items() if key not in {"ttir", "fingerprint"}
     }
     summary["ttir_lines"] = len(ttir.splitlines()) if isinstance(ttir, str) else 0
     fingerprint = value.get("fingerprint")
@@ -502,94 +528,10 @@ def _source_observer(input_root: Path, path: str | None) -> None:
     _emit_json(_source_observer_value(input_root))
 
 
-def _bounded_preview(value: Any, *, item_limit: int, char_limit: int) -> dict[str, Any]:
-    """Return an exact prefix plus a receipt, without interpreting its meaning."""
-
-    if isinstance(value, dict):
-        items = list(value.items())
-        selected: dict[str, Any] = {}
-        for key, item in items[:item_limit]:
-            trial = {**selected, str(key): item}
-            if len(json.dumps(trial, sort_keys=True, ensure_ascii=False)) > char_limit:
-                break
-            selected[str(key)] = item
-        return {
-            "kind": "object",
-            "total": len(items),
-            "value": selected,
-            "truncated": len(selected) < len(items),
-        }
-    if isinstance(value, list):
-        selected: list[Any] = []
-        for item in value[:item_limit]:
-            trial = [*selected, item]
-            if len(json.dumps(trial, sort_keys=True, ensure_ascii=False)) > char_limit:
-                break
-            selected.append(item)
-        return {
-            "kind": "array",
-            "total": len(value),
-            "value": selected,
-            "truncated": len(selected) < len(value),
-        }
-    return {"kind": type(value).__name__, "total": 1, "value": value, "truncated": False}
-
-
 def _source_brief(input_root: Path) -> None:
-    """Expose one compact, exact navigation surface for the Lift owner.
-
-    This is deliberately a projection of already-public Source, Harness, and
-    compiler-observer facts.  It neither maps those facts to IntentIR nor authors
-    any J/C/pi field.  Every truncated section remains available through the exact
-    focused queries named in the receipt.
-    """
-
-    observation = _source_ttir_observation(input_root)
-    fingerprint = observation.get("fingerprint")
-    fingerprint = fingerprint if isinstance(fingerprint, dict) else {}
-    section_names = (
-        "interface",
-        "op_multiset",
-        "reductions",
-        "memory_effects",
-        "mask_predicates",
-        "effect_multiset",
-        "dots",
-        "loops",
-        "structured_ifs",
-        "terminal_forks",
-        "schedule_view",
-        "dataflow_edges",
-    )
-    compiler_sections: dict[str, Any] = {}
-    for name in section_names:
-        if name not in fingerprint:
-            continue
-        preview = _bounded_preview(
-            fingerprint[name],
-            item_limit=12 if name == "dataflow_edges" else 6,
-            char_limit=1400,
-        )
-        if preview["truncated"]:
-            preview["exact_query"] = (
-                f"{QUERY_COMMAND} source-observer --path fingerprint.{name}"
-            )
-        compiler_sections[name] = preview
+    """Expose the selected frontend's Source and compiler/Harness evidence."""
 
     complete_source_outline = _source_outline_value(input_root, 1, 48)
-    top_level_functions = [
-        {
-            "ordinal": item["ordinal"],
-            "line": item["line"],
-            "end_line": item["end_line"],
-            "header": str(item["header"])[:120],
-            "ordered_memory_call_count": len(item.get("ordered_memory_calls", [])),
-        }
-        for item in complete_source_outline["items"]
-        if isinstance(item, dict)
-        and item.get("depth") == 0
-        and item.get("kind") in {"function", "async_function"}
-    ]
     source_outline = {
         **complete_source_outline,
         "items": complete_source_outline["items"][:16],
@@ -601,224 +543,63 @@ def _source_brief(input_root: Path) -> None:
             if len(complete_source_outline["items"]) > 16
             else None
         ),
-        "top_level_functions": top_level_functions,
-        "item_query": f"{QUERY_COMMAND} source-outline --start ORDINAL --count 1",
     }
-    source_outline["items"] = [
-        {
-            key: item[key]
-            for key in (
-                "ordinal",
-                "kind",
-                "line",
-                "end_line",
-                "depth",
-                "header",
-                "contains_return",
-                "loop_target_names",
-                "lexically_preexisting_writes",
-            )
-            if key in item
+    source_kind = _mounted_source_kind(input_root)
+    ttir_path = input_root / "source_ttir.json"
+    if (
+        ttir_path.is_file()
+        and not ttir_path.is_symlink()
+        and source_kind != "cuda"
+    ):
+        compiler_realization: dict[str, Any] = {
+            "selected_frontend": "triton_ttir",
+            "source_kind": source_kind,
+            "model_visible": True,
+            "lift_acceptance_authority": False,
+            "source_observer": _source_observer_value(input_root),
+            "authority": (
+                "Exact Source-TTIR and compiler observer facts are mounted for "
+                "the Triton/TTIR branch only; they are compiler evidence and do "
+                "not replace J semantics or select C/pi fields."
+            ),
         }
-        | {"ordered_memory_call_count": len(item["ordered_memory_calls"])}
-        for item in source_outline["items"]
-        if isinstance(item, dict) and isinstance(item.get("ordered_memory_calls"), list)
-    ] + [
-        {
-            key: item[key]
-            for key in (
-                "ordinal",
-                "kind",
-                "line",
-                "end_line",
-                "depth",
-                "header",
-                "contains_return",
-                "loop_target_names",
-                "lexically_preexisting_writes",
-            )
-            if key in item
+    elif source_kind == "cuda":
+        compiler_realization = {
+            "selected_frontend": "cuda_cpp_native",
+            "source_kind": source_kind,
+            "model_visible": True,
+            "lift_acceptance_authority": False,
+            "authority": (
+                "CUDA C++ source is a native source projection. Use its CUDA "
+                "compiler/Harness view and never parse it as Python or substitute "
+                "Triton TTIR evidence."
+            ),
         }
-        for item in source_outline["items"]
-        if isinstance(item, dict) and "ordered_memory_calls" not in item
-    ]
-    source_outline["items"].sort(key=lambda item: int(item["ordinal"]))
-
-    raw_ttir_lines = str(observation.get("ttir", "")).splitlines()
-    sensitive_numeric_names = (
-        "math.fma",
-        "tt.dot",
-        "tt.reduce",
-        "tt.scan",
-        "arith.extf",
-        "arith.truncf",
-        "arith.sitofp",
-        "arith.uitofp",
-        "arith.fptosi",
-        "arith.fptoui",
-        "arith.extsi",
-        "arith.extui",
-        "arith.trunci",
-        "arith.index_cast",
-    )
-    sensitive_numeric_ops = {
-        name: count
-        for name in sensitive_numeric_names
-        if (count := sum(line.count(name) for line in raw_ttir_lines)) > 0
-    }
-
-    value = {
+    else:
+        compiler_realization = {
+            "selected_frontend": "python_or_tilelang_native_projection",
+            "source_kind": source_kind,
+            "model_visible": True,
+            "lift_acceptance_authority": False,
+            "authority": (
+                "Use the selected frontend's mounted Source projection and full "
+                "compiler/Harness view. A Triton TTIR query is available only when "
+                "source_ttir.json is mounted."
+            ),
+        }
+    brief: dict[str, Any] = {
         "protocol": "intentir.lift-source-brief.v3",
         "source": source_outline,
         "harness_abi": _compact_harness_abi_value(input_root),
-        "compiler": {
-            "status": observation.get("status"),
-            "ttir_lines": len(str(observation.get("ttir", "")).splitlines()),
-            "section_counts": {
-                name: preview["total"] for name, preview in compiler_sections.items()
-            },
-            "section_query": (
-                f"{QUERY_COMMAND} source-observer --path fingerprint.SECTION"
-            ),
-            "sensitive_numeric_index": {
-                "operations": sensitive_numeric_ops,
-                "exact_query": (
-                    f"{QUERY_COMMAND} source-ttir-find OPERATION --context 4"
-                ),
-                "authority": (
-                    "exact Source-TTIR operation counts only; this index does not "
-                    "choose an Intent op, cast placement, dtype, or result relation"
-                ),
-            },
-            "control_time_index": {
-                "loops": [
-                    {
-                        "ordinal": ordinal,
-                        "block_argument_count": item.get("block_argument_count"),
-                        "carried_value_count": len(
-                            item.get("carried_argument_use_counts", [])
-                        ),
-                        "yielded_value_count": len(item.get("yielded_values", [])),
-                        "body_op_kind_count": len(
-                            item.get("body_op_multiset", {})
-                        ),
-                        "body_signal_ops": sorted(
-                            str(name)
-                            for name in item.get("body_op_multiset", {})
-                            if str(name).startswith("math.")
-                            or str(name)
-                            in {
-                                "tt.dot",
-                                "tt.reduce",
-                                "tt.scan",
-                                "control.conditional",
-                                "arith.maxnumf",
-                                "arith.addf",
-                            }
-                        ),
-                        "body_effect_kinds": sorted(
-                            str(name) for name in item.get("body_effects", {})
-                        ),
-                    }
-                    for ordinal, item in enumerate(fingerprint.get("loops", []))
-                    if isinstance(item, dict)
-                ][:6],
-                "terminal_forks": [
-                    {
-                        "ordinal": ordinal,
-                        "true_effect_count": len(
-                            item.get("true_arm", {}).get("effect_order", [])
-                        ),
-                        "false_effect_count": len(
-                            item.get("false_arm", {}).get("effect_order", [])
-                        ),
-                        "region_depth": len(item.get("region_context", [])),
-                    }
-                    for ordinal, item in enumerate(
-                        fingerprint.get("terminal_forks", [])
-                    )
-                    if isinstance(item, dict)
-                    and isinstance(item.get("true_arm"), dict)
-                    and isinstance(item.get("false_arm"), dict)
-                ][:6],
-                "authority": (
-                    "exact compiler-observer index only; counts and operation names "
-                    "do not classify J ownership or construct recurrence/control"
-                ),
-                "loop_query": (
-                    f"{QUERY_COMMAND} source-observer --path "
-                    "fingerprint.loops.ORDINAL"
-                ),
-                "terminal_fork_query": (
-                    f"{QUERY_COMMAND} source-observer --path "
-                    "fingerprint.terminal_forks.ORDINAL"
-                ),
-            },
-            "exact_ttir_queries": [
-                f"{QUERY_COMMAND} source-ttir-outline --start 1 --count 80",
-                f"{QUERY_COMMAND} source-ttir-find TOKEN --context 3",
-                f"{QUERY_COMMAND} source-ttir-def-use %SSA --context 2",
-            ],
-        },
+        "compiler_realization": compiler_realization,
         "authority": (
-            "Exact bounded projection only. Source syntax, Harness ABI declarations, "
-            "and compiler-observer records remain separate evidence; Lift alone "
-            "decides their J/C/pi meaning and authors every artifact field."
+            "Source syntax, the selected frontend's exact ABI/C values and "
+            "its own compiler observer remain separate evidence. The Lift "
+            "owner authors every J/C/pi field; C values remain in C and are "
+            "never moved into J or pi."
         ),
     }
-    # Enforce a hard transport budget through exact-prefix degradation.  Each
-    # removed preview retains its total and exact query, so no fact changes owner.
-    def rendered_chars() -> int:
-        return len(
-            json.dumps(
-                value,
-                sort_keys=True,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        )
-
-    if rendered_chars() > MAX_OUTPUT_CHARS:
-        value["source"]["items"] = value["source"]["items"][:6]
-        value["source"]["next_start"] = 7
-        value["source"]["next_command"] = (
-            f"{QUERY_COMMAND} source-outline --start 7 --count 16"
-        )
-    if rendered_chars() > MAX_OUTPUT_CHARS:
-        value["source"]["items"] = value["source"]["items"][:3]
-        value["source"]["next_start"] = 4
-        value["source"]["next_command"] = (
-            f"{QUERY_COMMAND} source-outline --start 4 --count 16"
-        )
-    if rendered_chars() > MAX_OUTPUT_CHARS:
-        value["source"]["items"] = []
-        value["source"]["next_start"] = 1
-        value["source"]["next_command"] = (
-            f"{QUERY_COMMAND} source-outline --start 1 --count 16"
-        )
-    if rendered_chars() > MAX_OUTPUT_CHARS:
-        value["harness_abi"]["parameter_rows"] = value["harness_abi"][
-            "parameter_rows"
-        ][:24]
-        value["harness_abi"]["parameter_next_command"] = (
-            f"{QUERY_COMMAND} harness-abi --start 25 --count 24"
-        )
-    if rendered_chars() > MAX_OUTPUT_CHARS:
-        value["harness_abi"]["parameter_rows"] = value["harness_abi"][
-            "parameter_rows"
-        ][:16]
-        value["harness_abi"]["parameter_next_command"] = (
-            f"{QUERY_COMMAND} harness-abi --start 17 --count 24"
-        )
-    if rendered_chars() > MAX_OUTPUT_CHARS:
-        value["harness_abi"]["parameter_rows"] = value["harness_abi"][
-            "parameter_rows"
-        ][:8]
-        value["harness_abi"]["parameter_next_command"] = (
-            f"{QUERY_COMMAND} harness-abi --start 9 --count 24"
-        )
-    _emit_compact_json(value)
-
+    _emit_compact_json(brief)
 
 def _source_find(input_root: Path, query: str, context: int) -> None:
     """Find literal Source text with bounded line-numbered context.
@@ -874,6 +655,74 @@ def _source_find(input_root: Path, query: str, context: int) -> None:
         print("\n[more matches omitted; use a narrower literal query]")
 
 
+def _native_source_outline_value(
+    input_root: Path, start: int, count: int, source_kind: str
+) -> dict[str, Any]:
+    """Return bounded line-based navigation for non-Python source projections."""
+
+    if start < 1 or count < 1 or count > 48:
+        raise ValueError("native source-outline start/count must be positive and count <= 48")
+    lines = (input_root / "source.py").read_text(encoding="utf-8").splitlines()
+    items: list[dict[str, Any]] = []
+    depth = 0
+    memory_pattern = re.compile(
+        r"\b(?:load|store|atomic_[A-Za-z0-9_]+|atomic[A-Za-z0-9_]+)\b"
+    )
+    function_pattern = re.compile(
+        r"\b(?:__global__|__device__|__host__)?\s*[A-Za-z_][A-Za-z0-9_<>:*&\s]*"
+        r"\b[A-Za-z_][A-Za-z0-9_]*\s*\([^;]*\)"
+    )
+    control_pattern = re.compile(r"\b(?:for|while|if|else|switch|return)\b")
+    for ordinal, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        kind = "native_line"
+        if function_pattern.search(stripped) and "(" in stripped:
+            kind = "native_function_or_call"
+        elif control_pattern.search(stripped):
+            kind = "native_control"
+        memory_calls = [
+            [ordinal, match.group(0)] for match in memory_pattern.finditer(stripped)
+        ]
+        items.append(
+            {
+                "kind": kind,
+                "line": ordinal,
+                "end_line": ordinal,
+                "depth": depth,
+                "header": stripped[:200],
+                "ordered_memory_calls": memory_calls,
+                "contains_return": "return" in stripped,
+                "loop_target_names": [],
+                "lexically_preexisting_writes": [],
+            }
+        )
+        depth = max(0, depth + stripped.count("{") - stripped.count("}"))
+    page = items[start - 1 : start - 1 + count]
+    next_start = start + len(page) if start - 1 + len(page) < len(items) else None
+    return {
+        "protocol": "intentir.lift-source-outline.native.v1",
+        "source_kind": source_kind,
+        "authority": (
+            "bounded line-based native Source navigation; C++/native text is "
+            "never parsed as Python and no J/C/pi field is inferred"
+        ),
+        "total": len(items),
+        "start": start,
+        "items": [
+            {"ordinal": start + index, **item}
+            for index, item in enumerate(page)
+        ],
+        "next_start": next_start,
+        "next_command": (
+            f"{QUERY_COMMAND} source-outline --start {next_start} --count {count}"
+            if next_start is not None
+            else None
+        ),
+    }
+
+
 def _source_outline_value(input_root: Path, start: int, count: int) -> dict[str, Any]:
     """Return syntax-only control, write, and memory-call navigation facts.
 
@@ -886,6 +735,9 @@ def _source_outline_value(input_root: Path, start: int, count: int) -> dict[str,
 
     if start < 1 or count < 1 or count > 48:
         raise ValueError("source-outline start must be positive and count in [1, 48]")
+    source_kind = _mounted_source_kind(input_root)
+    if source_kind != "python":
+        return _native_source_outline_value(input_root, start, count, source_kind)
     source = (input_root / "source.py").read_text(encoding="utf-8")
     lines = source.splitlines()
     tree = ast.parse(source, filename="source.py")
@@ -1249,6 +1101,102 @@ def _harness(input_root: Path, path: str | None) -> None:
         )
 
 
+def _harness_abi_parts(view: dict[str, Any]) -> dict[str, Any]:
+    """Normalize legacy flat and paired frontend Harness views for queries."""
+
+    semantic = view
+    realization = view
+
+    raw_arguments = semantic.get("arguments", [])
+    if not isinstance(raw_arguments, list):
+        raise TypeError("Harness arguments must be an array")
+    arguments: list[dict[str, Any]] = []
+    for raw in raw_arguments:
+        if not isinstance(raw, dict):
+            raise TypeError("Harness argument rows must be objects")
+        names = raw.get("names")
+        if names is None:
+            names = [raw.get("name")]
+        if not isinstance(names, list) or not names or any(
+            not isinstance(name, str) for name in names
+        ):
+            raise TypeError("Harness argument rows require name or names")
+        common = {key: value for key, value in raw.items() if key not in {"name", "names"}}
+        for name in names:
+            arguments.append({"name": name, **common})
+
+    raw_bindings = semantic.get("constexpr_bindings", [])
+    if isinstance(raw_bindings, list):
+        bound_parameters = [
+            item.get("name")
+            for item in raw_bindings
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        ]
+    else:
+        raw_bound = semantic.get("bound_constexpr_parameters", [])
+        bound_parameters = list(raw_bound) if isinstance(raw_bound, list) else []
+    constexpr_parameters = semantic.get("constexpr_parameters")
+    if not isinstance(constexpr_parameters, list):
+        constexpr_parameters = list(bound_parameters)
+    parameter_order = semantic.get("parameter_order")
+    if not isinstance(parameter_order, list):
+        argument_names = {item["name"] for item in arguments}
+        parameter_order = [
+            item["name"] for item in arguments
+        ] + [item for item in constexpr_parameters if item not in argument_names]
+
+    schedule_values = realization.get("schedule_values", {})
+    bound_values = realization.get("bound_constexpr_values", {})
+    schedule_types = realization.get("schedule_value_types", {})
+    if not isinstance(schedule_values, dict) or not isinstance(bound_values, dict):
+        raise TypeError("Harness constexpr value maps must be objects")
+    if not isinstance(schedule_types, dict):
+        schedule_types = {}
+    compiler_slots = realization.get("compiler_slots", [])
+    compiler_roles = realization.get("compiler_roles", {})
+    if not isinstance(compiler_slots, list) or not isinstance(compiler_roles, dict):
+        raise TypeError("Harness compiler slot declarations are malformed")
+    declarations = view.get("layer_c_declarations")
+    raw_slots = declarations.get("slots") if isinstance(declarations, dict) else None
+    if not isinstance(raw_slots, list):
+        raw_slots = []
+        compiler_set = set(compiler_slots)
+        for name, value in schedule_values.items():
+            declaration: dict[str, Any] = {
+                "slot": name,
+                "kind": "compiler" if name in compiler_set else "constexpr",
+                "value_type": schedule_types.get(name),
+                "required": True,
+            }
+            if declaration["value_type"] is None:
+                if isinstance(value, bool):
+                    declaration["value_type"] = "i1"
+                elif isinstance(value, int):
+                    declaration["value_type"] = "i32"
+                elif isinstance(value, float):
+                    declaration["value_type"] = "f32"
+                elif isinstance(value, str):
+                    declaration["value_type"] = "str"
+            if name in compiler_set:
+                declaration["role"] = compiler_roles.get(name, name)
+            raw_slots.append(declaration)
+    if not all(isinstance(item, dict) and isinstance(item.get("slot"), str) for item in raw_slots):
+        raise TypeError("Harness Layer-C slot declarations are malformed")
+    return {
+        "semantic": semantic,
+        "realization": realization,
+        "parameter_order": parameter_order,
+        "arguments": arguments,
+        "bound_parameters": bound_parameters,
+        "constexpr_parameters": constexpr_parameters,
+        "bound_values": bound_values,
+        "schedule_values": schedule_values,
+        "compiler_slots": compiler_slots,
+        "compiler_roles": compiler_roles,
+        "raw_slots": raw_slots,
+    }
+
+
 def _harness_abi_value(
     input_root: Path, start: int = 1, count: int = 24
 ) -> dict[str, Any]:
@@ -1265,22 +1213,21 @@ def _harness_abi_value(
     view = _load_json(input_root / "harness_view.json")
     if not isinstance(view, dict):
         raise TypeError("harness_view.json must be an object")
-    parameter_order = view.get("parameter_order", [])
-    arguments = view.get("arguments", [])
-    bound_values = view.get("bound_constexpr_values", {})
-    schedule_values = view.get("schedule_values", {})
-    compiler_slots = view.get("compiler_slots", [])
-    compiler_roles = view.get("compiler_roles", {})
+    parts = _harness_abi_parts(view)
+    semantic = parts["semantic"]
+    parameter_order = parts["parameter_order"]
+    arguments = parts["arguments"]
+    bound_parameters = parts["bound_parameters"]
+    bound_values = parts["bound_values"]
+    schedule_values = parts["schedule_values"]
+    raw_slots = parts["raw_slots"]
     if not isinstance(parameter_order, list) or not all(
         isinstance(item, str) for item in parameter_order
     ):
         raise TypeError("Harness parameter_order must be an array of strings")
-    if not isinstance(arguments, list):
-        raise TypeError("Harness arguments must be an array")
-    if not isinstance(bound_values, dict) or not isinstance(schedule_values, dict):
-        raise TypeError("Harness constexpr value maps must be objects")
-    if not isinstance(compiler_slots, list) or not isinstance(compiler_roles, dict):
-        raise TypeError("Harness compiler slot declarations are malformed")
+    if not isinstance(bound_parameters, list) or not all(isinstance(item, str) for item in bound_parameters):
+        raise TypeError("Harness bound constexpr declarations must be strings")
+    slots_by_name = {item["slot"]: item for item in raw_slots}
     arguments_by_name = {
         item.get("name"): item
         for item in arguments
@@ -1291,12 +1238,16 @@ def _harness_abi_value(
         "kind",
         "mode",
         "dtype",
+        "rank",
         "shape",
         "shape_contract",
         "shape_coordinate",
         "value",
     )
-    for name in parameter_order:
+    visible_order = list(parameter_order) + [
+        item["slot"] for item in raw_slots if item["slot"] not in parameter_order
+    ]
+    for name in visible_order:
         entry: dict[str, Any] = {
             "name": name,
             "artifact_owner": "J.signature" if name.startswith("p") else "C",
@@ -1313,25 +1264,24 @@ def _harness_abi_value(
                 for field in argument_fields
                 if field in argument
             }
-        elif name in bound_values:
+        elif name in bound_parameters:
             entry.update(
                 {
                     "classification": "bound_non_c_constexpr_carrier",
-                    "bound_valuation": bound_values[name],
+                    "bound_valuation": bound_values.get(name),
                 }
             )
-        elif name in schedule_values:
+        elif name in slots_by_name:
+            declaration = slots_by_name[name]
             entry.update(
                 {
-                    "classification": "pure_c_constexpr_slot",
-                    "c_value": schedule_values[name],
-                }
-            )
-        elif name in compiler_slots:
-            entry.update(
-                {
-                    "classification": "compiler_option_c_slot",
-                    "compiler_role": compiler_roles.get(name),
+                    "classification": (
+                        "compiler_option_c_slot"
+                        if declaration.get("kind") == "compiler"
+                        else "pure_c_constexpr_slot"
+                    ),
+                    "c_declaration": dict(declaration),
+                    "c_value": schedule_values.get(name),
                 }
             )
         else:
@@ -1349,24 +1299,25 @@ def _harness_abi_value(
             if next_start <= len(entries)
             else None
         ),
-        "bound_non_c_constexprs": list(bound_values),
-        "pure_c_constexprs": list(schedule_values),
-        "compiler_c_slots": list(compiler_slots),
-        "shape_coordinates": view.get("shape_coordinates", {}),
-        "bound_constexpr_shape_coordinates": view.get(
+        "bound_non_c_constexprs": list(bound_parameters),
+        "bound_non_c_constexpr_values": dict(bound_values),
+        "pure_c_values": dict(schedule_values),
+        "compiler_c_slots": list(parts["compiler_slots"]),
+        "layer_c_declarations": [dict(item) for item in raw_slots],
+        "shape_coordinates": semantic.get("shape_coordinates", []),
+        "bound_constexpr_shape_coordinates": semantic.get(
             "bound_constexpr_shape_coordinates", {}
         ),
-        "grid_shape_coordinates": view.get("grid_shape_coordinates", []),
-        "aliases": view.get("aliases", []),
+        "aliases": semantic.get("aliases", []),
         "agent_owned_not_inferred": [
             "p* logical_ref and t*/x* ownership",
             "logical operators, control, accesses, effects, and outputs",
             "each typed pi relation and every J/C handle bound by it",
         ],
         "authority": (
-            "Exact read-only projection of harness_view.json. p*/c* ownership, "
-            "bound-non-C membership, and shape-coordinate identities were already "
-            "declared by the Harness; no Source meaning or artifact field was inferred."
+            "Exact read-only selected-frontend Harness projection. Runtime "
+            "shape/scalar values, C values, compiler roles and ABI order are "
+            "copied from harness_view.json; the query never chooses J/C/pi fields."
         ),
     }
 
@@ -1389,7 +1340,6 @@ def _compact_harness_abi_value(input_root: Path) -> dict[str, Any]:
         classification = entry.get("classification")
         declared = entry.get("declared")
         if isinstance(declared, dict):
-            shape = declared.get("shape")
             kind = declared.get("kind")
             if kind == "tensor":
                 row = [
@@ -1397,8 +1347,9 @@ def _compact_harness_abi_value(input_root: Path) -> dict[str, Any]:
                     "tensor",
                     declared.get("mode"),
                     declared.get("dtype"),
-                    len(shape) if isinstance(shape, list) else None,
+                    declared.get("rank"),
                     declared.get("shape_contract"),
+                    declared.get("shape"),
                 ]
             elif kind == "scalar":
                 row = [
@@ -1406,6 +1357,7 @@ def _compact_harness_abi_value(input_root: Path) -> dict[str, Any]:
                     "scalar",
                     declared.get("mode"),
                     declared.get("dtype"),
+                    declared.get("value"),
                 ]
                 if declared.get("shape_coordinate") is not None:
                     row.append(declared["shape_coordinate"])
@@ -1413,12 +1365,19 @@ def _compact_harness_abi_value(input_root: Path) -> dict[str, Any]:
                 row = [name, kind, declared.get("mode"), declared.get("dtype")]
                 while row and row[-1] is None:
                     row.pop()
-        elif "bound_valuation" in entry:
-            row = [name, "bound", entry["bound_valuation"]]
-        elif "c_value" in entry:
-            row = [name, "c_value", entry["c_value"]]
-        elif "compiler_role" in entry:
-            row = [name, "compiler", entry["compiler_role"]]
+        elif classification == "bound_non_c_constexpr_carrier":
+            row = [name, "bound_declaration", entry.get("bound_valuation")]
+        elif isinstance(entry.get("c_declaration"), dict):
+            declaration = entry["c_declaration"]
+            row = [
+                name,
+                "c_declaration",
+                declaration.get("kind"),
+                declaration.get("value_type"),
+                declaration.get("required"),
+                declaration.get("role"),
+                entry.get("c_value"),
+            ]
         else:
             row = [name, classification or "unresolved"]
         rows.append(row)
@@ -1427,12 +1386,13 @@ def _compact_harness_abi_value(input_root: Path) -> dict[str, Any]:
         "row_grammar": {
             "ownership": "p*=J.signature; c*=C",
             "tensor": [
-                "name", "tensor", "mode", "dtype", "rank", "shape_contract",
+                "name", "tensor", "mode", "dtype", "rank", "shape_contract", "shape",
             ],
-            "scalar": ["name", "scalar", "mode", "dtype", "shape_coordinate?"],
-            "bound": ["name", "bound", "bound_valuation"],
-            "c_value": ["name", "c_value", "value"],
-            "compiler": ["name", "compiler", "role"],
+            "scalar": ["name", "scalar", "mode", "dtype", "value", "shape_coordinate?"],
+            "bound": ["name", "bound_declaration", "value"],
+            "c_declaration": [
+                "name", "c_declaration", "kind", "value_type", "required", "role?", "c_value",
+            ],
         },
         "parameter_rows": rows,
         "parameter_total": verbose["parameter_total"],
@@ -1441,14 +1401,13 @@ def _compact_harness_abi_value(input_root: Path) -> dict[str, Any]:
         "bound_constexpr_shape_coordinates": verbose[
             "bound_constexpr_shape_coordinates"
         ],
-        "grid_shape_coordinates": verbose["grid_shape_coordinates"],
         "aliases": verbose["aliases"],
         "agent_owned_not_inferred": verbose["agent_owned_not_inferred"],
         "exact_row_query": f"{QUERY_COMMAND} harness-abi --start START --count COUNT",
         "authority": (
-            "Lossless selection of public Harness ABI fields except that concrete "
-            "tensor shape is represented by rank plus the exact parametric "
-            "shape_contract. No J/C/pi field or semantic binding is inferred."
+            "Exact selected-frontend ABI/C projection. Runtime scalar/tensor "
+            "valuations, C values, compiler roles and declaration order are copied "
+            "from the mounted Harness view; this query never authors artifact fields."
         ),
     }
 
@@ -1463,6 +1422,10 @@ def _candidate(output_root: Path, path: str | None) -> None:
     candidate_path = output_root / "candidate.json"
     if not candidate_path.is_file():
         raise FileNotFoundError("/output/candidate.json does not exist")
+    # This is a read-only convenience alias: the mounted file path selects the
+    # candidate root, while dotted paths select JSON children below it.
+    if path in {"/output/candidate.json", "candidate.json"}:
+        path = None
     value = _resolve_json_path(_load_json(candidate_path), path)
     try:
         _emit_json(value)
@@ -2068,14 +2031,15 @@ def _candidate_control(
 
 
 def _realization_ledger(input_root: Path) -> None:
-    """Expose bounded raw physical facts without assigning J/C/pi ownership."""
+    """Expose raw Triton/TTIR realization facts without assigning ownership."""
 
     observation = _source_ttir_observation(input_root)
     text = _source_ttir_text(input_root)
     lines = text.splitlines()
     program_pattern = re.compile(
         r'^\s*(?P<result>%[A-Za-z0-9_.$-]+)\s*=\s*'
-        r'(?:"tt\.get_program_id"|tt\.get_program_id)\s+(?P<axis>[xyz])\b'
+        r'(?:(?:"tt\.get_program_id")|tt\.get_program_id)\s+'
+        r'(?P<axis>[xyz])\b'
     )
     operation_pattern = re.compile(
         r'^\s*(?:%[^=]+?\s*=\s*)?(?:"(?P<quoted>[A-Za-z0-9_.-]+)"|'
@@ -2087,8 +2051,10 @@ def _realization_ledger(input_root: Path) -> None:
         if match is None:
             continue
         result = match.group("result")
+        token = re.compile(
+            rf'(?<![A-Za-z0-9_.$-]){re.escape(result)}(?![A-Za-z0-9_.$-])'
+        )
         users: list[dict[str, Any]] = []
-        token = re.compile(rf'(?<![A-Za-z0-9_.$-]){re.escape(result)}(?![A-Za-z0-9_.$-])')
         for user_line_number, user_line in enumerate(lines, start=1):
             if user_line_number == line_number or token.search(user_line) is None:
                 continue
@@ -2113,93 +2079,14 @@ def _realization_ledger(input_root: Path) -> None:
     fingerprint = observation.get("fingerprint")
     fingerprint = fingerprint if isinstance(fingerprint, dict) else {}
     harness = _load_json(input_root / "harness_view.json")
+    if not isinstance(harness, dict):
+        raise TypeError("harness_view.json must be an object")
     memory_counts = {
         "load": len(re.findall(r'(?m)^\s*(?:%[^=]+?=\s*)?(?:"tt\.load"|tt\.load)\b', text)),
         "store": len(re.findall(r'(?m)^\s*(?:"tt\.store"|tt\.store)\b', text)),
-        "atomic": len(re.findall(r'(?m)^\s*(?:%[^=]+?=\s*)?(?:"tt\.atomic[^\"]*"|tt\.atomic[A-Za-z0-9_.-]*)\b', text)),
+        "atomic": len(re.findall(r'(?m)^\s*(?:%[^=]+?=\s*)?(?:"tt\.atomic[^"]*"|tt\.atomic[A-Za-z0-9_.-]*)\b', text)),
         "addptr": len(re.findall(r'(?m)^\s*%[^=]+?=\s*(?:"tt\.addptr"|tt\.addptr)\b', text)),
     }
-    definition_pattern = re.compile(
-        r'^\s*(?P<result>%[A-Za-z0-9_.$-]+)\s*=\s*'
-        r'(?:"(?P<quoted>[A-Za-z0-9_.-]+)"|(?P<plain>[A-Za-z][A-Za-z0-9_.-]*))\b'
-        r'(?P<body>.*)$'
-    )
-    value_pattern = re.compile(r'%[A-Za-z0-9_.$-]+')
-    definitions: dict[str, dict[str, Any]] = {}
-    for line_number, line in enumerate(lines, start=1):
-        match = definition_pattern.search(line)
-        if match is None:
-            continue
-        definitions[match.group("result")] = {
-            "op": match.group("quoted") or match.group("plain"),
-            "operands": value_pattern.findall(match.group("body")),
-            "line": line_number,
-        }
-
-    address_passthrough = {
-        "tt.splat",
-        "tt.broadcast",
-        "tt.expand_dims",
-        "tt.reshape",
-        "tt.trans",
-    }
-
-    def address_chain(pointer: str) -> tuple[str, list[dict[str, Any]]]:
-        current = pointer
-        stages: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        while current not in seen:
-            seen.add(current)
-            definition = definitions.get(current)
-            if definition is None:
-                break
-            operation = str(definition["op"])
-            operands = definition["operands"]
-            if operation != "tt.addptr" and operation not in address_passthrough:
-                break
-            stages.append({"op": operation, "line": int(definition["line"])})
-            if not operands:
-                break
-            current = str(operands[0])
-        stages.reverse()
-        return current, stages
-
-    transfer_pattern = re.compile(
-        r'^\s*(?:%[A-Za-z0-9_.$-]+\s*=\s*)?'
-        r'(?:"(?P<quoted>tt\.(?:load|store|atomic[A-Za-z0-9_.-]*))"|'
-        r'(?P<plain>tt\.(?:load|store|atomic[A-Za-z0-9_.-]*)))\b'
-        r'(?P<body>.*)$'
-    )
-    memory_operations: list[dict[str, Any]] = []
-    for line_number, line in enumerate(lines, start=1):
-        match = transfer_pattern.search(line)
-        if match is None:
-            continue
-        operation = match.group("quoted") or match.group("plain")
-        operands = value_pattern.findall(match.group("body"))
-        if not operands:
-            continue
-        kind = (
-            "load"
-            if operation == "tt.load"
-            else "store"
-            if operation == "tt.store"
-            else "atomic"
-        )
-        pointer_root, stages = address_chain(operands[0])
-        masked = len(operands) >= 2 if kind == "load" else len(operands) >= 3
-        memory_operations.append(
-            {
-                "ordinal": len(memory_operations),
-                "kind": kind,
-                "line": line_number,
-                "pointer_root": pointer_root,
-                "address_stage_ops": [stage["op"] for stage in stages],
-                "address_stage_lines": [stage["line"] for stage in stages],
-                "addptr_depth": sum(stage["op"] == "tt.addptr" for stage in stages),
-                "mask_operand_present": masked,
-            }
-        )
     _emit_json(
         {
             "protocol": "intentir.lift-realization-ledger",
@@ -2207,16 +2094,14 @@ def _realization_ledger(input_root: Path) -> None:
             "loops": fingerprint.get("loops", []),
             "terminal_forks": fingerprint.get("terminal_forks", []),
             "memory_operation_counts": memory_counts,
-            "memory_operations": memory_operations,
             "harness_grid": {
                 key: harness.get(key)
                 for key in ("grid", "grid_contract", "grid_shape_coordinates")
                 if key in harness
             },
             "authority": (
-                "Read-only raw Source/TTIR/Harness facts. This ledger does not "
-                "classify semantics, choose J/C/pi ownership, suggest a relation, "
-                "or author any candidate field."
+                "Read-only raw Triton Source/TTIR/Harness facts. This ledger does "
+                "not classify semantics, choose J/C/pi ownership, or author fields."
             ),
         }
     )
@@ -2287,6 +2172,9 @@ def _candidate_abi(input_root: Path, output_root: Path) -> None:
     view = _load_json(input_root / "harness_view.json")
     if not isinstance(view, dict):
         raise TypeError("harness_view.json must be an object")
+    parts = _harness_abi_parts(view)
+    semantic = parts["semantic"]
+    raw_c_declarations = parts["raw_slots"]
     candidate_path = output_root / "candidate.json"
     if not candidate_path.is_file():
         _emit_json(
@@ -2321,13 +2209,17 @@ def _candidate_abi(input_root: Path, output_root: Path) -> None:
             }
         )
 
-    parameter_order = view.get("parameter_order", [])
+    parameter_order = parts["parameter_order"]
     if not isinstance(parameter_order, list) or not all(
         isinstance(name, str) for name in parameter_order
     ):
         raise TypeError("Harness parameter_order must be an array of strings")
     expected_p = [name for name in parameter_order if name.startswith("p")]
-    expected_c = [name for name in parameter_order if name.startswith("c")]
+    expected_c = [
+        item["slot"]
+        for item in raw_c_declarations
+        if item.get("kind") == "constexpr"
+    ]
 
     j = candidate.get("j")
     signature = j.get("signature") if isinstance(j, dict) else None
@@ -2359,17 +2251,15 @@ def _candidate_abi(input_root: Path, output_root: Path) -> None:
             actual_p,
         )
 
-    arguments = view.get("arguments", [])
-    if not isinstance(arguments, list):
-        raise TypeError("Harness arguments must be an array")
+    arguments = parts["arguments"]
     arguments_by_name = {
         item.get("name"): item
         for item in arguments
         if isinstance(item, dict) and isinstance(item.get("name"), str)
     }
-    bound_constexprs = view.get("bound_constexpr_values", {})
-    if not isinstance(bound_constexprs, dict):
-        raise TypeError("Harness bound_constexpr_values must be an object")
+    bound_constexprs = parts["bound_parameters"]
+    if not isinstance(bound_constexprs, list):
+        raise TypeError("Harness bound constexpr parameters must be an array")
 
     for name in expected_p:
         actual = actual_parameters.get(name)
@@ -2426,10 +2316,7 @@ def _candidate_abi(input_root: Path, output_root: Path) -> None:
             if "mode" in argument:
                 expected_fields["mode"] = argument.get("mode")
             if source_kind == "tensor":
-                shape = argument.get("shape")
-                expected_fields["rank"] = (
-                    len(shape) if isinstance(shape, list) else "Harness shape"
-                )
+                expected_fields["rank"] = argument.get("rank")
             elif source_kind == "scalar":
                 expected_fields["rank"] = 0
             else:
@@ -2469,9 +2356,11 @@ def _candidate_abi(input_root: Path, output_root: Path) -> None:
             expected_c,
             actual_constexpr_c,
         )
-    expected_compiler = view.get("compiler_slots", [])
-    if not isinstance(expected_compiler, list):
-        raise TypeError("Harness compiler_slots must be an array")
+    expected_compiler = [
+        item["slot"]
+        for item in raw_c_declarations
+        if item.get("kind") == "compiler"
+    ]
     actual_compiler = [
         item.get("name")
         for item in actual_slots
@@ -2484,34 +2373,36 @@ def _candidate_abi(input_root: Path, output_root: Path) -> None:
             expected_compiler,
             actual_compiler,
         )
-    expected_values = view.get("schedule_values", {})
+    expected_values = parts["schedule_values"]
     if values != expected_values:
         issue("c_values_mismatch", "c.values", expected_values, values)
-    expected_roles = view.get("compiler_roles", {})
-    if not isinstance(expected_roles, dict):
-        raise TypeError("Harness compiler_roles must be an object")
     slots_by_name = {
         item.get("name"): item
         for item in actual_slots
         if isinstance(item.get("name"), str)
     }
-    for name, role in expected_roles.items():
+    for declaration in raw_c_declarations:
+        name = declaration["slot"]
         slot = slots_by_name.get(name)
+        expected = {
+            key: declaration.get(key)
+            for key in ("kind", "value_type", "required")
+        }
+        if declaration.get("kind") == "compiler":
+            expected["role"] = declaration.get("role")
         observed = (
-            {"kind": slot.get("kind"), "role": slot.get("role")}
-            if slot is not None
-            else None
+            {key: slot.get(key) for key in expected}
+            if slot is not None else None
         )
-        expected = {"kind": "compiler", "role": role}
         if observed != expected:
             issue(
-                "compiler_c_role_mismatch",
+                "c_declaration_mismatch",
                 f"c.slots[{name}]",
                 expected,
                 observed,
             )
 
-    expected_constexprs = view.get("constexpr_parameters", [])
+    expected_constexprs = parts["constexpr_parameters"]
     if not isinstance(expected_constexprs, list):
         raise TypeError("Harness constexpr_parameters must be an array")
     actual_constexprs = [
@@ -2529,7 +2420,7 @@ def _candidate_abi(input_root: Path, output_root: Path) -> None:
             ),
         )
 
-    expected_aliases = view.get("aliases", [])
+    expected_aliases = semantic.get("aliases", [])
     boundary = j.get("boundary") if isinstance(j, dict) else None
     actual_aliases = (
         boundary.get("aliases") if isinstance(boundary, dict) else None
@@ -2628,12 +2519,6 @@ def main() -> int:
     source = subparsers.add_parser("source")
     source.add_argument("--start", type=int, default=1)
     source.add_argument("--lines", type=int, default=160)
-    source_find = subparsers.add_parser("source-find")
-    source_find.add_argument("query")
-    source_find.add_argument("--context", type=int, default=3)
-    source_outline = subparsers.add_parser("source-outline")
-    source_outline.add_argument("--start", type=int, default=1)
-    source_outline.add_argument("--count", type=int, default=32)
     source_ttir = subparsers.add_parser("source-ttir")
     source_ttir.add_argument("--start", type=int, default=1)
     source_ttir.add_argument("--lines", type=int, default=160)
@@ -2648,8 +2533,14 @@ def main() -> int:
     source_ttir_outline.add_argument("--count", type=int, default=80)
     source_observer = subparsers.add_parser("source-observer")
     source_observer.add_argument("--path")
-    subparsers.add_parser("source-brief")
     subparsers.add_parser("realization-ledger")
+    source_find = subparsers.add_parser("source-find")
+    source_find.add_argument("query")
+    source_find.add_argument("--context", type=int, default=3)
+    source_outline = subparsers.add_parser("source-outline")
+    source_outline.add_argument("--start", type=int, default=1)
+    source_outline.add_argument("--count", type=int, default=32)
+    subparsers.add_parser("source-brief")
     harness = subparsers.add_parser("harness")
     harness.add_argument("--path")
     harness_abi = subparsers.add_parser("harness-abi")
@@ -2703,10 +2594,6 @@ def main() -> int:
         _feedback_category(args.input_root, args.name)
     elif args.command == "source":
         _source(args.input_root, args.start, args.lines)
-    elif args.command == "source-find":
-        _source_find(args.input_root, args.query, args.context)
-    elif args.command == "source-outline":
-        _source_outline(args.input_root, args.start, args.count)
     elif args.command == "source-ttir":
         _source_ttir(args.input_root, args.start, args.lines)
     elif args.command == "source-ttir-find":
@@ -2719,10 +2606,12 @@ def main() -> int:
         _source_ttir_outline(args.input_root, args.start, args.count)
     elif args.command == "source-observer":
         _source_observer(args.input_root, args.path)
+    elif args.command == "source-find":
+        _source_find(args.input_root, args.query, args.context)
+    elif args.command == "source-outline":
+        _source_outline(args.input_root, args.start, args.count)
     elif args.command == "source-brief":
         _source_brief(args.input_root)
-    elif args.command == "realization-ledger":
-        _realization_ledger(args.input_root)
     elif args.command == "harness":
         _harness(args.input_root, args.path)
     elif args.command == "harness-abi":
@@ -2745,12 +2634,14 @@ def main() -> int:
         _candidate_control(
             args.output_root, args.section, args.start, args.count
         )
+    elif args.command == "realization-ledger":
+        _realization_ledger(args.input_root)
     elif args.command == "knowledge":
         _knowledge(args.input_root, args.query, args.context)
     elif not _write_previous(args.input_root, args.output_root):
-        raise ValueError("feedback contains no previous artifact")
+        raise ValueError("feedback contains no previous candidate or artifact")
     else:
-        print("copied previous artifact to /output/candidate.json")
+        print("copied previous candidate to /output/candidate.json")
     return 0
 
 

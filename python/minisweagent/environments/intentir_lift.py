@@ -43,14 +43,17 @@ _LIFT_READ_ONLY_CONTEXT_COMMANDS = frozenset(
         "feedback-frontier",
         "feedback-category",
         "source",
-        "source-find",
-        "source-outline",
-        "source-brief",
         "source-ttir",
         "source-ttir-find",
         "source-ttir-def-use",
         "source-ttir-outline",
         "source-observer",
+        "realization-ledger",
+        "source-obligations",
+        "abi-authoring",
+        "source-find",
+        "source-outline",
+        "source-brief",
         "harness",
         "harness-abi",
         "candidate",
@@ -61,6 +64,50 @@ _LIFT_READ_ONLY_CONTEXT_COMMANDS = frozenset(
         "candidate-abi",
         "candidate-control",
         "knowledge",
+    }
+)
+_SOURCE_OBLIGATION_SECTIONS = frozenset(
+    {
+        "scopes",
+        "program_axes",
+        "index_construction",
+        "mask_uses",
+        "fills",
+        "casts",
+        "memory_accesses",
+        "control",
+        "helper_calls",
+        "expression_facts",
+    }
+)
+_LIFT_SCHEMA_SECTIONS = frozenset(
+    {
+        "access",
+        "access_guard_relation",
+        "alias",
+        "authorization",
+        "broadcast",
+        "c_slot",
+        "consumer_extension",
+        "dimension_relation",
+        "domain",
+        "effect",
+        "index_bound",
+        "output_mapping",
+        "parameter",
+        "pi_access_representation_binding",
+        "pi_control_binding",
+        "pi_iteration_binding",
+        "pi_materialization_binding",
+        "pi_program_axis",
+        "pi_program_binding",
+        "reduction",
+        "result_relation",
+        "scope",
+        "storage",
+        "tensor",
+        "update",
+        "value_dimension_relation",
     }
 )
 MAX_CANDIDATE_BYTES = 4 * 1024 * 1024
@@ -290,7 +337,7 @@ class IntentIRLiftEnvironmentConfig(BaseModel):
     output_dir: Path
     scratch_dir: Path
     tmp_dir: Path | None = None
-    timeout: int = 60
+    timeout: float | None = None
     candidate_check_limit: int = 0
     candidate_submission_check_limit: int = 0
     submission_kind: str = "candidate"
@@ -350,6 +397,9 @@ class IntentIRLiftEnvironment:
         self._multi_action_rejections = 0
         self._structured_context_queries: list[str] = []
         self._structured_schema_queries: list[list[str]] = []
+        self._stage_action_calls = 0
+        self._stage_action_failures = 0
+        self._stage_action_elapsed_ms = 0.0
         self._validate_paths()
         self._startup_context, self._startup_context_receipt = (
             self._build_startup_context()
@@ -511,7 +561,8 @@ class IntentIRLiftEnvironment:
         if view not in {
             "source", "source_outline", "source_find", "source_brief",
             "source_ttir", "source_ttir_outline", "source_ttir_find",
-            "source_ttir_def_use", "source_observer",
+            "source_ttir_def_use", "source_observer", "realization_ledger",
+            "source_obligations",
             "harness", "harness_abi", "feedback",
             "feedback_category",
             "candidate", "candidate_find", "candidate_nodes", "candidate_node",
@@ -541,9 +592,9 @@ class IntentIRLiftEnvironment:
             start = bounded_int("start", 1, 1, 1_000_000)
             count = bounded_int(
                 "count",
-                24 if view == "harness_abi" else 20 if view == "candidate_control" else 40,
+                24 if view == "harness_abi" else 80 if view in {"source_ttir", "source_ttir_outline"} else 20 if view == "candidate_control" else 32 if view == "source_obligations" else 40,
                 1,
-                80 if view in {"harness_abi", "candidate_control"} else 160,
+                200 if view in {"source_ttir_outline"} else 160 if view == "source_ttir" else 80 if view in {"harness_abi", "candidate_control", "source_obligations"} else 160,
             )
             context = bounded_int("context", 3, 0, 16)
             query = bounded_text(
@@ -561,21 +612,24 @@ class IntentIRLiftEnvironment:
         except ValueError as exc:
             return self._structured_tool_error(str(exc))
 
+        if view == "source_obligations":
+            if section in {"", "overview"}:
+                section = None
+            elif section is not None and section not in _SOURCE_OBLIGATION_SECTIONS:
+                return self._structured_tool_error(
+                    "source_obligations section must be one of "
+                    + ", ".join(sorted(_SOURCE_OBLIGATION_SECTIONS))
+                )
+        if view == "candidate" and path in {"/output/candidate.json", "candidate.json"}:
+            path = None
+
         command = ["python", "/input/tools/context_query.py"]
         if view == "source":
             command += ["source", "--start", str(start), "--lines", str(count)]
-        elif view == "source_outline":
-            command += ["source-outline", "--start", str(start), "--count", str(count)]
-        elif view == "source_find":
-            command += ["source-find", str(query), "--context", str(context)]
-        elif view == "source_brief":
-            command.append("source-brief")
         elif view == "source_ttir":
             command += ["source-ttir", "--start", str(start), "--lines", str(count)]
         elif view == "source_ttir_outline":
-            command += [
-                "source-ttir-outline", "--start", str(start), "--count", str(count)
-            ]
+            command += ["source-ttir-outline", "--start", str(start), "--count", str(count)]
         elif view == "source_ttir_find":
             command += ["source-ttir-find", str(query), "--context", str(context)]
         elif view == "source_ttir_def_use":
@@ -584,6 +638,25 @@ class IntentIRLiftEnvironment:
             command.append("source-observer")
             if path is not None:
                 command += ["--path", path]
+        elif view == "realization_ledger":
+            command.append("realization-ledger")
+        elif view == "source_outline":
+            command += ["source-outline", "--start", str(start), "--count", str(count)]
+        elif view == "source_find":
+            command += ["source-find", str(query), "--context", str(context)]
+        elif view == "source_brief":
+            command.append("source-brief")
+        elif view == "source_obligations":
+            command.append("source-obligations")
+            if section is not None:
+                command += [
+                    "--section",
+                    section,
+                    "--start",
+                    str(start),
+                    "--count",
+                    str(count),
+                ]
         elif view in {"harness", "feedback", "candidate"}:
             command.append(view)
             if path is not None:
@@ -642,16 +715,21 @@ class IntentIRLiftEnvironment:
             or not 1 <= len(items) <= 12
             or any(
                 not isinstance(item, str)
-                or re.fullmatch(
-                    r"(?:top|catalog|op:[A-Za-z0-9_]+|section:[A-Za-z0-9_.]+)",
-                    item,
+                or (
+                    re.fullmatch(r"(?:top|catalog|op:[A-Za-z0-9_]+)", item)
+                    is None
+                    and not (
+                        item.startswith("section:")
+                        and item.partition(":")[2] in _LIFT_SCHEMA_SECTIONS
+                    )
                 )
-                is None
                 for item in items
             )
         ):
             return self._structured_tool_error(
-                "schema items must be 1..12 closed top/catalog/op:/section: selectors"
+                "schema items must use top, catalog, op:NAME, or one of the "
+                "closed section selectors: "
+                + ", ".join(sorted(_LIFT_SCHEMA_SECTIONS))
             )
         self._structured_schema_queries.append(list(items))
         command = ["python", "/input/tools/schema_query.py", "bundle", *items]
@@ -1498,12 +1576,48 @@ class IntentIRLiftEnvironment:
             for child in directory.iterdir():
                 _remove_path_iterative(child)
 
+    def reset_stage_execution_metrics(self) -> None:
+        """Start a fresh per-agent-stage action timer without changing state."""
+
+        self._stage_action_calls = 0
+        self._stage_action_failures = 0
+        self._stage_action_elapsed_ms = 0.0
+
+    @property
+    def stage_execution_metrics(self) -> dict[str, Any]:
+        return {
+            "elapsed_ms": self._stage_action_elapsed_ms,
+            "count": self._stage_action_calls,
+            "failures": self._stage_action_failures,
+        }
+
     def execute(
         self,
         action: dict,
         cwd: str = "",
         *,
-        timeout: int | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Time one agent action while preserving the closed executor path."""
+
+        started = time.monotonic()
+        self._stage_action_calls += 1
+        try:
+            return self._execute(action, cwd, timeout=timeout)
+        except Exception:
+            self._stage_action_failures += 1
+            raise
+        finally:
+            self._stage_action_elapsed_ms += (
+                time.monotonic() - started
+            ) * 1000.0
+
+    def _execute(
+        self,
+        action: dict,
+        cwd: str = "",
+        *,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         if cwd not in {"", "/work"}:
             raise ValueError("IntentIR Lift cwd is fixed at /work")
@@ -1628,7 +1742,9 @@ class IntentIRLiftEnvironment:
             return output
         bounded_shell = (
             f"printf '{_SANDBOX_START_MARKER.decode()}'; "
-            "ulimit -t 60 -f 8192 -n 64 -u 128 -v 524288; "
+            # Keep non-time resource protections, but do not impose a hidden
+            # CPU-time deadline on an otherwise unbounded Lift action.
+            "ulimit -f 8192 -n 64 -u 128 -v 524288; "
             "set -o pipefail; "
             f"/bin/bash --noprofile --norc -c \"$1\" 2>&1 | "
             f"/usr/bin/head -c {MAX_ACTION_OUTPUT_BYTES}"
@@ -1642,7 +1758,7 @@ class IntentIRLiftEnvironment:
             "intentir-lift-action",
             command,
         ]
-        action_timeout = timeout or self.config.timeout
+        action_timeout = timeout if timeout is not None else self.config.timeout
         process: subprocess.Popen[bytes] | None = None
         limit_error = ""
         try:
@@ -1654,7 +1770,10 @@ class IntentIRLiftEnvironment:
                 )
                 started = time.monotonic()
                 while process.poll() is None:
-                    if time.monotonic() - started >= action_timeout:
+                    if (
+                        action_timeout is not None
+                        and time.monotonic() - started >= action_timeout
+                    ):
                         limit_error = (
                             f"action exceeded {action_timeout} second timeout"
                         )

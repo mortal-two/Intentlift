@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 
 import litellm
+import httpx
 
 from minisweagent.exceptions import FormatError, MiniSWERequestCancelled
 from minisweagent.models import GLOBAL_MODEL_STATS
@@ -56,6 +57,10 @@ class LitellmResponseModelConfig(LitellmModelConfig):
     compact_workspace_mirrors: bool = False
     compact_response_history_keep_recent: int = 0
     use_previous_response_id: bool = False
+    # Transport recovery is deliberately separate from logical Lift calls.
+    # The active Lift contract permits at most one retry of a transient
+    # provider failure per model turn.
+    transient_retry_attempts: int = 0
 
 
 class LitellmResponseModel(LitellmModel):
@@ -101,8 +106,10 @@ class LitellmResponseModel(LitellmModel):
             and self.config.routine_timeout_seconds <= 0
         ):
             raise ValueError("routine_timeout_seconds must be positive when set")
-        if not 1 <= self.config.semantic_initial_turns <= 4:
-            raise ValueError("semantic_initial_turns must be in [1, 4]")
+        if not 0 <= self.config.semantic_initial_turns <= 4:
+            raise ValueError("semantic_initial_turns must be in [0, 4]")
+        if not 0 <= self.config.transient_retry_attempts <= 1:
+            raise ValueError("transient_retry_attempts must be in [0, 1]")
         self._physical_provider_calls = 0
         self._transport_retries = 0
         self._history_compaction_packets = 0
@@ -632,6 +639,29 @@ class LitellmResponseModel(LitellmModel):
             )
         )
 
+    @staticmethod
+    def _is_transient_provider_error(exc: BaseException) -> bool:
+        """Identify provider failures safe for one transport-only retry.
+
+        This deliberately excludes generic API errors and parsing/contract
+        failures.  Those must remain fail-closed instead of consuming another
+        physical provider call.  The explicit message check covers relays that
+        wrap an EOF in a generic InternalServerError while retaining the
+        transient transport signal.
+        """
+
+        transient_types = (
+            litellm.exceptions.InternalServerError,
+            litellm.exceptions.APIConnectionError,
+            litellm.exceptions.ServiceUnavailableError,
+            litellm.exceptions.RateLimitError,
+            httpx.TransportError,
+        )
+        if isinstance(exc, transient_types):
+            return True
+        text = f"{type(exc).__name__}: {exc}".casefold()
+        return "unexpected eof" in text
+
     def _record_packet(self, messages: list[dict], *, continuation: bool) -> tuple[int, int]:
         items, chars = self._packet_shape(messages)
         if continuation:
@@ -728,14 +758,17 @@ class LitellmResponseModel(LitellmModel):
                 else self.config.routine_timeout_seconds
             )
         try:
+            model_kwargs = self.config.model_kwargs | kwargs
+            if model_kwargs.get("timeout") is None:
+                model_kwargs["timeout"] = httpx.Timeout(None)
             return litellm.responses(
                 model=self.config.model_name,
                 input=messages,
                 tools=self._response_tools(response_count=response_count),
-                **(self.config.model_kwargs | kwargs),
+                **model_kwargs,
             )
         except litellm.exceptions.AuthenticationError as e:
-            e.message += " You can permanently set your API key with `mini-extra config set KEY VALUE`."
+            e.message += " Configure credentials through the IntentIR provider settings."
             raise e
 
     def query(self, messages: list[dict[str, str]], **kwargs) -> dict:
@@ -780,7 +813,15 @@ class LitellmResponseModel(LitellmModel):
         for attempt in retry(
             logger=logger,
             abort_exceptions=abort_exceptions,
-            max_attempts=self.config.retry_attempts,
+            max_attempts=(
+                self.config.retry_attempts
+                + self.config.transient_retry_attempts
+            ),
+            retry_predicate=(
+                self._is_transient_provider_error
+                if self.config.transient_retry_attempts > 0
+                else None
+            ),
         ):
             # This check deliberately sits outside the retry attempt context:
             # cancellation is a candidate-wave decision, never a transport

@@ -194,9 +194,19 @@ INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API = {
     "type": "function",
     "name": "inspect_lift_context",
     "description": (
-        "Read one bounded exact Source/anonymous-TTIR/observer/Harness/feedback-category/"
+        "Read one bounded exact selected-frontend Source/Harness/compiler-observer/"
+        "feedback-category/"
         "current-candidate or source-neutral knowledge view without guessing filesystem "
-        "paths. The tool is read-only and never classifies or repairs J/C/pi."
+        "paths. The tool is read-only and never classifies or repairs J/C/pi. "
+        "Triton branches expose Source-TTIR/source-observer/realization-ledger; "
+        "CUDA branches expose native C++ Source/Harness facts and must not be "
+        "parsed as Python; CuTe and TileLang retain their own compiler/Gate paths. "
+        "For source_obligations, use count at most 80 and section names "
+        "scopes, program_axes, index_construction, mask_uses, fills, casts, "
+        "memory_accesses, control, helper_calls, or expression_facts; omit "
+        "section (or use overview) for the compact complete ledger. For the "
+        "candidate view, path is a JSON path such as j.intent, not the mounted "
+        "file path; omit it to read the root."
     ),
     "parameters": {
         "type": "object",
@@ -214,6 +224,8 @@ INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API = {
                     "source_ttir_find",
                     "source_ttir_def_use",
                     "source_observer",
+                    "realization_ledger",
+                    "source_obligations",
                     "harness",
                     "harness_abi",
                     "feedback",
@@ -231,12 +243,27 @@ INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API = {
             "query": {"type": "string", "maxLength": 512},
             "path": {"type": "string", "maxLength": 512},
             "start": {"type": "integer", "minimum": 1, "maximum": 1000000},
-            "count": {"type": "integer", "minimum": 1, "maximum": 160},
+            "count": {"type": "integer", "minimum": 1, "maximum": 80},
             "context": {"type": "integer", "minimum": 0, "maximum": 16},
             "op": {"type": "string", "maxLength": 64},
             "section": {
                 "type": "string",
-                "enum": ["overview", "outputs", "boundary", "pi"],
+                "enum": [
+                    "overview",
+                    "outputs",
+                    "boundary",
+                    "pi",
+                    "scopes",
+                    "program_axes",
+                    "index_construction",
+                    "mask_uses",
+                    "fills",
+                    "casts",
+                    "memory_accesses",
+                    "control",
+                    "helper_calls",
+                    "expression_facts",
+                ],
             },
         },
         "required": ["view"],
@@ -248,7 +275,10 @@ INSPECT_LIFT_SCHEMA_TOOL_RESPONSE_API = {
     "name": "inspect_lift_schema",
     "description": (
         "Read a compact exact bundle from the closed artifact schema and public "
-        "operation catalog. Items are top, catalog, op:NAME, or section:NAME."
+        "operation catalog. Items are top, catalog, op:NAME, or a valid section "
+        "selector such as section:access, section:domain, section:effect, "
+        "section:scope, or section:pi_program_axis; there is no section:boundary "
+        "or section:scopes selector."
     ),
     "parameters": {
         "type": "object",
@@ -260,7 +290,7 @@ INSPECT_LIFT_SCHEMA_TOOL_RESPONSE_API = {
                 "maxItems": 12,
                 "items": {
                     "type": "string",
-                    "pattern": "^(?:top|catalog|op:[A-Za-z0-9_]+|section:[A-Za-z0-9_.]+)$",
+                    "pattern": "^(?:top|catalog|op:[A-Za-z0-9_]+|section:(?:access|access_guard_relation|alias|authorization|broadcast|c_slot|consumer_extension|dimension_relation|domain|effect|index_bound|output_mapping|parameter|pi_access_representation_binding|pi_control_binding|pi_iteration_binding|pi_materialization_binding|pi_program_axis|pi_program_binding|reduction|result_relation|scope|storage|tensor|update|value_dimension_relation))$",
                 },
             }
         },
@@ -534,7 +564,9 @@ def parse_toolcall_actions_response(
                 or args.get("view") not in {
                     "source", "source_outline", "source_find", "source_brief",
                     "source_ttir", "source_ttir_outline", "source_ttir_find",
-                    "source_ttir_def_use", "source_observer", "harness", "harness_abi",
+                    "source_ttir_def_use", "source_observer", "realization_ledger",
+                    "source_obligations",
+                    "harness", "harness_abi",
                     "feedback", "feedback_category", "candidate", "candidate_find",
                     "candidate_nodes", "candidate_node", "candidate_abi", "candidate_control",
                     "candidate_diff", "knowledge",
