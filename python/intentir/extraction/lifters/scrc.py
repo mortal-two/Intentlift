@@ -12,8 +12,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from intentir.extraction.providers.client import call_responses
-from intentir.extraction.providers.provider import ProviderConfig
+from intentir.extraction.providers.client import ProviderError, call_responses
+from intentir.extraction.providers.provider import ProviderConfig, get_provider
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from intentir.ir.dim_expr import validate_dimension_instantiation
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
@@ -51,11 +51,77 @@ _DTYPE_ALIASES = {
 }
 
 
+def resolve_source_aware_lift_timeout(
+    effort: str,
+    requested: float | None = None,
+) -> float | None:
+    """Resolve one source-aware Lift provider turn.
+
+    No default framework deadline is imposed.  ``None`` means that the caller
+    intentionally selected the unbounded Lift contract; a positive finite
+    ``requested`` value remains available as an explicit experiment-local
+    override.
+    """
+
+    if not isinstance(effort, str) or not effort.strip():
+        raise ValueError("Lift reasoning effort must be a non-empty string")
+    if requested is None:
+        return None
+    if (
+        isinstance(requested, bool)
+        or not isinstance(requested, (int, float))
+        or not math.isfinite(float(requested))
+        or requested <= 0
+    ):
+        raise ValueError("Lift timeout_seconds must be a finite positive number")
+    return float(requested)
+
+
+def _provider_error_is_timeout(error: ProviderError) -> bool:
+    """Classify only transport timeouts as retryable Lift failures."""
+
+    failure_class = getattr(error, "failure_class", None)
+    if failure_class == "provider_timeout":
+        return True
+    if isinstance(failure_class, str) and failure_class:
+        return False
+    message = str(error).casefold()
+    return "timeout" in message or "timed out" in message
+
+
+def _provider_error_failure_class(error: ProviderError) -> str:
+    """Return a closed, secret-free class for one provider failure."""
+
+    failure_class = getattr(error, "failure_class", None)
+    if isinstance(failure_class, str) and failure_class:
+        return failure_class
+    message = str(error).casefold()
+    if "timeout" in message or "timed out" in message:
+        return "provider_timeout"
+    if "empty completion" in message:
+        return "provider_no_candidate"
+    return "provider_transport_error"
+
+
 def _canonical_dtype(value: str | None) -> str | None:
     if value is None:
         return None
     spelling = value.casefold().removeprefix("torch.")
     return _DTYPE_ALIASES.get(spelling, spelling)
+
+
+def canonical_scalar_binding_dtype(value: bool | int | float | str) -> str:
+    """Return the deterministic public dtype for one trusted scalar binding."""
+
+    if isinstance(value, bool):
+        return "i1"
+    if isinstance(value, int):
+        return "i32" if -(2**31) <= value < 2**31 else "i64"
+    if isinstance(value, float):
+        return "f64"
+    if isinstance(value, str):
+        return "str"
+    raise TypeError("Source bindings must be bool/int/float/string scalars")
 
 
 @dataclass(frozen=True)
@@ -216,6 +282,7 @@ class SCRCCompilerArgument:
     mode: str | None = None
     shape_contract: tuple[int | str, ...] | None = None
     shape_coordinate: str | None = None
+    strides: tuple[int, ...] | None = None
 
     def __post_init__(self) -> None:
         if not self.name.isidentifier():
@@ -229,6 +296,18 @@ class SCRCCompilerArgument:
         shape = tuple(int(dim) for dim in self.shape)
         if any(dim < 0 for dim in shape):
             raise ValueError("compiler argument dimensions must be non-negative")
+        strides = (
+            tuple(int(stride) for stride in self.strides)
+            if self.strides is not None
+            else None
+        )
+        if strides is not None:
+            if self.kind != "tensor":
+                raise ValueError("only tensor compiler arguments have physical strides")
+            if len(strides) != len(shape) or any(stride < 0 for stride in strides):
+                raise ValueError(
+                    "compiler argument strides must match tensor rank and be non-negative"
+                )
         shape_contract = (
             tuple(self.shape_contract)
             if self.shape_contract is not None
@@ -298,6 +377,7 @@ class SCRCCompilerArgument:
                     + ", ".join(sorted(allowed_modes))
                 )
         object.__setattr__(self, "shape", shape)
+        object.__setattr__(self, "strides", strides)
         object.__setattr__(self, "shape_contract", shape_contract)
         object.__setattr__(self, "shape_coordinate", shape_coordinate)
 
@@ -311,6 +391,8 @@ class SCRCCompilerArgument:
             result["shape"] = list(self.shape)
             if self.shape_contract is not None:
                 result["shape_contract"] = list(self.shape_contract)
+            if self.strides is not None:
+                result["strides"] = list(self.strides)
         elif self.kind == "scalar":
             result["value"] = self.value
             if self.shape_coordinate is not None:
@@ -322,9 +404,10 @@ class SCRCCompilerArgument:
 
 @dataclass(frozen=True)
 class SCRCCompilerView:
-    """Trusted invocation facts supplied to Lift, never a semantic ABI."""
+    """Trusted invocation facts supplied to Lift."""
 
     schedule_values: Mapping[str, bool | int | float | str]
+    schedule_value_types: Mapping[str, str] = field(default_factory=dict)
     bound_constexpr_values: Mapping[str, bool | int | float | str] = field(
         default_factory=dict
     )
@@ -339,10 +422,16 @@ class SCRCCompilerView:
     grid_shape_coordinates: tuple[str | None, ...] = ()
     parameter_order: tuple[str, ...] = ()
     constexpr_parameters: tuple[str, ...] = ()
+    # Kept after the established positional fields so existing callers that
+    # construct this view positionally do not reinterpret a shape-coordinate
+    # map as a type map.
+    bound_constexpr_value_types: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         values = dict(self.schedule_values)
+        value_types = dict(self.schedule_value_types)
         bound_constexpr_values = dict(self.bound_constexpr_values)
+        bound_constexpr_value_types = dict(self.bound_constexpr_value_types)
         bound_constexpr_shape_coordinates = dict(
             self.bound_constexpr_shape_coordinates
         )
@@ -361,6 +450,21 @@ class SCRCCompilerView:
             raise ValueError(
                 "bound constexpr and schedule parameters must be disjoint"
             )
+        if set(value_types) - set(values):
+            raise ValueError(
+                "schedule value types may name only declared schedule values"
+            )
+        if set(bound_constexpr_value_types) - set(bound_constexpr_values):
+            raise ValueError(
+                "bound constexpr value types may name only bound constexpr values"
+            )
+        ordered_value_types: dict[str, str] = {}
+        for name, value in values.items():
+            value_type = value_types.get(name, canonical_scalar_binding_dtype(value))
+            if not isinstance(value_type, str) or not value_type:
+                raise TypeError("schedule value types must be non-empty strings")
+            ordered_value_types[name] = value_type
+        value_types = ordered_value_types
         slots = tuple(self.compiler_slots)
         if len(slots) != len(set(slots)) or any(
             not isinstance(name, str) or not name.isidentifier()
@@ -370,8 +474,12 @@ class SCRCCompilerView:
         if set(slots) - set(values):
             raise ValueError("compiler slots require schedule values")
         object.__setattr__(self, "schedule_values", values)
+        object.__setattr__(self, "schedule_value_types", value_types)
         object.__setattr__(
             self, "bound_constexpr_values", bound_constexpr_values
+        )
+        object.__setattr__(
+            self, "bound_constexpr_value_types", bound_constexpr_value_types
         )
         object.__setattr__(
             self,
@@ -514,6 +622,39 @@ class SCRCCompilerView:
             raise ValueError(
                 "bound constexpr values must bind constexpr parameters"
             )
+        ordered_bound_constexpr_values = {
+            name: bound_constexpr_values[name]
+            for name in constexpr_parameters
+            if name in bound_names
+        }
+        ordered_bound_constexpr_value_types: dict[str, str] = {}
+        for name, value in ordered_bound_constexpr_values.items():
+            value_type = bound_constexpr_value_types.get(
+                name, canonical_scalar_binding_dtype(value)
+            )
+            if not isinstance(value_type, str) or not value_type:
+                raise TypeError(
+                    "bound constexpr value types must be non-empty strings"
+                )
+            ordered_bound_constexpr_value_types[name] = value_type
+        object.__setattr__(
+            self, "bound_constexpr_values", ordered_bound_constexpr_values
+        )
+        object.__setattr__(
+            self,
+            "bound_constexpr_value_types",
+            ordered_bound_constexpr_value_types,
+        )
+        ordered_bound_constexpr_shape_coordinates = {
+            name: bound_constexpr_shape_coordinates[name]
+            for name in constexpr_parameters
+            if name in bound_constexpr_shape_coordinates
+        }
+        object.__setattr__(
+            self,
+            "bound_constexpr_shape_coordinates",
+            ordered_bound_constexpr_shape_coordinates,
+        )
         schedule_constexprs = constexpr_names - bound_names
         if schedule_constexprs - set(values):
             raise ValueError("schedule constexpr parameters require C values")
@@ -521,7 +662,11 @@ class SCRCCompilerView:
     def to_json(self) -> dict[str, Any]:
         return {
             "schedule_values": dict(self.schedule_values),
+            "schedule_value_types": dict(self.schedule_value_types),
             "bound_constexpr_values": dict(self.bound_constexpr_values),
+            "bound_constexpr_value_types": dict(
+                self.bound_constexpr_value_types
+            ),
             "bound_constexpr_shape_coordinates": dict(
                 self.bound_constexpr_shape_coordinates
             ),
@@ -807,6 +952,127 @@ def anonymize_source(
     return anonymous, binding, mapping
 
 
+def _mask_native_noncode(source: str) -> str:
+    """Mask comments and quoted literals before native identifier rewriting."""
+
+    result = list(source)
+    index = 0
+    state = "normal"
+    while index < len(source):
+        character = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if state == "normal":
+            if character == "/" and following == "/":
+                result[index] = result[index + 1] = " "
+                index += 2
+                state = "line_comment"
+                continue
+            if character == "/" and following == "*":
+                result[index] = result[index + 1] = " "
+                index += 2
+                state = "block_comment"
+                continue
+            if character in {"\"", "'"}:
+                result[index] = " "
+                state = character
+            index += 1
+            continue
+        if state == "line_comment":
+            if character == "\n":
+                state = "normal"
+            elif character not in {"\r"}:
+                result[index] = " "
+            index += 1
+            continue
+        if state == "block_comment":
+            if character == "*" and following == "/":
+                result[index] = result[index + 1] = " "
+                index += 2
+                state = "normal"
+                continue
+            if character not in {"\n", "\r"}:
+                result[index] = " "
+            index += 1
+            continue
+        if character == "\\":
+            result[index] = " "
+            if index + 1 < len(source) and source[index + 1] not in {"\n", "\r"}:
+                result[index + 1] = " "
+                index += 2
+            else:
+                index += 1
+            continue
+        if character == state:
+            result[index] = " "
+            state = "normal"
+        elif character not in {"\n", "\r"}:
+            result[index] = " "
+        index += 1
+    return "".join(result)
+
+
+def anonymize_native_source(
+    source: str,
+    *,
+    source_symbol: str,
+    source_parameter_order: tuple[str, ...],
+    source_to_opaque: Mapping[str, str],
+) -> tuple[str, SCRCHarnessBinding, dict[str, str]]:
+    """Alpha-rename one verified native device projection without Python parsing."""
+
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("native Lift source must be non-empty")
+    if not isinstance(source_symbol, str) or not source_symbol.isidentifier():
+        raise ValueError("native Lift source symbol must be an identifier")
+    parameter_order = tuple(source_parameter_order)
+    if len(parameter_order) != len(set(parameter_order)) or any(
+        not isinstance(name, str) or not name.isidentifier()
+        for name in parameter_order
+    ):
+        raise ValueError("native Lift source parameter order must be unique identifiers")
+    mapping = dict(source_to_opaque)
+    if not set(parameter_order) <= set(mapping):
+        raise ValueError(
+            "native Lift source mapping must cover every selected ABI parameter"
+        )
+    if len(set(mapping.values())) != len(mapping):
+        raise ValueError("native Lift source mapping must be one-to-one")
+    if any(
+        not isinstance(value, str)
+        or re.fullmatch(r"(?:p|c)[0-9]+", value) is None
+        for value in mapping.values()
+    ):
+        raise ValueError("native Lift source mapping must use p*/c* handles")
+    masked = _mask_native_noncode(source)
+    symbol_matches = tuple(
+        re.finditer(
+            rf"(?<![A-Za-z0-9_]){re.escape(source_symbol)}(?![A-Za-z0-9_])",
+            masked,
+        )
+    )
+    if len(symbol_matches) != 1:
+        raise ValueError(
+            "native Lift source must contain exactly one selected device entry symbol"
+        )
+    replacements = {source_symbol: "scrc_k0", **mapping}
+    pieces: list[str] = []
+    cursor = 0
+    for match in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", masked):
+        replacement = replacements.get(match.group(0))
+        if replacement is None:
+            continue
+        pieces.append(source[cursor:match.start()])
+        pieces.append(replacement)
+        cursor = match.end()
+    pieces.append(source[cursor:])
+    anonymous = "".join(pieces)
+    binding = SCRCHarnessBinding(
+        source_to_opaque=tuple(mapping.items()),
+        source_function=source_symbol,
+    )
+    return anonymous, binding, mapping
+
+
 def _replace_names(expression: str, mapping: Mapping[str, str]) -> str:
     return re.sub(
         r"\b[A-Za-z_][A-Za-z0-9_]*\b",
@@ -833,8 +1099,16 @@ def _anonymous_compiler_view(
         "schedule_values": {
             mapping[name]: value for name, value in view.schedule_values.items()
         },
+        "schedule_value_types": {
+            mapping[name]: canonical_scalar_binding_dtype(value)
+            for name, value in view.schedule_values.items()
+        },
         "bound_constexpr_values": {
             mapping[name]: value
+            for name, value in view.bound_constexpr_values.items()
+        },
+        "bound_constexpr_value_types": {
+            mapping[name]: canonical_scalar_binding_dtype(value)
             for name, value in view.bound_constexpr_values.items()
         },
         "bound_constexpr_shape_coordinates": {
@@ -870,7 +1144,156 @@ def _anonymous_compiler_view(
     }
 
 
-def build_scrc_lift_instructions() -> str:
+def _anonymous_abi_contract(
+    view: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Render a compact, source-free ABI authoring plan for Lift.
+
+    The compiler view is already alpha-renamed to p*/c* before it reaches the
+    provider. Keeping this plan separate from the trusted validation view makes
+    the authoring obligation explicit without allowing the prompt to invent
+    logical bindings or expose Source identifiers.
+    """
+
+    if not isinstance(view, Mapping):
+        return None
+    raw_arguments = view.get("arguments")
+    raw_order = view.get("parameter_order")
+    if not isinstance(raw_arguments, list) or not isinstance(raw_order, list):
+        return None
+
+    parameters: list[dict[str, Any]] = []
+    tensor_inputs: list[str] = []
+    tensor_outputs: list[str] = []
+    scalar_values: list[str] = []
+    nonsemantic_values: list[str] = []
+    for raw in raw_arguments:
+        if not isinstance(raw, Mapping) or not isinstance(raw.get("name"), str):
+            continue
+        name = raw["name"]
+        kind = raw.get("kind")
+        item: dict[str, Any] = {
+            "name": name,
+            "kind": kind,
+            "dtype": raw.get("dtype"),
+            "mode": raw.get("mode"),
+        }
+        if kind == "tensor":
+            shape = raw.get("shape")
+            item["rank"] = len(shape) if isinstance(shape, list) else None
+            item["logical_boundary"] = raw.get("mode")
+            if raw.get("mode") in {"input", "inout"}:
+                tensor_inputs.append(name)
+            if raw.get("mode") in {"output", "inout"}:
+                tensor_outputs.append(name)
+        elif kind == "scalar":
+            item["rank"] = 0
+            item["shape_coordinate"] = raw.get("shape_coordinate")
+            item["logical_binding_rule"] = (
+                "bind a rank-0 input t* only when the anonymous Source uses this "
+                "scalar as logical data, predicate, index, or result; bind x* "
+                "when it is extent-only; otherwise keep logical_ref=null as a "
+                "representation-only value"
+            )
+            scalar_values.append(name)
+        elif kind in {"none", "opaque"}:
+            item["rank"] = None
+            item["logical_binding_rule"] = (
+                "logical_ref must be null; this value never becomes a J tensor"
+            )
+            nonsemantic_values.append(name)
+        parameters.append(item)
+
+    p_order = [
+        name for name in raw_order
+        if isinstance(name, str) and re.fullmatch(r"p[0-9]+", name)
+    ]
+    c_order = [
+        name for name in raw_order
+        if isinstance(name, str) and re.fullmatch(r"c[0-9]+", name)
+    ]
+    return {
+        "signature_parameter_order": p_order,
+        "signature_parameter_obligations": parameters,
+        "logical_tensor_inputs_from_tensor_parameters": tensor_inputs,
+        "logical_tensor_outputs_from_tensor_parameters": tensor_outputs,
+        "scalar_value_parameters": scalar_values,
+        "nonsemantic_value_parameters": nonsemantic_values,
+        "logical_handle_allocation": (
+            "Declare logical input t* handles first, in anonymous ABI order for "
+            "the semantic bindings, then logical output t* handles in anonymous "
+            "ABI order. Reuse one handle only for a true inout. This declaration "
+            "order is independent of p* numbering."
+        ),
+        "c_slot_order": c_order,
+        "c_slot_rule": (
+            "c* belongs only in C.slots and C.values. Never add a c* to J inputs, "
+            "J outputs, J.signature, a J operand, a shape, or pi; do not attach "
+            "subject_ref or axis_ref unless the supplied trusted C declaration "
+            "explicitly contains that attachment."
+        ),
+    }
+
+
+def _frontend_lift_guidance(frontend: str | None) -> dict[str, str]:
+    """Return compiler-observer wording for one isolated frontend branch.
+
+    The Source-to-J contract is shared, but compiler evidence is not.  Only
+    Triton owns the TTIR observer; CuTe, TileLang, and CUDA retain their own
+    compiler/source observations.
+    """
+
+    selected = str(frontend or "triton").casefold()
+    if selected == "triton":
+        return {
+            "layout_reference": "TTIR layout",
+            "numeric_query": "the exact TTIR def-use",
+            "fused_query": "the exact Source-TTIR operand/result def-use",
+            "index_query": "the exact TTIR def-use",
+            "index_width": "Source-TTIR",
+            "pi_query": "the exact pi schema leaves and raw Triton realization ledger",
+        }
+    if selected == "cuda":
+        return {
+            "layout_reference": "the selected CUDA compiler/Harness layout",
+            "numeric_query": "the selected CUDA compiler observation",
+            "fused_query": "the selected CUDA compiler/source observation",
+            "index_query": "the selected CUDA compiler observation",
+            "index_width": "selected CUDA compiler",
+            "pi_query": "the exact pi schema leaves and native CUDA source/compiler facts",
+        }
+    if selected == "cute":
+        return {
+            "layout_reference": "the selected CuTe compiler layout",
+            "numeric_query": "the selected CuTe compiler observation",
+            "fused_query": "the selected CuTe MLIR/PTX observation",
+            "index_query": "the selected CuTe compiler observation",
+            "index_width": "selected CuTe compiler",
+            "pi_query": "the exact pi schema leaves and native CuTe compiler facts",
+        }
+    if selected == "tilelang":
+        return {
+            "layout_reference": "the selected TileLang/TIR compiler layout",
+            "numeric_query": "the selected TileLang/TIR compiler observation",
+            "fused_query": "the selected TileLang/TIR compiler observation",
+            "index_query": "the selected TileLang/TIR compiler observation",
+            "index_width": "selected TileLang/TIR compiler",
+            "pi_query": "the exact pi schema leaves and native TileLang/TIR compiler facts",
+        }
+    return {
+        "layout_reference": "the selected frontend compiler layout",
+        "numeric_query": "the selected frontend compiler observation",
+        "fused_query": "the selected frontend compiler/source observation",
+        "index_query": "the selected frontend compiler observation",
+        "index_width": "selected frontend compiler",
+        "pi_query": "the exact pi schema leaves and selected frontend source/compiler facts",
+    }
+
+
+def _source_aware_build_scrc_lift_instructions(
+    *, frontend: str | None = "triton"
+) -> str:
+    guidance = _frontend_lift_guidance(frontend)
     return f"""You are the source-aware Lift LLM for IntentIR.
 Return one complete JSON object matching the supplied schema. You directly
 produce anonymous J=A+B, independent pure C, and the realization witness pi.
@@ -879,12 +1302,73 @@ The supplied Responses schema is authoritative for the closed envelope, field
 names, enums, optional fields, operation grammar, and structural descriptions.
 Do not duplicate, rename, or extend it with convenience fields.
 
+Before emitting the final JSON, perform one fresh SSA/dataflow audit; never
+reuse a handle from an earlier draft after changing the body. Walk body
+operations in order: every operand must be an input, an allowed capture, or a
+result already produced earlier in the same scope; every result must be
+defined once; every return.value must be one visible input/result after the
+body and must match the corresponding output_mapping.value when that row is
+present. For a straight-line function scope, definitions are exactly all
+logical input handles plus all top-level operation result handles, each once;
+do not substitute output tensor names for SSA values. If an operation is
+removed or reordered, recompute downstream operands, returns, node_ids and
+scope definitions together.
+
+Before submitting, also run this wire-level table check independently of the
+semantic audit. Every operation operand, predicate, return.value, carry value,
+scan source, and value_if yield is exactly a `t*` or `v*` handle. `x*`, `d*`,
+`n*`, `a*`, `e*`, `p*`, `c*`, source names, node ids, dimensions, and numeric
+literals are never operands; represent a literal with a typed `const` result
+and represent a dimension with the declared shape/dimension fields. Build one
+table from every visible handle to its exact dtype and shape. Each explicit
+operation `type`, each loop carry/yield, and each output return must match that
+table exactly. A return binding is valid only when its value has the exact
+declared output dtype and shape; do not return an output tensor name merely
+because it has the right spelling, and do not return an intermediate with a
+different rank or shape. For every map_binary/select, compute NumPy trailing
+broadcast from the operand table before accepting the result shape. If a
+collapsed row value `[R]` is consumed by `[R,C]`, either preserve the
+source-established keepdims value `[R,1]` or add the exact J boundary.broadcasts
+row for that node and operand; an asserted result shape alone never authorizes
+non-trailing broadcast. After any repair, recompute this table, all downstream
+operands, returns, output mappings, node_ids, and scope definitions together.
+
+Use this final authoring pass in order: (1) assign `n0,n1,...` only to operation
+objects and assign `v0,v1,...` only to their result handles; never copy a result
+handle into an operation's `id`; (2) record every definition in order and bind
+each return to the exact value handle produced by the final output-producing
+operation, never to an inferred `v*` based on the number of operations; (3) for
+each reduce, make `attrs.keepdims:true` explicit when the declared result keeps
+the reduced axes as singleton dimensions, and omit it or set the collapsed form
+only when the declared result removes those axes; an asserted `type.shape` does
+not override the reduce attribute; (4) for each scalar with a source shape
+coordinate, use `x*` only when every Source use is extent-only, but use a rank-0
+input `t*` plus an explicit `value_dimension_relations` equality when the
+scalar participates in a predicate, comparison, index, arithmetic, or result
+dataflow, even if its concrete value equals the dimension extent; (5) rerun the
+exact ABI, type, broadcast, return, and node/value namespace checks after all
+renumbering.
+
+Every `reduce` must carry `attrs.assoc` explicitly, with exactly
+`associative` or `float_nondeterministic`; do not rely on a schema default.
+When one complete logical input is directly read and the same read value feeds
+multiple reductions or other consumers, author one direct load with
+`node_ref:null` and its matching null-node read effect, then let each valid
+consumer_extension refer to that same access. Do not duplicate that access with
+different node refs merely because there are multiple consumers; consumer-local
+accesses are only for genuinely different logical views, predicates, fills, or
+index domains.
+
 Use gap-free declaration-order names: kernel scrc_k0; tensors t*; J nodes n*;
 values v*; dimensions x*; domains d*; accesses a*; effects e*; scopes q*;
 storage b*; parameters p*; C slots c*. Pi has no identifier graph.
-J t* numbering follows first declaration across inputs then outputs; inout
-reuses its input handle. Never derive t* from p* position: p0 input, p1 output,
-p2 extent bind t0, t1, x0 respectively.
+J t* numbering follows first declaration across inputs then outputs; within each
+collection preserve the corresponding anonymous ABI order, and an inout reuses
+its input handle. Never derive a t* from a p* position: an output p0 may bind
+t2 when two logical inputs were declared first, while an input p2 may bind t0.
+The exact p* kind, dtype, rank, and mode in the supplied anonymous ABI contract
+are authoritative; scalar p* parameters always use signature mode=value, even
+when their logical_ref is a rank-0 input t*.
 
 The semantic IntentFunction is scrc_j0. node_ids maps n* to body paths, never
 v* results. boundary.domains maps d* directly to portable boolean strings,
@@ -897,6 +1381,20 @@ each compiler slot uses compiler_roles exactly. Never rename c* to p* or infer
 strategy names from roles. A compiler slot is consumed only by the external
 frontend compiler invocation: give it no subject_ref/axis_ref; it is not a Source
 constexpr, callable parameter, kernel-body value, or pi row.
+No C slot may acquire a subject_ref or axis_ref merely because its role resembles
+a tile or axis; copy only fields present in the supplied trusted declaration.
+
+The input packet also contains anonymous_abi_contract. Treat its
+signature_parameter_order and per-parameter kind/dtype/rank/mode as an exact
+authoring checklist. Every tensor ABI parameter must bind the matching logical
+t* boundary collection and signature mode. Every scalar/none/opaque ABI
+parameter keeps signature mode=value; a scalar may bind x* or a rank-0 input t*
+only when the anonymous Source semantics require it, and a representation-only
+scalar stays logical_ref=null. Declare logical inputs before logical outputs as
+the contract says, regardless of p* order. Bind every declared logical t* from
+the corresponding p*; do not create extra t* handles for strides, addresses,
+tile values, C slots, or physical compiler carriers. The contract is a guide to
+authoring, not permission for fixed code to infer or repair a missing binding.
 
 For every tensor, `shape` is only the current Harness binding and is never
 permission to specialize J. In `shape_contract`, an
@@ -912,14 +1410,14 @@ form. Never infer h* from values, shape, grid, C, names, or coincident numbers.
 Capacity and active-length coordinates remain distinct: preserve Source padding,
 domains, and required non-negative affine constraints, but do not invent a
 C-dependent roundup equation. Physical realization may round capacity, but that
-does not change J ownership and compact pi has no rounding relation.
+does not change J ownership and pi has no rounding relation.
 When Source itself establishes a logical dimension identity, author it in the
 complete J.dimension_relations array. The only legal expressions are identity,
 add_const, mul_const, ceil_div_const, and round_up_const over declared x* handles
 and positive integer constants. Typical examples are a full extent that Source
 defines as twice a half extent or a logical rounded capacity that Source defines
 from an active extent. Never infer such a relation from equal concrete values,
-Harness shapes, grid, C, pi, TTIR layout, or a frontend convention. Emit [] when
+Harness shapes, grid, C, pi, {guidance["layout_reference"]}, or a frontend convention. Emit [] when
 Source establishes no dimension relation; fixed code only validates and consumes.
 
 bound_constexpr_values are Harness-owned, non-C JIT bindings; constexprness alone
@@ -948,7 +1446,7 @@ Each physical p* has exactly one logical_ref. Dtype/rank/mode must agree; inout 
 declared as both input and output, and value parameters never bind outputs merely
 to satisfy existence. A representation/address-only runtime scalar is rank-0
 mode=value with public dtype and null logical_ref. It remains explicit only in
-the ABI signature; compact pi never assigns it invented semantic ownership.
+the ABI signature; pi never assigns it invented semantic ownership.
 Classify only from Source use. Any bound rank-0 t* must reach an observable output
 or explicit J boundary/shape semantic. A compiler-view kind=`none` argument is
 exactly one opaque mode=value dtype=`none` p* with null rank/alias/logical_ref and
@@ -980,6 +1478,9 @@ tensor through different logical indices, predicates, fills, or sub-domains at
 different Layer-A consumers, author each distinct consumer-local access/effect
 explicitly at the node that consumes that view. Conversely, do not duplicate an
 access merely because several consumers use the same complete logical tensor.
+For that shared complete-input case, the single direct load and matching effect
+must keep node_ref=null, and every corresponding consumer_extension must refer
+to that same access; a node-attached duplicate does not establish provenance.
 Fixed code never copies, propagates, or recommends a sibling access relation.
 
 index_expression uses the closed ContractExpr syntax. For a direct dense
@@ -1050,7 +1551,7 @@ matching next/yield/result values. Keep each contraction's canonical subscripts
 and result-axis orientation consistent with the values consumed by that update;
 insert a transpose only when it is a real logical transformation. Do not replace
 an online or loop-carried recurrence with a global contraction/reduction and ask
-Replay to rediscover the missing update algorithm. Compact pi cannot carry,
+Replay to rediscover the missing update algorithm. pi cannot carry,
 repair, or infer an omitted initialization, update formula, yield, contraction
 orientation, transpose, or physical stage. All such semantic structure belongs
 in J and remains hard in Gate1.
@@ -1074,7 +1575,7 @@ program binding over those J domain axes. The J domains remain the sole conditio
 pi carries no comparison, extent, polarity, or frontend spelling.
 Do not invent constant true/false effect_if
 predicates. Source early return driven by an ordinary authored scalar predicate
-must remain explicit J control; compact pi cannot hide or reconstruct it.
+must remain explicit J control; pi cannot hide or reconstruct it.
 Preserve selected-helper literal memory order in J scope.effects; node order is
 not effect order.
 
@@ -1087,7 +1588,7 @@ scopes are distinct siblings. Fixed code never fills, derives from select, or
 rewrites this structure.
 
 Preserve every compiler-visible sensitive numeric event in J. J owns its typed
-realization_authorization; compact pi has no refinements and cannot authorize a
+realization_authorization; pi has no refinements and cannot authorize a
 cast, reassociation, atomic, or precision change. Fixed code cannot infer an
 undeclared cast or propagate one conversion to sibling parameters or strides.
 Signed/unsigned widen states explicit same-signedness source_dtype and a strictly
@@ -1095,10 +1596,10 @@ wider target_dtype; equal-width or missing dtype pairs are not widening.
 Floating cast placement is part of the typed graph: never commute a cast across
 mul/add/sub or replace a low-precision operation followed by extension with an
 operation performed after extension, even when the result relation is tolerance
-or Source uses a fused primitive. Query the exact TTIR def-use when Source-level
+or Source uses a fused primitive. Query {guidance["numeric_query"]} when Source-level
 promotion is ambiguous.
 A compiler-visible `math.fma(a,b,c)` is one typed fused event, not an ordinary
-low-precision multiply followed by later promotion. Query its exact Source-TTIR
+low-precision multiply followed by later promotion. Query {guidance["fused_query"]}
 operand/result def-use. Because Layer A has no scalar fma operation, decompose it
 with explicit casts that reproduce the observed fused operand width, then one
 map_binary mul and the matching add/sub at the fused result width. A separately
@@ -1110,10 +1611,10 @@ J node as `sub(primary_product,d)` rather than preserving a separate zero,
 negation/subtraction and add. This is the closed direct expansion of that one
 fused event; it does not authorize general reassociation or eliminate a shared
 addend producer.
-Logical iota and integer index arithmetic keep their exact Source-TTIR width.
+Logical iota and integer index arithmetic keep their exact {guidance["index_width"]} width.
 Do not widen an i32 arange/index graph to i64 merely because a representation-only
 ABI stride carrier or pointer address uses i64; pointer formation is not permission
-to change the J index graph. Query the exact TTIR def-use if Source surface typing
+to change the J index graph. Query {guidance["index_query"]} if Source surface typing
 does not settle the width.
 
 For each J `reduce` or inclusive `scan`, boundary.reductions.tile_axis is the
@@ -1121,7 +1622,7 @@ Source frontend's local tile axis after program/grid axes select the program ins
 is not the whole-tensor logical axis number from reduce.attrs.axes. Preserve the
 observed local axis; do not copy a logical rank axis or add program axes to it.
 For a Source reduction with omitted frontend axis and a compiler-visible flatten,
-keep the complete logical reduction axes in J. Compact pi cannot turn one
+keep the complete logical reduction axes in J. pi cannot turn one
 reduction into another or waive a missing compiler-visible semantic stage.
 
 J `const` is exact: finite JSON number, or only `"-inf"`/`"inf"`/`"nan"`
@@ -1146,9 +1647,16 @@ construction and preserves tensor, index polynomial, multiplicity, mask, value a
 effect. Counts alone never justify access bindings: use the realization ledger's
 ordered memory operations together with current J access attachments, and bind an
 access only when tensor root, transfer kind and ordinal correspondence are unique.
+When a source-used representation-only scalar ABI carrier supplies a tensor stride
+or pointer advance, the corresponding address_recomputed or pointer_advanced row
+must also carry `carrier_ref:p*` for that null-logical-ref scalar and the exact
+non-negative tensor `axis_ref`. This is the closed ownership link used by Replay;
+it does not make p* a logical tensor/value and it does not encode a pointer formula.
+Every such Source-used scalar must appear in one of those address rows, while an
+unrelated scalar must not be added merely because it is adjacent in the ABI.
 Pi cannot encode Source/Replay SSA ids, regions, instances, routes, order,
 sharing, numeric permission, target recipes, free text, allowed diffs or semantic
-exceptions. Query the exact pi schema leaves and raw realization ledger rather than
+exceptions. Query {guidance["pi_query"]} rather than
 guessing fields. Never add a relation that is not directly grounded and bound.
 
 The source is already alpha-renamed. Do not invent or recover original names.
@@ -1156,17 +1664,149 @@ Output JSON only.
 """
 
 
+
+def build_scrc_lift_instructions(
+    *,
+    frontend: str | None = "triton",
+) -> str:
+    """Return the source-aware authoring contract for the selected frontend."""
+
+    return (
+        _source_aware_build_scrc_lift_instructions(frontend=frontend)
+        + _lift_output_structure_contract()
+    )
+
+
+def _lift_output_structure() -> dict[str, Any]:
+    """Project the authoritative schema into a small input-only shape map.
+
+    The Responses relay may treat ``text.format`` as advisory.  This projection
+    keeps the structural contract visible in the ordinary user packet without
+    copying the full schema or constructing any candidate field.  It is derived
+    on every request so the prompt, wire schema, and local CandidateCheck cannot
+    silently drift at the envelope boundary.
+    """
+
+    root = scrc_lift_core_json_schema()
+    root_properties = root.get("properties")
+    if not isinstance(root_properties, Mapping):
+        raise TypeError("Lift schema root properties must be a mapping")
+
+    def object_shape(value: Any, path: str) -> dict[str, Any]:
+        if not isinstance(value, Mapping) or value.get("type") != "object":
+            raise TypeError(f"Lift schema {path} must be an object")
+        properties = value.get("properties")
+        required = value.get("required")
+        if not isinstance(properties, Mapping) or not isinstance(required, list):
+            raise TypeError(f"Lift schema {path} lacks object shape metadata")
+        required_names = set(required)
+        optional = [name for name in properties if name not in required_names]
+        shape = {
+            "required": list(required),
+        }
+        if optional:
+            shape["optional"] = optional
+        return shape
+
+    j = root_properties.get("j")
+    if not isinstance(j, Mapping):
+        raise TypeError("Lift schema root.j must be an object")
+    j_properties = j.get("properties")
+    if not isinstance(j_properties, Mapping):
+        raise TypeError("Lift schema root.j properties must be a mapping")
+    intent = j_properties.get("intent")
+    if not isinstance(intent, Mapping):
+        raise TypeError("Lift schema root.j.intent must be an object")
+    intent_properties = intent.get("properties")
+    if not isinstance(intent_properties, Mapping):
+        raise TypeError("Lift schema root.j.intent properties must be a mapping")
+    function = intent_properties.get("intent_function")
+    if not isinstance(function, Mapping):
+        raise TypeError(
+            "Lift schema root.j.intent.intent_function must be an object"
+        )
+    function_properties = function.get("properties")
+    if not isinstance(function_properties, Mapping):
+        raise TypeError(
+            "Lift schema intent_function properties must be a mapping"
+        )
+
+    return {
+        "schema_values": {
+            "root.schema": root_properties["schema"].get("enum", []),
+            "pi.schema": root_properties["pi"]["properties"]["schema"].get(
+                "const"
+            ),
+        },
+        "root": object_shape(root, "root"),
+        "j": object_shape(j, "root.j"),
+        "j.intent": object_shape(intent, "root.j.intent"),
+        "j.intent.intent_function": object_shape(
+            function, "root.j.intent.intent_function"
+        ),
+        "j.boundary": object_shape(
+            j_properties["boundary"], "root.j.boundary"
+        ),
+        "j.signature": object_shape(
+            j_properties["signature"], "root.j.signature"
+        ),
+        "j.scope_item": object_shape(
+            j_properties["scopes"]["items"], "root.j.scopes[]"
+        ),
+        "j.tensor_item": object_shape(
+            function_properties["inputs"]["items"],
+            "root.j.intent.intent_function.inputs[]",
+        ),
+        "c": object_shape(root_properties["c"], "root.c"),
+        "pi": object_shape(root_properties["pi"], "root.pi"),
+    }
+
+
+def _lift_output_structure_contract() -> str:
+    """Render the schema-derived shape map for every Lift authoring backend."""
+
+    return (
+        "\n\nOUTPUT STRUCTURE MAP (input-only; never emit this map):\n"
+        + json.dumps(
+            _lift_output_structure(),
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+
+
 def _build_user_input(
     anonymous_source: str,
     compiler_view: dict[str, Any] | None,
     relift_context: SCRCReliftContext | None,
+    source_kind: str,
+    frontend: str | None,
 ) -> str:
-    payload: dict[str, Any] = {"anonymous_source": anonymous_source}
+    payload: dict[str, Any] = {
+        "anonymous_source": anonymous_source,
+        "source_kind": source_kind,
+    }
+    if frontend is not None:
+        payload["frontend"] = str(frontend)
     if compiler_view is not None:
-        payload["harness_compiler_view"] = compiler_view
+        payload["harness_compiler_view"] = {
+            **compiler_view,
+            "source_kind": source_kind,
+        }
+        payload["anonymous_abi_contract"] = _anonymous_abi_contract(
+            compiler_view
+        )
     if relift_context is not None:
         payload["relift"] = relift_context.to_json()
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False)
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
 
 
 def _prompt_material(
@@ -1174,19 +1814,49 @@ def _prompt_material(
     compiler_view: SCRCCompilerView | None,
     relift_context: SCRCReliftContext | None,
     source_symbol: str | None = None,
-) -> tuple[str, str, SCRCHarnessBinding, dict[str, Any] | None]:
-    anonymous_source, binding, mapping = anonymize_source(
-        source,
-        source_symbol=source_symbol,
-        bound_constexpr_parameters=(
-            tuple(compiler_view.bound_constexpr_values)
-            if compiler_view is not None
-            else ()
-        ),
-    )
+    *,
+    source_kind: str = "python",
+    source_parameter_order: tuple[str, ...] = (),
+    source_to_opaque: Mapping[str, str] | None = None,
+    frontend: str | None = "triton",
+) -> tuple[
+    str,
+    str,
+    SCRCHarnessBinding,
+    dict[str, Any] | None,
+]:
+    if source_kind == "python":
+        anonymous_source, binding, mapping = anonymize_source(
+            source,
+            source_symbol=source_symbol,
+            bound_constexpr_parameters=(
+                tuple(compiler_view.bound_constexpr_values)
+                if compiler_view is not None
+                else ()
+            ),
+        )
+    elif source_kind == "cuda":
+        if source_symbol is None or source_to_opaque is None:
+            raise ValueError(
+                "CUDA Lift preparation requires an explicit source symbol and ABI mapping"
+            )
+        anonymous_source, binding, mapping = anonymize_native_source(
+            source,
+            source_symbol=source_symbol,
+            source_parameter_order=source_parameter_order,
+            source_to_opaque=source_to_opaque,
+        )
+    else:
+        raise ValueError(f"unsupported Lift source kind: {source_kind!r}")
     anonymous_view = _anonymous_compiler_view(compiler_view, mapping)
-    instructions = build_scrc_lift_instructions()
-    user = _build_user_input(anonymous_source, anonymous_view, relift_context)
+    instructions = build_scrc_lift_instructions(frontend=frontend)
+    user = _build_user_input(
+        anonymous_source,
+        anonymous_view,
+        relift_context,
+        source_kind,
+        frontend,
+    )
     return instructions, user, binding, anonymous_view
 
 
@@ -1196,9 +1866,20 @@ def prepare_scrc_lift(
     compiler_view: SCRCCompilerView | None = None,
     relift_context: SCRCReliftContext | None = None,
     source_symbol: str | None = None,
+    source_kind: str = "python",
+    source_parameter_order: tuple[str, ...] = (),
+    source_to_opaque: Mapping[str, str] | None = None,
+    frontend: str | None = "triton",
 ) -> SCRCLiftRequest:
     instructions, user, binding, anonymous_view = _prompt_material(
-        source, compiler_view, relift_context, source_symbol
+        source,
+        compiler_view,
+        relift_context,
+        source_symbol,
+        source_kind=source_kind,
+        source_parameter_order=source_parameter_order,
+        source_to_opaque=source_to_opaque,
+        frontend=frontend,
     )
     return SCRCLiftRequest(
         instructions,
@@ -1215,10 +1896,21 @@ def scrc_lift_prompt_sha256(
     *,
     compiler_view: SCRCCompilerView | None = None,
     source_symbol: str | None = None,
+    source_kind: str = "python",
+    source_parameter_order: tuple[str, ...] = (),
+    source_to_opaque: Mapping[str, str] | None = None,
+    frontend: str | None = "triton",
 ) -> str:
     del name_hint
     instructions, user, _binding, _view = _prompt_material(
-        source, compiler_view, None, source_symbol
+        source,
+        compiler_view,
+        None,
+        source_symbol,
+        source_kind=source_kind,
+        source_parameter_order=source_parameter_order,
+        source_to_opaque=source_to_opaque,
+        frontend=frontend,
     )
     return hashlib.sha256((instructions + "\0" + user).encode()).hexdigest()
 
@@ -1229,9 +1921,20 @@ def scrc_relift_prompt_sha256(
     *,
     compiler_view: SCRCCompilerView | None = None,
     source_symbol: str | None = None,
+    source_kind: str = "python",
+    source_parameter_order: tuple[str, ...] = (),
+    source_to_opaque: Mapping[str, str] | None = None,
+    frontend: str | None = "triton",
 ) -> str:
     instructions, user, _binding, _view = _prompt_material(
-        source, compiler_view, context, source_symbol
+        source,
+        compiler_view,
+        context,
+        source_symbol,
+        source_kind=source_kind,
+        source_parameter_order=source_parameter_order,
+        source_to_opaque=source_to_opaque,
+        frontend=frontend,
     )
     return hashlib.sha256((instructions + "\0" + user).encode()).hexdigest()
 
@@ -1300,7 +2003,10 @@ def _decode_scrc_lift_artifact_core(
             f"this round requires {required_schema!r}"
         )
     _validate_anonymous_lift_core(artifact, expected_parameters)
-    _validate_compiler_view(artifact, anonymous_compiler_view)
+    _validate_compiler_view(
+        artifact,
+        anonymous_compiler_view,
+    )
     return artifact
 
 
@@ -1446,6 +2152,39 @@ def _candidate_json_schema_diagnostics(
     return diagnostics
 
 
+def _trusted_layer_c_declarations(
+    view: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Project the selected frontend's trusted C slots for diagnostics only."""
+
+    if not isinstance(view, Mapping):
+        return None
+    values = view.get("schedule_values")
+    compiler_slots = view.get("compiler_slots", [])
+    compiler_roles = view.get("compiler_roles", {})
+    if not isinstance(values, Mapping) or not isinstance(compiler_slots, list):
+        return None
+    if not isinstance(compiler_roles, Mapping):
+        compiler_roles = {}
+    slots: list[dict[str, Any]] = []
+    compiler_set = set(compiler_slots)
+    for name, value in values.items():
+        if not isinstance(name, str):
+            return None
+        row: dict[str, Any] = {
+            "slot": name,
+            "kind": "compiler" if name in compiler_set else "constexpr",
+            "value_type": canonical_scalar_binding_dtype(value),
+            "required": True,
+        }
+        if name in compiler_set:
+            role = compiler_roles.get(name)
+            if isinstance(role, str):
+                row["role"] = role
+        slots.append(row)
+    return {"slots": slots}
+
+
 def _candidate_surface_diagnostics(
     response_text: str,
     context: SCRCCandidateCheckContext,
@@ -1513,6 +2252,14 @@ def _candidate_surface_diagnostics(
         for item in parameters
     ):
         actual_parameters = [str(item["name"]) for item in parameters]
+        for parameter_index, name in enumerate(actual_parameters):
+            if re.fullmatch(r"p[0-9]+", name) is None:
+                mismatch(
+                    "construction_signature_parameter_namespace",
+                    f"j.signature.parameters[{parameter_index}].name",
+                    "p* physical Source ABI handle; c* belongs only to C.slots",
+                    name,
+                )
         if actual_parameters != list(context.expected_parameters):
             mismatch(
                 "construction_handle_sequence",
@@ -1655,6 +2402,303 @@ def _candidate_surface_diagnostics(
                 actual,
             )
 
+    raw_dimension_constraints = j.get("dimension_constraints")
+    if isinstance(raw_dimension_constraints, list):
+        for constraint_index, constraint in enumerate(raw_dimension_constraints):
+            if isinstance(constraint, Mapping):
+                mismatch(
+                    "construction_dimension_constraint_shape",
+                    f"j.dimension_constraints[{constraint_index}]",
+                    "one schema-valid ContractExpr string; value-to-dimension "
+                    "equality belongs in j.value_dimension_relations",
+                    constraint,
+                )
+
+    raw_value_dimension_relations = j.get("value_dimension_relations")
+    if isinstance(raw_value_dimension_relations, list):
+        for relation_index, relation in enumerate(raw_value_dimension_relations):
+            if not isinstance(relation, Mapping):
+                continue
+            value_ref = relation.get("value_ref")
+            dimension_ref = relation.get("dimension_ref")
+            if not (
+                isinstance(value_ref, str)
+                and re.fullmatch(r"t[0-9]+", value_ref)
+                and isinstance(dimension_ref, str)
+                and re.fullmatch(r"x[0-9]+", dimension_ref)
+            ):
+                mismatch(
+                    "construction_value_dimension_relation_namespace",
+                    f"j.value_dimension_relations[{relation_index}]",
+                    "{value_ref:t*, dimension_ref:x*, relation:eq}",
+                    relation,
+                )
+
+    # A return is the ABI-level value binding for an output.  The same output
+    # may also have a sparse Layer-B output mapping, but the two declarations
+    # must name the identical Layer-A value.  This check is intentionally on
+    # the raw candidate surface: a malformed C declaration must not hide an
+    # otherwise independent return mismatch until a later relift round.
+    if isinstance(fn, Mapping) and isinstance(boundary, Mapping):
+        raw_returns = fn.get("returns")
+        raw_output_mappings = boundary.get("output_mappings")
+        if isinstance(raw_returns, list) and isinstance(raw_output_mappings, list):
+            returns_by_output: dict[str, tuple[int, Mapping[str, Any]]] = {}
+            for index, item in enumerate(raw_returns):
+                if (
+                    isinstance(item, Mapping)
+                    and isinstance(item.get("output"), str)
+                    and item["output"] not in returns_by_output
+                ):
+                    returns_by_output[item["output"]] = (index, item)
+            for mapping in raw_output_mappings:
+                if not isinstance(mapping, Mapping):
+                    continue
+                output = mapping.get("output")
+                expected_value = mapping.get("value")
+                if not isinstance(output, str) or not isinstance(expected_value, str):
+                    continue
+                returned = returns_by_output.get(output)
+                if returned is None:
+                    continue
+                return_index, return_item = returned
+                actual_value = return_item.get("value")
+                if actual_value != expected_value:
+                    mismatch(
+                        "construction_return_output_agreement",
+                        f"j.intent.intent_function.returns[{return_index}].value",
+                        expected_value,
+                        actual_value,
+                    )
+
+        # A return/output pair may agree on one tile-shaped value while still
+        # violating the full logical output type.  The raw type rows are
+        # sufficient to report that independent error before Decode reaches a
+        # separate malformed relation.
+        output_types = {
+            item.get("name"): {
+                "dtype": item.get("dtype"),
+                "shape": item.get("shape"),
+            }
+            for item in fn.get("outputs", [])
+            if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+        }
+        value_types: dict[str, Any] = {
+            item.get("name"): {
+                "dtype": item.get("dtype"),
+                "shape": item.get("shape"),
+            }
+            for item in fn.get("inputs", [])
+            if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+        }
+        for _path, operation in operation_paths:
+            result = operation.get("result")
+            result_type = operation.get("type")
+            if isinstance(result, str) and isinstance(result_type, Mapping):
+                value_types[result] = dict(result_type)
+        if isinstance(raw_returns, list):
+            for return_index, return_item in enumerate(raw_returns):
+                if not isinstance(return_item, Mapping):
+                    continue
+                output = return_item.get("output")
+                value = return_item.get("value")
+                expected_type = output_types.get(output)
+                actual_type = value_types.get(value)
+                if (
+                    isinstance(expected_type, Mapping)
+                    and isinstance(actual_type, Mapping)
+                    and dict(actual_type) != dict(expected_type)
+                ):
+                    mismatch(
+                        "construction_return_type_agreement",
+                        f"j.intent.intent_function.returns[{return_index}].value",
+                        dict(expected_type),
+                        dict(actual_type),
+                    )
+
+        # Each indexed operation has a closed, one-row typed precondition.
+        # It is fully determined by the authored operation, so reporting the
+        # exact missing row does not infer or repair a candidate.  Aggregate
+        # these rows beside unrelated schema/decode failures so one gather at
+        # a time cannot consume the bounded Lift budget.
+        raw_index_bounds = boundary.get("index_bounds")
+        index_bounds = (
+            [item for item in raw_index_bounds if isinstance(item, Mapping)]
+            if isinstance(raw_index_bounds, list)
+            else []
+        )
+        for _path, operation in operation_paths:
+            if operation.get("op") not in {"gather", "scatter"}:
+                continue
+            node_ref = operation.get("id")
+            operands = operation.get("operands")
+            attrs = operation.get("attrs")
+            if (
+                not isinstance(node_ref, str)
+                or not isinstance(operands, list)
+                or len(operands) < 2
+                or not isinstance(attrs, Mapping)
+                or isinstance(attrs.get("axis"), bool)
+                or not isinstance(attrs.get("axis"), int)
+            ):
+                continue
+            expected_bound = {
+                "node_ref": node_ref,
+                "data": operands[0],
+                "indices": operands[1],
+                "axis": attrs["axis"],
+            }
+            if not any(
+                all(bound.get(key) == value for key, value in expected_bound.items())
+                for bound in index_bounds
+            ):
+                authored_bounds = [
+                    dict(bound)
+                    for bound in index_bounds
+                    if bound.get("node_ref") == node_ref
+                ]
+                mismatch(
+                    "construction_index_bounds",
+                    f"j.boundary.index_bounds[{node_ref}]",
+                    expected_bound,
+                    authored_bounds or None,
+                )
+
+        # Result-relation field presence is independent of graph decoding.
+        # In particular, an ordinary exact result is not a logical update and
+        # must not carry a dangling update node reference.
+        raw_result_relations = boundary.get("result_relations")
+        if isinstance(raw_result_relations, list):
+            for relation_index, relation in enumerate(raw_result_relations):
+                if not isinstance(relation, Mapping):
+                    continue
+                kind = relation.get("kind")
+                has_update_ref = "update_node_ref" in relation
+                if kind in {"exact", "tolerance"} and has_update_ref:
+                    mismatch(
+                        "construction_result_relation_update_reference",
+                        f"j.boundary.result_relations[{relation_index}].update_node_ref",
+                        "field omitted for exact/tolerance",
+                        relation.get("update_node_ref"),
+                    )
+                elif kind == "one_of_updates" and not isinstance(
+                    relation.get("update_node_ref"), str
+                ):
+                    mismatch(
+                        "construction_result_relation_update_reference",
+                        f"j.boundary.result_relations[{relation_index}].update_node_ref",
+                        "non-empty n* reference for one_of_updates",
+                        relation.get("update_node_ref"),
+                    )
+
+        # Scopes are a derived dominance archive, not an ABI inventory.  For
+        # a straight-line function scope the required definitions are exactly
+        # its logical inputs plus top-level operation results.  Checking this
+        # raw fact here exposes an extra output-only tensor even when another
+        # decode error would otherwise mask it.
+        raw_scopes = j.get("scopes")
+        raw_body = fn.get("body")
+        if isinstance(raw_scopes, list) and isinstance(raw_body, list):
+            function_inputs = {
+                item.get("name")
+                for item in fn.get("inputs", [])
+                if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+            }
+            function_results: set[str] = set()
+            for operation in raw_body:
+                if not isinstance(operation, Mapping):
+                    continue
+                result = operation.get("result")
+                if isinstance(result, str):
+                    function_results.add(result)
+                elif isinstance(result, list):
+                    function_results.update(
+                        item for item in result if isinstance(item, str)
+                    )
+            expected_definitions = sorted(function_inputs | function_results)
+            for scope_index, scope in enumerate(raw_scopes):
+                if (
+                    not isinstance(scope, Mapping)
+                    or scope.get("scope_id") != "q0"
+                    or scope.get("kind") != "function"
+                ):
+                    continue
+                definitions = scope.get("definitions")
+                if not isinstance(definitions, list) or any(
+                    not isinstance(item, str) for item in definitions
+                ):
+                    continue
+                if set(definitions) != set(expected_definitions) or len(
+                    definitions
+                ) != len(set(definitions)):
+                    mismatch(
+                        "construction_scope_definitions",
+                        f"j.scopes[{scope_index}].definitions",
+                        expected_definitions,
+                        definitions,
+                    )
+
+        # An iteration binding can use a C tile slot only when the trusted
+        # Source-C declaration itself exposes the exact J subject and logical
+        # axis attachment.  A model may choose a constexpr role, but it may
+        # not invent an attachment for an otherwise unattached block-size C
+        # slot.  Report that impossibility before the pi validator rejects the
+        # row one field at a time.
+        candidate_pi = payload.get("pi")
+        context_view = context.anonymous_compiler_view
+        declarations = _trusted_layer_c_declarations(context_view)
+        raw_iteration_bindings = (
+            candidate_pi.get("iteration_bindings")
+            if isinstance(candidate_pi, Mapping)
+            else None
+        )
+        if isinstance(declarations, Mapping) and isinstance(
+            raw_iteration_bindings, list
+        ):
+            try:
+                declared_slots = {
+                    item["slot"]: item
+                    for item in _trusted_layer_c_declarations(context_view)["slots"]
+                }
+            except (TypeError, ValueError) as exc:
+                mismatch(
+                    "candidate_check_context_mismatch",
+                    "harness_compiler_view.layer_c_declarations",
+                    "closed trusted C declarations",
+                    f"{type(exc).__name__}: {exc}",
+                )
+            else:
+                for binding_index, binding in enumerate(raw_iteration_bindings):
+                    if not isinstance(binding, Mapping):
+                        continue
+                    tile_slot = binding.get("tile_slot")
+                    declaration = declared_slots.get(tile_slot)
+                    if not isinstance(declaration, Mapping):
+                        continue
+                    if not {"subject_ref", "axis_ref"} <= set(declaration):
+                        mismatch(
+                            "construction_pi_iteration_slot_attachment",
+                            f"pi.iteration_bindings[{binding_index}].tile_slot",
+                            (
+                                "omit this iteration binding: trusted C slot "
+                                "has no subject_ref/axis_ref attachment"
+                            ),
+                            tile_slot,
+                        )
+                        continue
+                    expected_axis = {
+                        "subject_ref": declaration["subject_ref"],
+                        "axis_ref": declaration["axis_ref"],
+                    }
+                    logical_axes = binding.get("logical_axes")
+                    if not isinstance(logical_axes, list) or expected_axis not in logical_axes:
+                        mismatch(
+                            "construction_pi_iteration_slot_attachment",
+                            f"pi.iteration_bindings[{binding_index}].logical_axes",
+                            [expected_axis],
+                            logical_axes,
+                        )
+
     pi = payload.get("pi")
     if isinstance(pi, Mapping):
         for field_name, prefix in (("regions", "r"), ("instances", "i")):
@@ -1691,6 +2735,7 @@ def _candidate_surface_diagnostics(
                 )
 
     view = context.anonymous_compiler_view
+    declarations = _trusted_layer_c_declarations(view)
     if isinstance(view, Mapping) and isinstance(parameters, list):
         by_name = {
             item.get("name"): item
@@ -1734,6 +2779,10 @@ def _candidate_surface_diagnostics(
                             expected,
                             actual,
                         )
+        # CandidateCheck keeps these ABI checks branch-local: the trusted
+        # selected frontend view verifies physical parameters and C slots.
+        # It is diagnostic evidence only and never replaces Triton Source TTIR
+        # observation or the native compiler/Gate path of another frontend.
         c = payload.get("c")
         if isinstance(c, Mapping) and c.get("values") != view.get("schedule_values"):
             mismatch(
@@ -1764,6 +2813,97 @@ def _candidate_surface_diagnostics(
                             "bound non-C constexpr carrier in J.signature only",
                             slots_by_name[name],
                         )
+
+            # The candidate is required to spell the trusted C interface
+            # exactly as the trusted declaration does.  Decode performs the
+            # authoritative comparison, but report the concrete expected
+            # field here as well so an unrelated decode failure cannot force
+            # the owner to spend one relift merely discovering (for example)
+            # whether c0 is constexpr or compiler.  Do not compare `required`
+            # on raw JSON: ScheduleSlot supplies its default during Decode.
+            if isinstance(declarations, Mapping) and isinstance(raw_slots, list):
+                try:
+                    expected_slots = [
+                        {
+                            "slot": item["slot"],
+                            "kind": item["kind"],
+                            "value_type": item["value_type"],
+                            **(
+                                {"role": item["role"]}
+                                if "role" in item
+                                else {}
+                            ),
+                        }
+                        for item in declarations["slots"]
+                    ]
+                except (TypeError, ValueError) as exc:
+                    mismatch(
+                        "candidate_check_context_mismatch",
+                        "harness_compiler_view.layer_c_declarations",
+                        "closed trusted C declarations",
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                else:
+                    if len(raw_slots) != len(expected_slots):
+                        mismatch(
+                            "construction_layer_c_declaration",
+                            "c.slots",
+                            f"{len(expected_slots)} trusted declaration(s)",
+                            f"{len(raw_slots)} authored declaration(s)",
+                        )
+                    for index, expected_slot in enumerate(expected_slots):
+                        if index >= len(raw_slots):
+                            break
+                        actual_slot = raw_slots[index]
+                        if not isinstance(actual_slot, Mapping):
+                            continue
+                        expected_name = expected_slot["slot"]
+                        if actual_slot.get("name") != expected_name:
+                            mismatch(
+                                "construction_layer_c_declaration",
+                                f"c.slots[{index}].name",
+                                expected_name,
+                                actual_slot.get("name"),
+                            )
+                        for key in ("kind", "value_type"):
+                            if actual_slot.get(key) != expected_slot.get(key):
+                                mismatch(
+                                    "construction_layer_c_declaration",
+                                    f"c.slots[{index}].{key}",
+                                    expected_slot.get(key),
+                                    actual_slot.get(key),
+                                )
+                        if (
+                            "role" in expected_slot
+                            and actual_slot.get("role") != expected_slot["role"]
+                        ):
+                            mismatch(
+                                "construction_layer_c_declaration",
+                                f"c.slots[{index}].role",
+                                expected_slot["role"],
+                                actual_slot.get("role"),
+                            )
+                        for key in ("subject_ref", "axis_ref"):
+                            expected_present = key in expected_slot
+                            actual_present = key in actual_slot
+                            if expected_present != actual_present or (
+                                expected_present
+                                and actual_slot.get(key) != expected_slot[key]
+                            ):
+                                mismatch(
+                                    "construction_layer_c_declaration",
+                                    f"c.slots[{index}].{key}",
+                                    (
+                                        expected_slot[key]
+                                        if expected_present
+                                        else "field omitted"
+                                    ),
+                                    (
+                                        actual_slot.get(key)
+                                        if actual_present
+                                        else "field omitted"
+                                    ),
+                                )
         actual_aliases = boundary.get("aliases") if isinstance(boundary, Mapping) else None
         if actual_aliases != view.get("aliases"):
             mismatch(
@@ -1853,7 +2993,8 @@ def _response_usage(raw: Mapping[str, Any]) -> dict[str, int]:
 
 
 def _validate_compiler_view(
-    artifact: Gate1Artifact, anonymous_view: Mapping[str, Any] | None
+    artifact: Gate1Artifact,
+    anonymous_view: Mapping[str, Any] | None,
 ) -> None:
     if anonymous_view is None:
         return
@@ -1882,7 +3023,7 @@ def _validate_compiler_view(
         if actual_p != expected_p or actual_c != expected_c:
             raise ValueError("Lift changed Harness-declared logical/C handles")
     if artifact.c.values != anonymous_view["schedule_values"]:
-        raise ValueError("Lift changed trusted pure-C values")
+        raise ValueError("Lift changed trusted selected-frontend C values")
     actual_compiler_slots = [
         item.name for item in artifact.c.slots
         if item.kind is ScheduleSlotKind.COMPILER
@@ -2273,26 +3414,54 @@ def extract_scrc_artifact(
     effort: str | None = None,
     relift_context: SCRCReliftContext | None = None,
     source_symbol: str | None = None,
+    source_kind: str = "python",
+    source_parameter_order: tuple[str, ...] = (),
+    source_to_opaque: Mapping[str, str] | None = None,
+    timeout_seconds: float | None = None,
+    frontend: str | None = "triton",
 ) -> SCRCExtraction:
     """Perform exactly one source-aware provider call for one Lift attempt."""
 
     del name_hint
+    resolved_provider = provider or get_provider()
+    resolved_effort = effort or resolved_provider.reasoning_effort
+    resolved_timeout = resolve_source_aware_lift_timeout(
+        resolved_effort,
+        timeout_seconds,
+    )
     request = prepare_scrc_lift(
         source,
         compiler_view=compiler_view,
         relift_context=relift_context,
         source_symbol=source_symbol,
+        source_kind=source_kind,
+        source_parameter_order=source_parameter_order,
+        source_to_opaque=source_to_opaque,
+        frontend=frontend,
     )
     instructions = request.instructions
     user = request.user_input
     prompt_sha = request.prompt_sha256
-    reply = call_responses(
-        instructions,
-        user,
-        provider=provider,
-        effort=effort,
-        text_format=scrc_lift_core_text_format(),
-    )
+    try:
+        reply = call_responses(
+            instructions,
+            user,
+            provider=resolved_provider,
+            effort=resolved_effort,
+            text_format=scrc_lift_core_text_format(),
+            timeout=resolved_timeout,
+        )
+    except ProviderError as exc:
+        attempt = SCRCLiftAttempt(
+            model=resolved_provider.model,
+            diagnostic=f"{type(exc).__name__}: {exc}",
+            response_text="",
+            request_sha256=getattr(exc, "request_sha256", ""),
+            attempts=getattr(exc, "attempts", 1),
+            elapsed_ms=getattr(exc, "elapsed_ms", 0.0),
+            termination_status=getattr(exc, "failure_class", None),
+        )
+        raise SCRCLiftError(attempt) from exc
     try:
         artifact = decode_scrc_lift_artifact(reply.text, request)
     except Exception as exc:
@@ -2352,6 +3521,11 @@ class ResponsesSCRCRelifter:
     compiler_view: SCRCCompilerView | None = None
     effort: str | None = None
     source_symbol: str | None = None
+    source_kind: str = "python"
+    source_parameter_order: tuple[str, ...] = ()
+    source_to_opaque: Mapping[str, str] | None = None
+    timeout_seconds: float | None = None
+    frontend: str | None = "triton"
     _records: list[SCRCReliftRecord] = field(default_factory=list, init=False)
 
     @property
@@ -2380,6 +3554,11 @@ class ResponsesSCRCRelifter:
                 effort=self.effort,
                 relift_context=context,
                 source_symbol=self.source_symbol,
+                source_kind=self.source_kind,
+                source_parameter_order=self.source_parameter_order,
+                source_to_opaque=self.source_to_opaque,
+                timeout_seconds=self.timeout_seconds,
+                frontend=self.frontend,
             )
         except SCRCLiftError as exc:
             self._records.append(
@@ -2410,6 +3589,11 @@ class ResponsesSCRCLiftAdapter:
     compiler_view: SCRCCompilerView | None = None
     effort: str | None = None
     source_symbol: str | None = None
+    source_kind: str = "python"
+    source_parameter_order: tuple[str, ...] = ()
+    source_to_opaque: Mapping[str, str] | None = None
+    timeout_seconds: float | None = None
+    frontend: str | None = "triton"
     _records: list[SCRCReliftRecord] = field(default_factory=list, init=False)
 
     @property
@@ -2421,6 +3605,27 @@ class ResponsesSCRCLiftAdapter:
         source = getattr(source_program, "text", None)
         if not isinstance(source, str) or not source:
             raise TypeError("Responses SCRC Lift requires SourceProgram.text")
+        source_kind = getattr(
+            source_program, "lift_source_kind", self.source_kind
+        )
+        source_parameter_order = tuple(
+            getattr(
+                source_program,
+                "lift_parameter_order",
+                self.source_parameter_order,
+            )
+        )
+        source_mapping = getattr(
+            source_program,
+            "lift_source_to_opaque",
+            self.source_to_opaque,
+        )
+        source_to_opaque = (
+            dict(source_mapping) if source_mapping is not None else None
+        )
+        source_symbol = getattr(
+            source_program, "lift_source_symbol", self.source_symbol
+        )
         round_index = len(self._records) + 1
         context = None
         if feedback is not None:
@@ -2444,7 +3649,12 @@ class ResponsesSCRCLiftAdapter:
                 compiler_view=self.compiler_view,
                 effort=self.effort,
                 relift_context=context,
-                source_symbol=self.source_symbol,
+                source_symbol=source_symbol,
+                source_kind=source_kind,
+                source_parameter_order=source_parameter_order,
+                source_to_opaque=source_to_opaque,
+                timeout_seconds=self.timeout_seconds,
+                frontend=getattr(request, "frontend", self.frontend),
             )
         except SCRCLiftError as exc:
             diagnostic = "; ".join(
@@ -2493,7 +3703,8 @@ __all__ = [
     "SCRCCompilerView", "SCRCExtraction", "SCRCHarnessBinding",
     "SCRCLiftAttempt", "SCRCLiftError", "SCRCLiftRequest", "SCRCProvenance", "SCRCReliftContext",
     "SourceIdentifierPrivacyError",
-    "SCRCReliftRecord", "anonymize_source", "build_scrc_lift_instructions",
+    "SCRCReliftRecord", "anonymize_native_source", "anonymize_source",
+    "build_scrc_lift_instructions", "canonical_scalar_binding_dtype",
     "check_scrc_lift_candidate", "decode_scrc_lift_artifact", "extract_scrc_artifact", "prepare_scrc_lift", "scrc_candidate_check_context", "scrc_lift_prompt_sha256",
     "scrc_relift_prompt_sha256",
 ]
