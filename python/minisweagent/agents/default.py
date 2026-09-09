@@ -1,4 +1,6 @@
-"""Basic agent control loop retained for IntentIR Lift and Replay."""
+"""Basic agent class. See https://mini-swe-agent.com/latest/advanced/control_flow/ for visual explanation
+or https://minimal-agent.com for a tutorial on the basic building principles.
+"""
 
 import copy
 import hashlib
