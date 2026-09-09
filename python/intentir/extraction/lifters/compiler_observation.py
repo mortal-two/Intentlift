@@ -401,6 +401,7 @@ def reconcile_candidate_source_ttir(
             *_compact_j_mask_presence_diagnostics(packet, fingerprint),
             *_compact_j_recurrence_presence_diagnostics(packet, fingerprint),
             *_compact_j_terminal_control_presence_diagnostics(packet, fingerprint),
+            *_source_stride_axis_diagnostics(packet, fingerprint),
             *_unowned_source_runtime_carrier_diagnostics(
                 packet,
                 ttir,
@@ -600,6 +601,214 @@ def _compact_j_recurrence_presence_diagnostics(
     )
 
 
+def _source_stride_axis_diagnostics(
+    packet: Mapping[str, Any],
+    observed: TTIRFingerprint,
+) -> tuple[Mapping[str, Any], ...]:
+    """Reject a stride binding whose axis contradicts Source address evidence.
+
+    ``axis_ref`` is the logical tensor axis whose coordinate is multiplied by
+    a representation-only stride carrier.  The existing schema checks only
+    that the axis is in range, which is insufficient: a row-stride carrier can
+    be validly attached to either axis of a rank-2 tensor while only one choice
+    matches the compiled Source address polynomial.  This diagnostic is
+    intentionally source-aware and necessary-only.  It uses the TTIR parser's
+    excluded diagnostic address forms plus the candidate's already-authored
+    program binding; it never constructs or repairs an artifact.
+
+    The closed check currently applies when a carrier is visibly multiplied by
+    one direct physical ``program_id`` axis.  More complex address forms are
+    left to the formal Gate1/Gate2 path rather than guessed here.
+    """
+
+    pi = packet.get("pi")
+    j = packet.get("j")
+    if not isinstance(pi, Mapping) or not isinstance(j, Mapping):
+        return ()
+    raw_bindings = pi.get("access_representation_bindings")
+    raw_program_bindings = pi.get("program_bindings")
+    if not isinstance(raw_bindings, list) or not isinstance(
+        raw_program_bindings, list
+    ):
+        return ()
+
+    def axis_number(value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int) and value >= 0:
+            return value
+        if isinstance(value, str):
+            match = re.fullmatch(r"x([0-9]+)", value)
+            if match is not None:
+                return int(match.group(1))
+        return None
+
+    # Map a physical launch axis to the unique logical tensor axis explicitly
+    # named by the candidate's program binding.  Do not infer this from p*
+    # order, shape, or the frontend's contiguous-layout convention.  Both the
+    # integer and symbolic ``x*`` spellings are legal axis_ref encodings.
+    program_axis_to_logical_axes: dict[int, set[int]] = {}
+    for row in raw_program_bindings:
+        if not isinstance(row, Mapping):
+            continue
+        physical_axis = row.get("axis")
+        logical_axes = row.get("logical_axes")
+        if (
+            isinstance(physical_axis, bool)
+            or not isinstance(physical_axis, int)
+            or not isinstance(logical_axes, list)
+        ):
+            continue
+        for logical in logical_axes:
+            if not isinstance(logical, Mapping):
+                continue
+            logical_axis = axis_number(logical.get("axis_ref"))
+            if logical_axis is not None:
+                program_axis_to_logical_axes.setdefault(
+                    physical_axis, set()
+                ).add(logical_axis)
+    if not program_axis_to_logical_axes:
+        return ()
+
+    signature = j.get("signature")
+    raw_parameters = (
+        signature.get("parameters")
+        if isinstance(signature, Mapping)
+        else None
+    )
+    tensor_to_parameter_position: dict[str, int] = {}
+    if isinstance(raw_parameters, list):
+        for parameter in raw_parameters:
+            if not isinstance(parameter, Mapping):
+                continue
+            logical_ref = parameter.get("logical_ref")
+            name = parameter.get("name")
+            if (
+                parameter.get("kind") == "tensor"
+                and isinstance(logical_ref, str)
+                and isinstance(name, str)
+                and re.fullmatch(r"p[0-9]+", name)
+            ):
+                tensor_to_parameter_position[logical_ref] = int(name[1:])
+
+    boundary = j.get("boundary")
+    raw_accesses = (
+        boundary.get("accesses")
+        if isinstance(boundary, Mapping)
+        else None
+    )
+    accesses = {
+        str(item.get("access_id")): item
+        for item in raw_accesses or []
+        if isinstance(item, Mapping) and isinstance(item.get("access_id"), str)
+    }
+
+    def argument_positions(polynomial: object) -> set[int]:
+        positions: set[int] = set()
+        if not isinstance(polynomial, (list, tuple)):
+            return positions
+        for term in polynomial:
+            if not isinstance(term, (list, tuple)) or len(term) != 2:
+                continue
+            monomial = term[0]
+            if not isinstance(monomial, (list, tuple)):
+                continue
+            for atom in monomial:
+                if not isinstance(atom, str):
+                    continue
+                match = re.fullmatch(r"arg\[(\d+)\]:.*", atom)
+                if match is not None:
+                    positions.add(int(match.group(1)))
+        return positions
+
+    def program_axes(polynomial: object) -> set[int]:
+        axes: set[int] = set()
+        if not isinstance(polynomial, (list, tuple)):
+            return axes
+        for term in polynomial:
+            if not isinstance(term, (list, tuple)) or len(term) != 2:
+                continue
+            monomial = term[0]
+            if not isinstance(monomial, (list, tuple)):
+                continue
+            for atom in monomial:
+                if not isinstance(atom, str):
+                    continue
+                match = re.fullmatch(r"program_axis:([xyz])", atom)
+                if match is not None:
+                    axes.add("xyz".index(match.group(1)))
+        return axes
+
+    def pointer_base_position(pointer_base: object) -> int | None:
+        if not isinstance(pointer_base, str):
+            return None
+        match = re.fullmatch(r"arg\[(\d+)\]:.*", pointer_base)
+        return int(match.group(1)) if match is not None else None
+
+    source_forms = observed.diagnostic_memory_address_forms
+    diagnostics: list[Mapping[str, Any]] = []
+    for binding_index, binding in enumerate(raw_bindings):
+        if not isinstance(binding, Mapping):
+            continue
+        carrier = binding.get("carrier_ref")
+        access_ref = binding.get("access_ref")
+        authored_axis = axis_number(binding.get("axis_ref"))
+        if (
+            not isinstance(carrier, str)
+            or not isinstance(access_ref, str)
+            or not isinstance(authored_axis, int)
+        ):
+            continue
+        if not re.fullmatch(r"p[0-9]+", carrier):
+            continue
+        access = accesses.get(access_ref)
+        if not isinstance(access, Mapping):
+            continue
+        tensor = access.get("tensor")
+        base_position = tensor_to_parameter_position.get(tensor)
+        if base_position is None:
+            continue
+        carrier_position = int(carrier[1:])
+        access_kind = access.get("kind")
+        expected_axes: set[int] = set()
+        for operation, pointer_base, polynomial, _context in source_forms:
+            if access_kind == "load" and operation != "tt.load.masked" and operation != "tt.load":
+                continue
+            if access_kind == "store" and operation != "tt.store.masked" and operation != "tt.store":
+                continue
+            if pointer_base_position(pointer_base) != base_position:
+                continue
+            positions = argument_positions(polynomial)
+            if carrier_position not in positions:
+                continue
+            for physical_axis in program_axes(polynomial):
+                expected_axes.update(
+                    program_axis_to_logical_axes.get(physical_axis, ())
+                )
+        if len(expected_axes) != 1:
+            continue
+        expected_axis = next(iter(expected_axes))
+        if authored_axis == expected_axis:
+            continue
+        diagnostics.append(
+            {
+                "rule_code": "source_stride_axis_mismatch",
+                "path": (
+                    "<source-ttir-obligation> "
+                    f"pi.access_representation_bindings[{binding_index}].axis_ref"
+                ),
+                "anonymous_handles": [carrier, access_ref],
+                "observed_refs_or_types": [
+                    f"source-bound stride carrier {carrier} uses the direct launch axis",
+                    f"candidate program binding resolves that launch axis to tensor axis {expected_axis}",
+                    f"authored axis_ref={authored_axis}",
+                ],
+                "line": None,
+            }
+        )
+    return tuple(diagnostics[:64])
+
+
 def _compact_j_terminal_control_presence_diagnostics(
     packet: Mapping[str, Any],
     observed: TTIRFingerprint,
@@ -650,14 +859,6 @@ def _unowned_source_runtime_carrier_diagnostics(
     """
 
     pi = packet.get("pi")
-    if (
-        isinstance(pi, Mapping)
-        and pi.get("schema") == "intentir.pi.normalization-witness.v1"
-    ):
-        # The compact witness deliberately has no occurrence/route graph.
-        # ABI carriers remain explicit in J.signature; raw Gate1 comparison is
-        # authoritative and hard if their compiler-visible use differs.
-        return ()
     j = packet.get("j")
     if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
         return ()
@@ -665,9 +866,10 @@ def _unowned_source_runtime_carrier_diagnostics(
     parameters = (
         signature.get("parameters") if isinstance(signature, Mapping) else None
     )
-    instances = pi.get("instances")
+    instances = pi.get("instances") or []
     if not isinstance(parameters, list) or not isinstance(instances, list):
-        return ()
+        if pi.get("schema") != "intentir.pi.normalization-witness.v1":
+            return ()
 
     pi_refs = {
         item.get("semantic_ref")
@@ -681,12 +883,18 @@ def _unowned_source_runtime_carrier_diagnostics(
         and isinstance(item.get("id"), str)
         and isinstance(item.get("semantic_ref"), str)
     }
-    routes = pi.get("routes")
+    routes = pi.get("routes") or []
     routed_source_refs = {
         instance_refs.get(str(item.get("source")))
         for item in routes
         if isinstance(routes, list) and isinstance(item, Mapping)
     } if isinstance(routes, list) else set()
+    compact_access_carriers = {
+        item.get("carrier_ref")
+        for item in pi.get("access_representation_bindings", [])
+        if isinstance(item, Mapping)
+        and isinstance(item.get("carrier_ref"), str)
+    }
     diagnostics: list[Mapping[str, Any]] = []
     source_syntax_uses = {
         item
@@ -719,6 +927,39 @@ def _unowned_source_runtime_carrier_diagnostics(
             else "source-syntax-runtime-use"
         )
         pi_owned = name in pi_refs
+        compact_owned = name in compact_access_carriers
+        if pi.get("schema") == "intentir.pi.normalization-witness.v1":
+            if source_used and not compact_owned:
+                diagnostics.append(
+                    {
+                        "rule_code": "source_runtime_carrier_without_access_owner",
+                        "path": (
+                            "<source-ttir-obligation> "
+                            "pi.access_representation_bindings: "
+                            f"Source-used runtime carrier {name} has logical_ref=null "
+                            "but no authored address ownership row"
+                        ),
+                        "anonymous_handles": [name],
+                        "observed_refs_or_types": [observed_use],
+                        "line": None,
+                    }
+                )
+            elif compact_owned and not source_used:
+                diagnostics.append(
+                    {
+                        "rule_code": "source_unused_runtime_carrier_has_access_owner",
+                        "path": (
+                            "<source-ttir-obligation> "
+                            "pi.access_representation_bindings: "
+                            f"runtime carrier {name} has an address ownership row, "
+                            "but the selected Source has no body use"
+                        ),
+                        "anonymous_handles": [name],
+                        "observed_refs_or_types": ["source-ttir-runtime-unused"],
+                        "line": None,
+                    }
+                )
+            continue
         if source_used and not pi_owned:
             diagnostics.append(
                 {

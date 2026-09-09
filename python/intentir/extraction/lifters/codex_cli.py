@@ -63,22 +63,24 @@ and tmp/ are writable. There is no repository or network.
 
 Act like a coding agent, not a staged JSON generator. Start with the one compact
 `source-brief` command in input/README.md, then read input/source.py. The brief includes
-the complete compact Harness ABI ledger and exact Source/compiler navigation; you
-decide all meaning. Query an exact compiler-observer section or TTIR slice only when
-the current draft needs it. When Source or the brief exposes a fused operation or
-explicit numeric extension/truncation, its focused TTIR query is mandatory before
-authoring that typed numeric subgraph; never guess fused operand width from surface
-operand declarations. Query schema leaves, operation contracts and ownership
-terms through `python .agents/intentir_agent_tool.py lift_reference ...`; complete
-references are deliberately not mounted as readable workspace files. Do not dump
-input/source_ttir.json or broad reference material into the thread.
+the complete compact Harness ABI ledger and exact selected-frontend Source/compiler
+navigation; you decide all meaning. Query an exact compiler-observer section or
+frontend-specific compiler slice only when the current draft needs it. When Source
+or the brief exposes a fused operation or explicit numeric extension/truncation,
+its focused selected-frontend compiler query is mandatory before authoring that
+typed numeric subgraph; never guess fused operand width from surface operand
+declarations. Query schema leaves, operation contracts and ownership terms through
+`python .agents/intentir_agent_tool.py lift_reference ...`; complete references are
+deliberately not mounted as readable workspace files. Do not dump a complete compiler
+observer or broad reference material into the thread.
 
 You alone author the complete output/candidate.json. J owns all logical semantics;
 C owns only implementation choices; pi is only the typed Gate1 normalization
 witness in the supplied schema. It has no realization graph. Author only closed direct
 program/iteration/control/materialization/access-representation relations bound to
-existing J axes, values, accesses and C slots. Query `realization-ledger` and the exact
-pi schema leaves when needed; never copy a physical Source SSA id or target recipe into
+existing J axes, values, accesses and C slots. Query the frontend-specific
+realization/source ledger described in input/README.md and the exact pi schema leaves
+when needed; never copy a physical Source SSA id or target recipe into
 pi. A relation whose fixed unary recognizer cannot prove remains hard.
 Fixed code must not choose or fill any field, handle, relation, operation, or shape.
 Preserve anonymous ABI order, parametric shape identities, logical control/time and
@@ -103,7 +105,7 @@ inspect and patch that candidate rather than recreating it. Otherwise write one 
 complete candidate early. Do not postpone authoring until after exhaustive reading. As
 soon as the first complete JSON exists, run
 `python .agents/intentir_agent_tool.py submit_candidate` before manual rereading or
-broad TTIR/schema inspection. Let its closed diagnostics drive focused patches.
+broad compiler/schema inspection. Let its closed diagnostics drive focused patches.
 Organize scratch under work/ however useful. The final J/C/pi and every semantic
 field remain entirely your work. This transaction first runs the source-free CandidateCheck and then the
 reject-only necessary-condition SourceReconcile on the same exact bytes. Repair the returned diagnostics
@@ -222,16 +224,92 @@ def _codex_feedback_files(feedback_text: str) -> dict[str, str]:
 
 
 
+def _codex_frontend_guidance(frontend: str | None, source_kind: str) -> str:
+    """Describe the selected branch's own source/compiler observer."""
+
+    selected = str(frontend or "triton").casefold()
+    if selected == "triton":
+        return (
+            "This is the Triton/TTIR branch. When an exact source observer is "
+            "mounted, use source-observer and focused source-ttir queries; do "
+            "not load the complete observer into the conversation."
+        )
+    if selected == "cuda":
+        return (
+            "This is the native CUDA C++ branch. Use the selected CUDA source, "
+            "harness-abi, source-outline, source-find, and CUDA compiler facts. "
+            "source_ttir.json is not applicable and must not be queried."
+        )
+    if selected == "cute":
+        return (
+            "This is the independent CuTe branch. Use the CuTe source and its "
+            "MLIR/PTX compiler evidence supplied by the CuTe path. Triton TTIR "
+            "queries are not applicable."
+        )
+    if selected == "tilelang":
+        return (
+            "This is the independent TileLang branch. Use the TileLang Python/TIR "
+            "source, harness-abi, source-outline, source-find, and TileLang "
+            "compiler facts. Triton TTIR queries are not applicable."
+        )
+    return (
+        f"This is the {selected} frontend branch with source_kind={source_kind}. "
+        "Use only its selected source/compiler evidence; do not assume Triton TTIR."
+    )
+
+
+def _codex_frontend_prompt(
+    base: str,
+    *,
+    frontend: str | None,
+    source_kind: str,
+) -> str:
+    return (
+        base
+        + "\n\n<frontend-branch-guidance>\n"
+        + _codex_frontend_guidance(frontend, source_kind)
+        + "\n</frontend-branch-guidance>"
+    )
+
+
 def _codex_input_files(
     request: Any,
     *,
     source_ttir_observation: Mapping[str, Any] | None,
+    frontend: str | None = None,
+    source_kind: str | None = None,
 ) -> tuple[dict[str, str], dict[str, str]]:
     """Build a small ordinary coding workspace for the source-aware owner."""
 
     complete = _input_files(
         request,
         source_ttir_observation=source_ttir_observation,
+    )
+    packet = json.loads(request.user_input)
+    selected_frontend = str(
+        frontend or packet.get("frontend") or "triton"
+    ).casefold()
+    selected_source_kind = str(
+        source_kind or packet.get("source_kind") or "python"
+    )
+    branch_guidance = _codex_frontend_guidance(
+        selected_frontend,
+        selected_source_kind,
+    )
+    observer_instructions = (
+        "For an exact Triton compiler fact, use source-observer, "
+        "source-ttir-outline, source-ttir-find, or source-ttir-def-use."
+        if selected_frontend == "triton"
+        else "For an exact branch compiler fact, use source-outline, source-find, "
+        "harness, or harness-abi; do not use Triton source-ttir commands."
+    )
+    realization_instructions = (
+        "After J/C exists, run `python input/tools/context_query.py --input-root input "
+        "--output-root output realization-ledger` and `candidate-attachments` before "
+        "authoring pi."
+        if selected_frontend == "triton"
+        else "After J/C exists, use the selected branch source/compiler facts and "
+        "`candidate-attachments` before authoring pi."
     )
     files = {
         "source.py": complete["source.py"],
@@ -246,19 +324,20 @@ def _codex_input_files(
             "Start once with:\n"
             "`python input/tools/context_query.py --input-root input --output-root output source-brief`\n\n"
             "If that brief reports any compiler.sensitive_numeric_index operation, "
-            "query each exact operation in Source TTIR before authoring the typed "
-            "arithmetic graph; fused-operation operand promotion and cast placement "
-            "must not be guessed from Source surface operand dtypes.\n\n"
-            "Then read `input/source.py`. For an exact compiler fact, use the same tool "
-            "with `source-observer --path fingerprint.NAME`, `source-ttir-outline`, "
-            "`source-ttir-find`, or `source-ttir-def-use`. For wire syntax, use:\n"
+            "query the exact selected-frontend compiler evidence before authoring "
+            "the typed arithmetic graph; fused-operation operand promotion and cast "
+            "placement must not be guessed from Source surface operand dtypes.\n\n"
+            "Then read `input/source.py`. "
+            + observer_instructions
+            + " For wire syntax, use:\n"
             "`python .agents/intentir_agent_tool.py lift_reference authoring-brief`\n"
             "Then request only `section NAME`, `op NAME`, or `contract TERM` needed by "
             "the current draft. Complete references are not readable files.\n\n"
-            "After J/C exists, run `python input/tools/context_query.py --input-root input "
-            "--output-root output realization-ledger` and `candidate-attachments` before "
-            "authoring pi. These are read-only raw facts and never choose a relation.\n\n"
-            "Use `lift_reference contract TERM` only when ownership is unclear. Write "
+            + realization_instructions
+            + " These are read-only raw facts and never choose a relation.\n\n"
+            + branch_guidance
+            + "\n\n"
+            + "Use `lift_reference contract TERM` only when ownership is unclear. Write "
             "`output/candidate.json` early and patch it in "
             "place. Run `python .agents/intentir_agent_tool.py submit_candidate`; the "
             "host supplies the public semantic probe after a mechanically passing draft.\n"
@@ -305,7 +384,10 @@ def _reference_operation_sections(reference: str) -> dict[str, str]:
 
 
 def _lift_reference_query(
-    references: Mapping[str, str], arguments: tuple[str, ...]
+    references: Mapping[str, str],
+    arguments: tuple[str, ...],
+    *,
+    frontend: str | None = "triton",
 ) -> Mapping[str, Any]:
     """Return one bounded exact reference fragment without mounting bulk files."""
 
@@ -334,6 +416,12 @@ def _lift_reference_query(
         }
     )
     operations = _reference_operation_sections(references["operations"])
+    selected_frontend = str(frontend or "triton").casefold()
+    observer_name = (
+        "Source-TTIR"
+        if selected_frontend == "triton"
+        else f"{selected_frontend} compiler/source"
+    )
     command = arguments[0]
     result: Any
     if command == "authoring-brief" and len(arguments) == 1:
@@ -364,7 +452,7 @@ def _lift_reference_query(
             "ordinary_operations": sorted(operations),
             "structured_operations": ["loop", "effect_if", "value_if"],
             "mandatory_numeric_authoring": [
-                "Treat Source-TTIR math.fma as one typed fused event. Query its exact "
+                f"Treat {observer_name} math.fma as one typed fused event. Query its exact "
                 "def-use and operand/result types before decomposing it into available J ops.",
                 "When J has no scalar fma op, explicit cast nodes must reproduce the "
                 "observed fused operand width before the primary mul; do not infer that "
@@ -374,7 +462,7 @@ def _lift_reference_query(
                 "If the fused addend is one direct negation or zero-minus value, author "
                 "the final J arithmetic as sub(primary_product, positive_value), not "
                 "const-zero + neg + add. This is the canonical direct fma expansion.",
-                "Keep iota/index arithmetic at the exact Source-TTIR integer width. "
+                f"Keep iota/index arithmetic at the exact {observer_name} integer width. "
                 "Never widen logical indices merely because an unrelated ABI stride "
                 "carrier or pointer representation uses i64.",
             ],
@@ -441,14 +529,14 @@ file contains the exact differences for the named category.
 input/feedback_detail.json contains exact non-observer diagnostics. The previous
 artifact already exists at output/candidate.json and is never duplicated in input.
 After a formal Gate1 failure, only the bounded typed observer diff is returned.
-The preceding Replay source, Replay TTIR, agent context, and implementation choices
+The preceding Replay source, Replay compiler output, agent context, and implementation choices
 remain hidden; repair J/C only when Source plus the typed frontier proves that the
 current artifact is incomplete. Otherwise resubmit the unchanged artifact for a fresh
 source-blind Replay.
 Your own prior formal candidates are immutable under work/candidate_history/;
 consult or restore them when a repair regresses, but decide every edit yourself.
 Treat the first exact missing/extra operation only as an entry point: inspect its
-typed Source-TTIR neighborhood and the bounded anonymous local frontier against the
+typed selected-frontend Source/compiler neighborhood and the bounded anonymous local frontier against the
 current J node and boundary. The frontier describes a mismatch but does not expose
 the Replay implementation that produced it. Preserve cast order and operation spelling when they are semantic. If J
 already states the complete logical fact but Replay failed to realize it, do not add a
@@ -457,7 +545,9 @@ If independent fresh Replays vary only in addptr/address topology while the Sour
 memory ledger and current J access attachments have a unique tensor/kind/ordinal/index/
 predicate/effect correspondence, that is precisely the closed
 `access_representation_bindings.address_recomputed` case. Bind the existing accesses;
-do not edit J semantics or encode a Source pointer recipe in pi.
+include the exact null-logical-ref `carrier_ref:p*` and tensor `axis_ref` ownership
+when Source uses a stride/address carrier; do not edit J semantics or encode a
+Source pointer recipe in pi.
 Before editing local operations, check whether one omitted Source-visible loop,
 effect_if, early terminal branch, continuation, or effect region explains the
 downstream op/dataflow/predicate differences; if so, repair that complete J scope
@@ -486,8 +576,8 @@ after the complete candidate passes. Query a rejected relation's exact field nam
 
 _SOURCE_RECONCILE_CONTINUATION_PROMPT = """The source-aware necessary-condition preflight rejected the current exact candidate bytes.
 Read input/source_reconcile.json and revise only the model-authored J/C/pi facts whose
-closed obligations disagree with the immutable anonymous Source syntax or Source TTIR
-observation. A recurrence/control/mask presence diagnostic states only that the whole
+closed obligations disagree with the immutable anonymous Source syntax or selected
+frontend compiler observation. A recurrence/control/mask presence diagnostic states only that the whole
 J-owned construct is absent: recover its complete trip/carries/body/control/predicate
 from Source yourself; the host has not supplied a formula or patch. Pi has no
 occurrence/route graph: correct only a closed direct relation bound to existing J/C
@@ -509,16 +599,29 @@ not claim Gate membership.
 """
 
 
-def _source_aware_startup_context(workspace: Any, *, fresh_owner: bool) -> dict[str, Any]:
+def _source_aware_startup_context(
+    workspace: Any,
+    *,
+    fresh_owner: bool,
+    frontend: str | None = "triton",
+    source_kind: str = "python",
+) -> dict[str, Any]:
     """Return a path-only receipt; exact task state stays in ordinary files."""
 
+    selected_frontend = str(frontend or "triton").casefold()
     return {
         "protocol": "intentir.codex-lift-startup-view.v2",
         "fresh_owner": fresh_owner,
+        "frontend": selected_frontend,
+        "source_kind": source_kind,
         "paths": {
             "source": "input/source.py",
             "harness": "input/harness_view.json",
-            "source_observer": "input/source_ttir.json",
+            "source_observer": (
+                "input/source_ttir.json"
+                if selected_frontend == "triton"
+                else None
+            ),
             "source_query": "input/tools/context_query.py",
             "bounded_reference_query": (
                 "python .agents/intentir_agent_tool.py lift_reference"
@@ -719,21 +822,60 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             source,
             compiler_view=self.compiler_view,
             relift_context=self._relift_context(feedback),
-            source_symbol=self.source_symbol,
+            source_symbol=getattr(
+                source_program, "lift_source_symbol", self.source_symbol
+            ),
+            source_kind=getattr(
+                source_program, "lift_source_kind", self.source_kind
+            ),
+            source_parameter_order=tuple(
+                getattr(
+                    source_program,
+                    "lift_parameter_order",
+                    self.source_parameter_order,
+                )
+            ),
+            source_to_opaque=(
+                dict(
+                    getattr(
+                        source_program,
+                        "lift_source_to_opaque",
+                        self.source_to_opaque,
+                    )
+                )
+                if getattr(
+                    source_program,
+                    "lift_source_to_opaque",
+                    self.source_to_opaque,
+                ) is not None
+                else None
+            ),
+            frontend=getattr(request, "frontend", "triton"),
         )
         candidate_check_context = scrc_candidate_check_context(prepared)
         round_index = len(self._records) + 1
+        prepared_packet = json.loads(prepared.user_input)
+        selected_frontend = str(
+            getattr(request, "frontend", None)
+            or prepared_packet.get("frontend")
+            or "triton"
+        ).casefold()
+        selected_source_kind = str(
+            prepared_packet.get("source_kind", "python")
+        )
         if self._source_ttir_observation is None:
-            prepared_packet = json.loads(prepared.user_input)
             anonymous_source = prepared_packet.get("anonymous_source")
             anonymous_view = prepared_packet.get("harness_compiler_view")
-            self._source_ttir_observation = observe_anonymous_source_ttir(
-                anonymous_source,
-                anonymous_view,
-            )
+            if selected_frontend == "triton":
+                self._source_ttir_observation = observe_anonymous_source_ttir(
+                    anonymous_source,
+                    anonymous_view,
+                )
         files, references = _codex_input_files(
             prepared,
             source_ttir_observation=self._source_ttir_observation,
+            frontend=selected_frontend,
+            source_kind=selected_source_kind,
         )
         try:
             fresh_workspace = self._create_or_refresh_session_workspace(
@@ -883,14 +1025,30 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                         ],
                     }
                 else:
-                    result = reconcile_candidate_source_ttir(
+                    result = (
+                        reconcile_candidate_source_ttir(
+                            candidate_text,
+                            self._source_ttir_observation,
+                        )
+                        if self._source_ttir_observation is not None
+                        else {
+                            "status": "pass",
+                            "applicable": False,
+                            "diagnostics": [],
+                        }
+                    )
+            else:
+                result = (
+                    reconcile_candidate_source_ttir(
                         candidate_text,
                         self._source_ttir_observation,
                     )
-            else:
-                result = reconcile_candidate_source_ttir(
-                    candidate_text,
-                    self._source_ttir_observation,
+                    if self._source_ttir_observation is not None
+                    else {
+                        "status": "pass",
+                        "applicable": False,
+                        "diagnostics": [],
+                    }
                 )
             source_reconcile_results.append(
                 {
@@ -1137,7 +1295,9 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
             },
             argument_handlers={
                 "lift_reference": lambda arguments: _lift_reference_query(
-                    references, arguments
+                    references,
+                    arguments,
+                    frontend=selected_frontend,
                 )
             },
         )
@@ -1161,10 +1321,19 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                     effort=effective_effort,
                 )
             startup_context = _source_aware_startup_context(
-                workspace, fresh_owner=fresh_owner
+                workspace,
+                fresh_owner=fresh_owner,
+                frontend=selected_frontend,
+                source_kind=selected_source_kind,
             )
             prompt = (
-                (_INITIAL_PROMPT if fresh_owner else _EXTERNAL_CONTINUATION_PROMPT)
+                _codex_frontend_prompt(
+                    _INITIAL_PROMPT
+                    if fresh_owner
+                    else _EXTERNAL_CONTINUATION_PROMPT,
+                    frontend=selected_frontend,
+                    source_kind=selected_source_kind,
+                )
                 + "\n\n<source-aware-startup>\n"
                 + json.dumps(
                     startup_context,
@@ -1502,11 +1671,15 @@ class CodexCLILiftAdapter(MiniSWELiftAdapter):
                 diagnostic_ready_interrupts
             ),
             "tool_bridge": bridge.evidence,
-            "source_ttir_observation": {
-                key: value
-                for key, value in self._source_ttir_observation.items()
-                if key not in {"ttir", "fingerprint"}
-            },
+            "source_ttir_observation": (
+                {
+                    key: value
+                    for key, value in self._source_ttir_observation.items()
+                    if key not in {"ttir", "fingerprint"}
+                }
+                if self._source_ttir_observation is not None
+                else None
+            ),
             "isolation": {
                 "outer": "bubblewrap-host-fs-v1",
                 "input": "read-only",

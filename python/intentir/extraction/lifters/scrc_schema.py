@@ -1,4 +1,4 @@
-"""Responses schema for the LLM-direct ``J + pure C + pi`` Lift result.
+"""Responses schema for backend-neutral J plus Source C/pi Lift evidence.
 
 The local :class:`Gate1Artifact` parser remains authoritative.  This schema is
 the wire contract given to the model so closed Gate1 objects do not drift into
@@ -12,7 +12,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from intentir.ir.intent_op_contract import intent_op_json_schema
+from intentir.ir.dimension_relation import DIMENSION_RELATION_CONST_OPS
+from intentir.ir.intent_op_contract import LOGICAL_DTYPES, intent_op_json_schema
 from intentir.verify.gate1.model import (
     BOUNDARY_ACCESS_REQUIRED_FIELDS,
     BOUNDARY_WIRE_FIELDS,
@@ -25,16 +26,10 @@ from intentir.verify.gate1.model import (
 from intentir.verify.gate1.pi import (
     ACCESS_REPRESENTATION_BINDING_RELATIONS,
     CONTROL_BINDING_RELATIONS,
-    ITERATION_BASES,
     ITERATION_BINDING_RELATIONS,
     MATERIALIZATION_BINDING_RELATIONS,
     NORMALIZATION_WITNESS_SCHEMA,
-    PHYSICAL_ITERATION_DIRECTIONS,
     PROGRAM_BINDING_RELATIONS,
-    REALIZATION_MECHANISMS,
-    REPRESENTATION_REFINEMENTS,
-    render_realization_mechanism_grammar,
-    render_realization_witness_wire_grammar,
 )
 
 
@@ -64,11 +59,19 @@ def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 _STRING = {"type": "string", "minLength": 1}
+_LOGICAL_DTYPE = {"type": "string", "enum": sorted(LOGICAL_DTYPES)}
 _TENSOR_HANDLE = {"type": "string", "pattern": "^t[0-9]+$"}
 _NODE_HANDLE = {"type": "string", "pattern": "^n[0-9]+$"}
 _C_HANDLE = {"type": "string", "pattern": "^c[0-9]+$"}
-_C_SUBJECT_HANDLE = {"type": "string", "pattern": "^[tndaqb][0-9]+$"}
+_C_SUBJECT_HANDLE = {"type": "string", "pattern": "^[tndaequb][0-9]+$"}
 _PARAMETER_HANDLE = {"type": "string", "pattern": "^p[0-9]+$"}
+_LOGICAL_DIMENSION_STRING = {
+    "type": "string",
+    "minLength": 1,
+    "not": {
+        "pattern": r"(^|[^A-Za-z0-9_])p[0-9]+($|[^A-Za-z0-9_])",
+    },
+}
 _PORTABLE_PREDICATE_STRING = {
     "type": "string",
     "minLength": 1,
@@ -94,7 +97,9 @@ _DIMENSION_CONSTRAINT_STRING = {
     ),
 }
 _STRING_ARRAY = _array(_STRING)
-_INT_OR_STRING = {"anyOf": [{"type": "integer"}, _STRING]}
+_INT_OR_STRING = {
+    "anyOf": [{"type": "integer"}, _LOGICAL_DIMENSION_STRING]
+}
 
 
 def render_semantic_archive_wire_grammar() -> str:
@@ -116,6 +121,33 @@ def render_semantic_archive_wire_grammar() -> str:
         "When one Source scalar is both logical rank-0 data and a shape extent, "
         "keep the t* value and x* dimension distinct and explicitly declare "
         "their equality in value_dimension_relations; fixed code never creates it. "
+        "The logical tensor ABI is ordered: declare every fixed input/inout in "
+        "intent_function.inputs before declaring output-only tensors in "
+        "intent_function.outputs. Optional scalar/constexpr parameters proven to "
+        "be logical rank-0 values are inserted after all fixed inputs and before "
+        "outputs, in physical ABI order. Allocate one gap-free final t* sequence "
+        "from that order; an inout output repeats its existing input t* and does "
+        "not consume a new handle. The physical output order is authoritative; "
+        "never use a baseline output t* that could be shifted by a later scalar "
+        "decision. Do not place a later input after an "
+        "output-only tensor merely because the physical parameter order differs. "
+        "The C slots array is also ordered: preserve the exact declaration order "
+        "supplied by layer_c_declarations.slot_order and never sort c* names by "
+        "their numeric suffix. "
+        "Boundary domain coordinates k* are one global logical namespace, not "
+        "fresh per-domain rank positions. Reuse a k* only for the same logical "
+        "coordinate with the same extent in every domain that uses it. If two "
+        "independent domains have different extents, give them different k* "
+        "handles and update every associated access, predicate, and domain "
+        "expression together; never repair the conflict with a concrete shape. "
+        "Known IntentOp contracts are closed: a contraction attrs object contains "
+        "only its canonical subscripts field. An implementation accumulation "
+        "choice is represented, when justified, by a typed boundary "
+        "realization_authorization, never by an accumulation_dtype op attribute. "
+        "The closed map_unary spelling for boolean complement is logical_not; "
+        "the bare function name not has no lowering. Axis_ref fields in C and "
+        "pi use only an integer ordinal or an x* dimension handle; k* names are "
+        "ContractExpr coordinates and are not valid axis_ref values. "
         "Every semantic loop has exactly one corresponding loop_region scope. "
         "Every effect_if has two explicit positive/negative arms bound to "
         "distinct sibling branch_region scopes. Either arm body may be empty; "
@@ -134,7 +166,17 @@ def render_semantic_archive_wire_grammar() -> str:
         "loop-carried state. write_once requires exactly one matching boundary "
         "write event; producing an SSA value is not such an event. Every loop "
         "state requires one storage object binding its state, body, next and "
-        "result values plus a non-literal init value, if any, across iterations."
+        "result values plus a non-literal init value, if any, across iterations. "
+        "Storage event references are kind-specific: scope_entry/scope_exit "
+        "use q* scopes, node uses a stable n* node, access uses a* access, "
+        "effect uses e* effect, and state uses the exact state_id declared by a "
+        "loop carry. A tensor t* or ordinary SSA value v* is never a storage "
+        "event reference. A realization authorization is a J anchor with a "
+        "gap-free declaration-order id u0,u1,...; r* is not an authorization id. "
+        "Native-atomic authorization is reserved for an actual atomic scatter "
+        "node and names that stable scatter n*, never an ordinary map node, "
+        "access, or effect. Aliases relate two distinct handles; an inout "
+        "handle is not a self-alias."
     )
 
 
@@ -142,10 +184,18 @@ def _tensor_schema() -> dict[str, Any]:
     return _closed_object(
         {
             "name": _TENSOR_HANDLE,
-            "dtype": _STRING,
+            "dtype": _LOGICAL_DTYPE,
             "shape": _array(_INT_OR_STRING),
         },
         ("name", "dtype", "shape"),
+        description=(
+            "Logical tensor shape handles are assigned x0,x1,... at first "
+            "appearance across the complete inputs-then-outputs ABI and then "
+            "reused. Do not swap or gap x* names, and do not replace an "
+            "uncontracted rank extent with a hidden concrete value such as 1. "
+            "A rank-1 tensor remains rank 1 even when its concrete shape is [1]; "
+            "it is not a rank-0 logical scalar."
+        ),
     )
 
 
@@ -181,12 +231,7 @@ def _dimension_relation_schema() -> dict[str, Any]:
         {
             "op": {
                 "type": "string",
-                "enum": [
-                    "add_const",
-                    "mul_const",
-                    "ceil_div_const",
-                    "round_up_const",
-                ],
+                "enum": sorted(DIMENSION_RELATION_CONST_OPS),
             },
             "arg": dimension,
             "value": {"type": "integer", "minimum": 1},
@@ -220,8 +265,14 @@ def _intent_schema() -> dict[str, Any]:
         {"output": _STRING, "value": _STRING},
         ("output", "value"),
         description=(
-            "Layer-A value-to-result binding. Destination aliasing and partial "
-            "write behavior belong only to the canonical J boundary."
+            "Layer-A value-to-result binding in the function ABI. When the "
+            "returns array is present, it is complete: it contains exactly "
+            "one entry for every declared output, in the same order as "
+            "IntentFunction.outputs, with no omissions or duplicates. "
+            "Destination aliasing and partial-write behavior belong only to "
+            "the canonical J boundary. If the same output also has a boundary "
+            "output_mapping, its value must be exactly identical; the mapping "
+            "does not override or replace this ABI entry."
         ),
     )
     function = _closed_object(
@@ -232,7 +283,19 @@ def _intent_schema() -> dict[str, Any]:
             "returns": _array(logical_return),
             "body": _array({"$ref": "#/$defs/intent_op"}),
         },
-        ("name", "inputs", "outputs", "body"),
+        ("name", "inputs", "outputs", "returns", "body"),
+        description=(
+            "inputs is the complete logical input ABI and precedes all "
+            "output-only tensors in outputs. Assign t* handles by first "
+            "appearance across inputs then outputs; an inout output repeats "
+            "its input handle and does not allocate a new t*. Prefer a complete "
+            "returns array for every output; it is mandatory even when empty. Its output "
+            "handles must follow the declared output ABI order exactly. A "
+            "boundary output_mapping is a separate sparse store/post-state "
+            "anchor; it may coexist for the same output only with the exact "
+            "same value, never an alternative value or a missing returns ABI "
+            "entry."
+        ),
     )
     return _closed_object(
         {"intent_function": function}, ("intent_function",)
@@ -265,7 +328,10 @@ def _boundary_schema() -> dict[str, Any]:
             "fill_value is legal only on a load with a non-null predicate. An "
             "unconditional access uses the unique canonical spelling with both "
             "predicate and fill_value absent/null; consumers reject rather than "
-            "silently erase an orphan fill_value."
+            "silently erase an orphan fill_value. For a mode=inout logical "
+            "tensor, the authored boundary must contain a matching pre-state "
+            "load and post-state store with read/write effects; an output mapping "
+            "alone is not a store."
         ),
     )
     access["allOf"] = [
@@ -292,6 +358,14 @@ def _boundary_schema() -> dict[str, Any]:
             "axes": _array(_INT_OR_STRING),
         },
         ("node_ref", "operand", "axes"),
+        description=(
+            "Implicit operand-broadcast annotation for one map_binary or "
+            "select node only. node_ref must name that node and operand must "
+            "be one of its operands. Never emit a boundary.broadcasts entry "
+            "for an explicit broadcast_in_dim node, reshape, transpose, or "
+            "any other operation: the explicit operation's own attributes "
+            "already carry that transformation."
+        ),
     )
     access_guard_relation = _closed_object(
         {
@@ -321,6 +395,11 @@ def _boundary_schema() -> dict[str, Any]:
             },
         },
         ("left", "right", "kind"),
+        description=(
+            "One source-established relation between two distinct J handles. "
+            "Do not emit a self-alias such as left=right; inout identity is "
+            "represented by reusing the tensor handle in inputs and outputs."
+        ),
     )
     effect = _closed_object(
         {
@@ -348,10 +427,14 @@ def _boundary_schema() -> dict[str, Any]:
         },
         ("output", "value"),
         description=(
-            "One authored canonical output binding. It may be the sole "
-            "non-identity destination relation; when IntentFunction.returns "
-            "also binds this output, both values must agree exactly. When an "
-            "op directly produces the same output handle, leave "
+            "One optional sparse authored canonical output binding, normally "
+            "used to anchor an inout post-state or a boundary store producer. "
+            "When IntentFunction.returns is present, returns remains a complete "
+            "output-ABI list; if this output is also listed there, both entries "
+            "must use exactly the same value. Never use output_mappings to "
+            "replace a missing returns entry or to override it with a different "
+            "value. When an inout output returns the same logical handle and no "
+            "boundary store/post-state anchor is needed, leave "
             "output_mappings empty."
         ),
     )
@@ -359,19 +442,18 @@ def _boundary_schema() -> dict[str, Any]:
         {
             "node_ref": _STRING,
             "tile_axis": _INT_OR_STRING,
-            "identity": {},
+            "identity": {"not": {"type": "null"}},
         },
         ("node_ref", "tile_axis", "identity"),
         description=(
             "Reduce or inclusive-scan algebra and frontend-local tile-axis "
-            "metadata. artifact.v4+ forbids the historical "
-            "masked_contribution field: consumer_extensions is the unique "
-            "authority for physical outside-domain contributions."
+            "metadata. consumer_extensions is the unique authority for "
+            "physical outside-domain contributions."
         ),
     )
     typed_outside = _closed_object(
         {
-            "dtype": _STRING,
+            "dtype": _LOGICAL_DTYPE,
             "value": {
                 "anyOf": [
                     {"type": "boolean"},
@@ -407,7 +489,8 @@ def _boundary_schema() -> dict[str, Any]:
             "One LLM-authored Layer-B relation from a predicate-bearing load "
             "access to one reduce/scan operand. The referenced BoundaryAccess "
             "continues to own the predicate; no predicate is promoted to "
-            "Layer-A SSA. v4 closes only two-sided sum/max/min identities."
+            "Layer-A SSA. The relation supports only two-sided sum/max/min "
+            "identities."
         ),
     )
     index_bounds = _closed_object(
@@ -445,8 +528,16 @@ def _boundary_schema() -> dict[str, Any]:
             "duplicate_policy", "order",
         ),
         description=(
-            "Logical update only. Atomic/CAS/thread ownership are realization "
-            "choices and must not appear here."
+            "Only describes one actual J op=scatter with mode=along_axis. "
+            "node_ref, base, indices, values, axis, and combiner must match "
+            "that scatter exactly, and the scatter must have one matching "
+            "IndexBoundsSpec. combiner=overwrite corresponds to scatter "
+            "reduce=none and combiner=add to reduce=add. Do not use this "
+            "entry for update_slice, a loop-carried update, a static affine "
+            "inout store, or an ordinary store; those remain represented by "
+            "their J operation plus the matching access/effect/output mapping. "
+            "Atomic/CAS/thread ownership are realization choices and must not "
+            "appear here."
         ),
     )
     result_relation = _closed_object(
@@ -488,7 +579,14 @@ def _boundary_schema() -> dict[str, Any]:
         ("auth_id", "kind", "subject_ref"),
         description=(
             "J/B-owned authorization for one sensitive representation choice. "
-            "Compact pi cannot cite, extend, or redefine this semantic contract."
+            "Ids are declaration-ordered u0,u1,... and never r*. The subject "
+            "must be an existing J carrier. For accumulation_dtype, do not add "
+            "an accumulation_dtype field to contraction attrs; if a typed pair "
+            "is emitted, source_dtype describes the subject J carrier/result "
+            "dtype rather than a physical input operand dtype. native_atomic "
+            "must name the stable n* of an actual atomic scatter, not an access, "
+            "effect, or ordinary map node. Compact pi cannot cite, extend, or "
+            "redefine this semantic contract."
         ),
     )
     return _closed_object(
@@ -499,7 +597,10 @@ def _boundary_schema() -> dict[str, Any]:
                 "additionalProperties": _PORTABLE_PREDICATE_STRING,
                 "description": (
                     "Map each d* handle directly to one ContractExpr string. "
-                    "Never emit an axes/members/domain object here."
+                    "Never emit an axes/members/domain object here. k* axes "
+                    "are global logical coordinates: reuse one only for the "
+                    "same logical axis and extent; distinct extents require "
+                    "distinct k* names in all matching accesses and predicates."
                 ),
             },
             "accesses": _array(access),
@@ -532,10 +633,24 @@ def _signature_schema() -> dict[str, Any]:
                 "type": "string",
                 "enum": ["input", "output", "inout", "value"],
             },
+            # A tensor/pointer or a parameter with logical_ref is part of the
+            # logical J ABI and therefore uses the closed dtype set.  An
+            # unbound scalar/constexpr/opaque carrier is source/compiler
+            # plumbing; its public spelling is intentionally allowed to remain
+            # a non-empty string (for example ``str`` in the trusted compiler
+            # view).  The conditional below keeps this wire schema aligned
+            # with SignatureParameter.__post_init__.
             "dtype": _nullable(_STRING),
             "rank": _nullable({"type": "integer", "minimum": 0}),
             "alias_of": _nullable(_STRING),
-            "logical_ref": _nullable(_STRING),
+            "logical_ref": _nullable(
+                {
+                    "anyOf": [
+                        _TENSOR_HANDLE,
+                        {"type": "string", "pattern": r"^x[0-9]+$"},
+                    ]
+                }
+            ),
         },
         ("name", "kind", "mode"),
         description=(
@@ -567,9 +682,38 @@ def _signature_schema() -> dict[str, Any]:
             "fixed code, owns that semantic classification. The carrier is neither "
             "Layer-A data nor a C/backend choice. An opaque parameter is "
             "representation-only frontend plumbing such as cute.CopyAtom; it "
-            "has dtype but no logical_ref and contributes no J semantics."
+            "has dtype but no logical_ref and contributes no J semantics. A tensor "
+            "parameter keeps its trusted rank even when a hidden concrete extent "
+            "is one: a rank-1 tensor with shape [1] is not a rank-0 logical scalar."
         ),
     )
+    parameter["allOf"] = [
+        {
+            "if": {
+                "anyOf": [
+                    {
+                        "required": ["kind"],
+                        "properties": {
+                            "kind": {"enum": ["tensor", "pointer"]},
+                        },
+                    },
+                    {
+                        "required": ["logical_ref"],
+                        "properties": {
+                            "logical_ref": {
+                                "type": "string",
+                                "pattern": r"^(?:t|x)[0-9]+$",
+                            },
+                        },
+                    },
+                ],
+            },
+            "then": {
+                "required": ["dtype"],
+                "properties": {"dtype": _LOGICAL_DTYPE},
+            },
+        }
+    ]
     return _closed_object(
         {"parameters": _array(parameter)},
         ("parameters",),
@@ -592,6 +736,17 @@ def _c_schema() -> dict[str, Any]:
             "role": {
                 "type": "string",
                 "pattern": "^[a-z][a-z0-9_]*$",
+                "description": (
+                    "Required for every C slot. For kind=compiler it is the "
+                    "trusted compiler role and must be copied exactly. For "
+                    "kind=constexpr it is a concise source-derived scheduling "
+                    "label, or constexpr when no such label is justified; it "
+                    "must remain lower_snake_case scheduling metadata rather "
+                    "than prose, a Source identifier, an operator/predicate/"
+                    "strategy/API label, or a semantic explanation. When a slot "
+                    "is used as pi.iteration_bindings.tile_slot, its role must "
+                    "be exactly tile_extent or reduction_tile_extent."
+                ),
             },
             "value_type": _STRING,
             "required": {"type": "boolean"},
@@ -599,9 +754,11 @@ def _c_schema() -> dict[str, Any]:
                 **_C_SUBJECT_HANDLE,
                 "description": (
                     "Optional source-neutral attachment to one declared J "
-                    "tensor/node/domain/access/scope/storage subject. It is not a "
-                    "transformation permission or source binding. Compiler-kind "
-                    "slots must omit subject_ref and axis_ref."
+                    "tensor/node/domain/access/effect/scope/authorization/storage "
+                    "subject. Effect, scope, authorization, and storage subjects "
+                    "are axis-free. It is not a transformation permission or "
+                    "source binding. Compiler-kind slots must omit subject_ref "
+                    "and axis_ref."
                 ),
             },
             "axis_ref": {
@@ -610,16 +767,42 @@ def _c_schema() -> dict[str, Any]:
                     {"type": "string", "pattern": "^x[0-9]+$"},
                 ],
                 "description": (
-                    "Optional logical axis in AxisRefs_v1(J,subject_ref); "
-                    "requires subject_ref and never names a physical axis."
+                    "Optional logical axis in AxisRefs(J,subject_ref), "
+                    "encoded only as a non-negative integer ordinal or an x* "
+                    "dimension handle. It requires subject_ref and never uses "
+                    "a k* ContractExpr coordinate or a physical axis name."
                 ),
             },
         },
         ("name", "kind", "role"),
     )
+    slot["allOf"] = [
+        {
+            "if": {
+                "properties": {"kind": {"const": "compiler"}},
+                "required": ["kind"],
+            },
+            "then": {
+                "not": {
+                    "anyOf": [
+                        {"required": ["subject_ref"]},
+                        {"required": ["axis_ref"]},
+                    ]
+                }
+            },
+        }
+    ]
     return _closed_object(
         {
-            "slots": _array(slot),
+            "slots": {
+                **_array(slot),
+                "description": (
+                    "Ordered declarations for this selected frontend. Preserve the exact order "
+                    "of the supplied layer_c_declarations.slot_order; the list "
+                    "is not sorted by the numeric suffix of c* handles. "
+                    "CandidateCheck, Decode, and the frontend compiler use this same order."
+                ),
+            },
             "values": {
                 "type": "object",
                 "propertyNames": {"pattern": "^c[0-9]+$"},
@@ -631,401 +814,21 @@ def _c_schema() -> dict[str, Any]:
                         {"type": "string"},
                     ]
                 },
+                "description": (
+                    "C values are the exact scalar bindings for this selected "
+                    "frontend/Harness compilation. They are independent of J "
+                    "semantics, must use the declared c* slots, and must not be "
+                    "reconstructed from a target backend or moved into J/pi."
+                ),
             },
         },
         ("slots", "values"),
-    )
-
-
-def _legacy_pi_schema() -> dict[str, Any]:
-    opaque_ref = {
-        "type": "string",
-        "pattern": "^(t|n|a|d|e|q|b|s|v|p|c|x)[0-9]+$",
-    }
-    region = _closed_object(
-        {
-            "id": {"type": "string", "pattern": "^r[0-9]+$"},
-            "parent": _nullable({"type": "string", "pattern": "^r[0-9]+$"}),
-            "placement": {
-                "type": "string", "enum": ["root", "program", "loop", "branch"],
-            },
-        },
-        ("id", "parent", "placement"),
-    )
-    instance = _closed_object(
-        {
-            "id": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": (
-                    "Declaration-order pi graph-node ID. This is the only ID "
-                    "namespace allowed at route/order/sharing endpoints."
-                ),
-            },
-            "semantic_ref": {
-                **opaque_ref,
-                "description": (
-                    "Anchor into a declared anonymous J/C handle. "
-                    "It is not a pi graph-node ID and never appears directly "
-                    "at route/order/sharing endpoints."
-                ),
-            },
-            "region": {"type": "string", "pattern": "^r[0-9]+$"},
-            "mechanism": {
-                "type": "string",
-                "enum": list(REALIZATION_MECHANISMS),
-                "description": render_realization_mechanism_grammar(),
-            },
-        },
-        ("id", "semantic_ref", "region", "mechanism"),
-    )
-    route = _closed_object(
-        {
-            "source": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": "A previously declared pi instance ID, never a raw anchor handle.",
-            },
-            "target": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": "A previously declared pi instance ID, never a raw anchor handle.",
-            },
-            "slots": {
-                "type": "array",
-                "items": {"type": "integer", "minimum": 0},
-                "uniqueItems": True,
-            },
-        },
-        ("source", "target", "slots"),
-    )
-    program_axis = _closed_object(
-        {
-            "domain_ref": {
-                "type": "string",
-                "pattern": "^d[0-9]+$",
-                "description": (
-                    "J boundary domain anchoring one compiler-visible program "
-                    "coordinate."
-                ),
-            },
-            "axis": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 2,
-                "description": (
-                    "Exact physical launch-axis identity; never inferred from "
-                    "grid extent, declaration order, C, or instance multiplicity."
-                ),
-            },
-        },
-        ("domain_ref", "axis"),
         description=(
-            "A closed pi-owned binding from one J domain program-coordinate "
-            "identity to physical launch axis 0, 1, or 2. It carries no grid "
-            "extent, Source spelling, frontend API, or logical J semantics."
-        ),
-    )
-    program_linearization = _closed_object(
-        {
-            "domain_ref": {
-                "type": "string",
-                "pattern": "^d[0-9]+$",
-                "description": "The J domain whose bound physical program coordinate is decoded.",
-            },
-            "dimension_refs": {
-                "type": "array",
-                "items": {"type": "string", "pattern": "^x[0-9]+$"},
-                "minItems": 1,
-                "uniqueItems": True,
-                "description": (
-                    "Outer-to-inner J dimension handles for the fixed row-major "
-                    "mixed-radix quotient/remainder projection."
-                ),
-            },
-        },
-        ("domain_ref", "dimension_refs"),
-        description=(
-            "A source-neutral mixed-radix realization of one bound program "
-            "coordinate. It contains no formula, value, predicate, Source spelling, "
-            "frontend API, or target recipe."
-        ),
-    )
-    route_extent_transform = _closed_object(
-        {
-            "source": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": (
-                    "Instance anchored to one required positive-integer C extent slot."
-                ),
-            },
-            "target": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": (
-                    "Instance anchored to the C-attached J domain realization."
-                ),
-            },
-            "slot": {"type": "integer", "minimum": 0},
-            "divisor": {"type": "integer", "minimum": 2},
-            "rounding": {"type": "string", "enum": ["floor", "ceil"]},
-        },
-        ("source", "target", "slot", "divisor", "rounding"),
-        description=(
-            "A closed representation-only extent partition on one existing pi "
-            "route slot. It does not create J shape/domain/predicate semantics and "
-            "contains no Source spelling or frontend API."
-        ),
-    )
-    order = _closed_object(
-        {
-            "before": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": "A declared pi instance ID.",
-            },
-            "after": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": "A declared pi instance ID.",
-            },
-        },
-        ("before", "after"),
-    )
-    sharing = _closed_object(
-        {
-            "source": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": "The declared pi instance reused by all consumers.",
-            },
-            "consumers": {
-                "type": "array",
-                "items": {
-                    "type": "string",
-                    "pattern": "^i[0-9]+$",
-                    "description": "A declared pi consumer instance ID.",
-                },
-                "minItems": 1,
-                "uniqueItems": True,
-            },
-        },
-        ("source", "consumers"),
-    )
-    refinement = _closed_object(
-        {
-            "instance": {"type": "string", "pattern": "^i[0-9]+$"},
-            "kind": {
-                "type": "string",
-                "enum": list(REPRESENTATION_REFINEMENTS),
-            },
-            "auth_ref": _nullable(
-                {"type": "string", "pattern": "^u[0-9]+$"}
-            ),
-        },
-        ("instance", "kind", "auth_ref"),
-        description=(
-            "A representation refinement. Sensitive kinds cite one J/B-owned "
-            "authorization; identity materialization uses the verifier's closed "
-            "global-safe rule."
-        ),
-    )
-    iteration = _closed_object(
-        {
-            "region": {"type": "string", "pattern": "^r[0-9]+$"},
-            "loop_instance": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": (
-                    "Instance anchored to the J structured loop realized by "
-                    "this physical loop region."
-                ),
-            },
-            "tile_instance": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": (
-                    "Instance anchored to the matching integer C tile slot."
-                ),
-            },
-            "induction_basis": {
-                "type": "string",
-                "enum": list(ITERATION_BASES),
-            },
-        },
-        ("region", "loop_instance", "tile_instance", "induction_basis"),
-        description=(
-            "A source-neutral physical induction-space relation. It contains "
-            "no bound expression, numeric value, operator, source text, or "
-            "frontend API."
-        ),
-    )
-    loop_carrier = _closed_object(
-        {
-            "region": {"type": "string", "pattern": "^r[0-9]+$"},
-            "loop_instance": {"type": "string", "pattern": "^i[0-9]+$"},
-            "init": {"type": "string", "pattern": "^i[0-9]+$"},
-            "state": {"type": "string", "pattern": "^i[0-9]+$"},
-            "next": {"type": "string", "pattern": "^i[0-9]+$"},
-            "result": {"type": "string", "pattern": "^i[0-9]+$"},
-        },
-        ("region", "loop_instance", "init", "state", "next", "result"),
-        description=(
-            "One declaration-ordered physical loop-carrier slot. Its temporal "
-            "denotation is state[0]=init, state[k+1]=next[k], and "
-            "result=state[T], including T=0. state and next are distinct physical "
-            "occurrences joined by an ordinary route; next-to-state temporal and "
-            "loop-exit result edges are implicit in this relation."
-        ),
-    )
-    physical_iteration = _closed_object(
-        {
-            "region": {"type": "string", "pattern": "^r[0-9]+$"},
-            "body_instance": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": (
-                    "Instance anchored to one existing non-loop J "
-                    "reduce/contraction or boundary access/domain realized by "
-                    "this physical-only loop region."
-                ),
-            },
-            "tile_instance": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-                "description": (
-                    "Instance anchored to the required positive integer C tile "
-                    "attached to the same J node and axis."
-                ),
-            },
-            "induction_basis": {
-                "type": "string",
-                "enum": list(ITERATION_BASES),
-            },
-            "direction": {
-                "type": "string",
-                "enum": list(PHYSICAL_ITERATION_DIRECTIONS),
-            },
-        },
-        (
-            "region",
-            "body_instance",
-            "tile_instance",
-            "induction_basis",
-            "direction",
-        ),
-        description=(
-            "A physical iteration shell for an existing logical operation or "
-            "boundary traversal with a closed dependent axis. It adds no J loop, "
-            "bound formula, numeric value, operator, source text, or frontend API."
-        ),
-    )
-    physical_loop_carrier = _closed_object(
-        {
-            "region": {"type": "string", "pattern": "^r[0-9]+$"},
-            "init": {"type": "string", "pattern": "^i[0-9]+$"},
-            "state": {"type": "string", "pattern": "^i[0-9]+$"},
-            "next": {"type": "string", "pattern": "^i[0-9]+$"},
-            "result": {"type": "string", "pattern": "^i[0-9]+$"},
-        },
-        ("region", "init", "state", "next", "result"),
-        description=(
-            "One typed physical carrier in a physical_iterations region. "
-            "init/state/next/result are distinct temporal occurrences; init -> state "
-            "and state -> next are ordinary pi routes, while next-to-state temporal "
-            "and loop-exit result edges are implicit. Roles may anchor the same J "
-            "semantic value and carry no update formula or frontend spelling."
-        ),
-    )
-    effect_terminal_control = _closed_object(
-        {
-            "terminal_instance": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-            },
-            "continuation_instance": {
-                "type": "string",
-                "pattern": "^i[0-9]+$",
-            },
-        },
-        ("terminal_instance", "continuation_instance"),
-        description=(
-            "One source-neutral terminal-control topology relation. The two "
-            "instances must anchor distinct sibling effect_if arm scopes; the "
-            "terminal arm ends the current kernel invocation and the continuation "
-            "arm carries the remaining lexical computation. No predicate, "
-            "polarity, return value, source spelling, or frontend API is present."
-        ),
-    )
-    domain_terminal_control = _closed_object(
-        {
-            "domain_ref": {
-                "type": "string",
-                "pattern": "^d[0-9]+$",
-            },
-            "continuation_region": {
-                "type": "string",
-                "pattern": "^r[0-9]+$",
-            },
-        },
-        ("domain_ref", "continuation_region"),
-        description=(
-            "One source-neutral program-domain terminal relation. The named "
-            "placement=branch continuation region must already be controlled by "
-            "an empty-slot route from the same J domain realization. Coordinates "
-            "outside that J domain terminate the current invocation. The relation "
-            "contains no predicate, polarity, return value, source spelling, or "
-            "frontend API."
-        ),
-    )
-    terminal_control = {
-        "oneOf": [effect_terminal_control, domain_terminal_control],
-        "description": (
-            "Either terminal-versus-continuation topology for an authored J "
-            "effect_if, or the terminal complement of an existing J-domain-owned "
-            "continuation region. Both forms depend on J and carry no condition."
-        ),
-    }
-    return _closed_object(
-        {
-            "regions": _array(region),
-            "instances": _array(instance),
-            "routes": _array(route),
-            "program_axes": _array(program_axis),
-            "program_linearizations": _array(program_linearization),
-            "route_extent_transforms": _array(route_extent_transform),
-            "order": _array(order),
-            "sharing": _array(sharing),
-            "refinements": _array(refinement),
-            "iterations": _array(iteration),
-            "loop_carriers": _array(loop_carrier),
-            "physical_iterations": _array(physical_iteration),
-            "physical_loop_carriers": _array(physical_loop_carrier),
-            "terminal_controls": _array(terminal_control),
-        },
-        (
-            "regions",
-            "instances",
-            "routes",
-            "program_axes",
-            "route_extent_transforms",
-            "order",
-            "sharing",
-            "refinements",
-            "iterations",
-            "loop_carriers",
-            "physical_iterations",
-            "physical_loop_carriers",
-            "terminal_controls",
-        ),
-        description=(
-            render_realization_witness_wire_grammar()
-            + " "
-            + render_realization_mechanism_grammar()
-            + " Preserve route/order/share/region multiplicity. Apart from the "
-            "closed route-extent divisor/rounding, no operator or value; never a "
-            "predicate, dtype, frontend API, rule identity or source text."
+            "C_source is the selected frontend's complete source realization "
+            "interface: declaration order, kind, type, role, attachments, and "
+            "scalar values. It is not J and is not a portable target-lowering "
+            "plugin; CUDA/RISC-V/other C_target choices remain downstream of "
+            "canonical J."
         ),
     )
 
@@ -1034,9 +837,9 @@ def _pi_schema() -> dict[str, Any]:
     """Active, certification-only pi subwire offered to Lift.
 
     Every accepted field has a closed typed meaning and binds directly to J/C.
-    The legacy realization graph is intentionally absent: new Lift candidates do
-    not serialize regions, instances, routes, carriers, source nodes, or target
-    recipes.
+    The full post-BindSource realization graph is intentionally absent: new Lift
+    candidates do not serialize regions, instances, routes, carriers, source
+    nodes, or target recipes.
     """
 
     program_axis = _closed_object(
@@ -1059,7 +862,11 @@ def _pi_schema() -> dict[str, Any]:
         "oneOf": [
             {"type": "integer", "minimum": 0},
             {"type": "string", "pattern": "^x[0-9]+$"},
-        ]
+        ],
+        "description": (
+            "Logical subject-axis reference: integer ordinal or x* dimension; "
+            "never a k* boundary coordinate."
+        ),
     }
     program_logical_axis = _closed_object(
         {
@@ -1070,6 +877,15 @@ def _pi_schema() -> dict[str, Any]:
     )
     program_binding = _closed_object(
         {
+            "axis": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2,
+                "description": (
+                    "Observed physical launch axis for this one closed program "
+                    "coordinate; it is part of the same mapping as relation."
+                ),
+            },
             "relation": {
                 "type": "string",
                 "enum": list(PROGRAM_BINDING_RELATIONS),
@@ -1080,11 +896,11 @@ def _pi_schema() -> dict[str, Any]:
                 "items": program_logical_axis,
             },
         },
-        ("relation", "logical_axes"),
+        ("axis", "relation", "logical_axes"),
         description=(
-            "One observed physical program coordinate, classified by a closed "
-            "relation over the named J domain axes. No physical Source/Replay "
-            "axis identity or coordinate formula is authored."
+            "One observed physical program coordinate, including its closed "
+            "launch-axis identity and its relation over named J domain axes. "
+            "No Source/Replay node identity or coordinate formula is authored."
         ),
     )
     iteration_logical_axis = _closed_object(
@@ -1116,7 +932,12 @@ def _pi_schema() -> dict[str, Any]:
         ("relation", "logical_axes", "tile_slot", "mode_slot"),
         description=(
             "Closed equivalence between serial/program tiled realization and "
-            "the named J logical axes under one explicitly attached C tile."
+            "the named J logical axes under one explicitly attached C tile. "
+            "logical_axes.subject_ref is only a declared J domain d* or node "
+            "n* (a tiled_domain uses d*; a tiled_recurrence uses an authored "
+            "loop n*), never a tensor t* or SSA value v*. The referenced "
+            "tile_slot must have role tile_extent or reduction_tile_extent and "
+            "must be attached to the same logical axis."
         ),
     )
 
@@ -1141,18 +962,43 @@ def _pi_schema() -> dict[str, Any]:
     materialization_binding = anchor_binding(
         relation_values=MATERIALIZATION_BINDING_RELATIONS,
         field="value_ref",
-        pattern="^(?:t|n|s|v)[0-9]+$",
+        pattern="^(?:t|n|v)[0-9]+$",
         description="Closed scratch/recompute representation bound to one J value.",
     )
-    access_binding = anchor_binding(
-        relation_values=ACCESS_REPRESENTATION_BINDING_RELATIONS,
-        field="access_ref",
-        pattern="^a[0-9]+$",
+    access_binding = _closed_object(
+        {
+            "relation": {
+                "type": "string",
+                "enum": list(ACCESS_REPRESENTATION_BINDING_RELATIONS),
+            },
+            "access_ref": {"type": "string", "pattern": "^a[0-9]+$"},
+            "carrier_ref": {"type": "string", "pattern": "^p[0-9]+$"},
+            "axis_ref": {"type": "integer", "minimum": 0},
+        },
+        ("relation", "access_ref"),
         description=(
             "Closed pointer/address representation bound to one J access; tensor, "
-            "logical index, predicate and effect remain hard."
+            "logical index, predicate and effect remain hard. For address_recomputed "
+            "and pointer_advanced, carrier_ref names the null-logical-ref scalar "
+            "p* ABI carrier and axis_ref names its non-negative tensor axis."
         ),
     )
+    access_binding["allOf"] = [
+        {
+            "if": {
+                "properties": {
+                    "relation": {
+                        "enum": [
+                            "address_recomputed",
+                            "pointer_advanced",
+                        ]
+                    }
+                },
+                "required": ["relation"],
+            },
+            "then": {"required": ["carrier_ref", "axis_ref"]},
+        }
+    ]
     return _closed_object(
         {
             "schema": {"const": NORMALIZATION_WITNESS_SCHEMA},
@@ -1165,7 +1011,8 @@ def _pi_schema() -> dict[str, Any]:
         },
         ("schema", "program_axes"),
         description=(
-            "Gate1-only typed normalization witness. It never enters Replay. "
+            "Source-realization witness pi_source for Gate1 only. It never "
+            "enters Replay or production Lower and is not C_target. "
             "Author only closed relation kinds directly bound to existing J/C "
             "handles. Rows contain no source/replay node, target recipe, free-text "
             "equivalence or allowed diff. Unknown relations remain hard."
@@ -1176,7 +1023,7 @@ def _pi_schema() -> dict[str, Any]:
 def _portable_scope_schema() -> dict[str, Any]:
     return _closed_object(
         {
-            "scope_id": _STRING,
+            "scope_id": {"type": "string", "pattern": r"^q[0-9]+$"},
             "kind": {
                 "type": "string",
                 "enum": [
@@ -1184,7 +1031,9 @@ def _portable_scope_schema() -> dict[str, Any]:
                     "branch_region",
                 ],
             },
-            "parent_scope": _nullable(_STRING),
+            "parent_scope": _nullable(
+                {"type": "string", "pattern": r"^q[0-9]+$"}
+            ),
             "captures": _STRING_ARRAY,
             "definitions": _STRING_ARRAY,
             "effects": _STRING_ARRAY,
@@ -1214,12 +1063,30 @@ def _storage_schema() -> dict[str, Any]:
             "ref": _STRING,
         },
         ("kind", "ref"),
+        description=(
+            "Storage lifetime event reference with a kind-specific namespace: "
+            "scope_entry/scope_exit -> q* scope, node -> stable n* node, "
+            "access -> a* access, effect -> e* effect, and state -> the exact "
+            "state_id of a semantic loop carry. Do not use tensor t* or SSA "
+            "value v* as an event ref."
+        ),
     )
     return _closed_object(
         {
-            "storage_id": _STRING,
-            "members": _STRING_ARRAY,
-            "scope_id": _STRING,
+            "storage_id": {
+                "type": "string",
+                "pattern": r"^(?:b|s)[0-9]+$",
+            },
+            "members": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "pattern": r"^(?:t|v|s)[0-9]+$",
+                },
+                "minItems": 1,
+                "uniqueItems": True,
+            },
+            "scope_id": {"type": "string", "pattern": r"^q[0-9]+$"},
             "mutability": {
                 "type": "string",
                 "enum": ["immutable", "write_once", "mutable"],
@@ -1271,7 +1138,13 @@ def _location_map_schema() -> dict[str, Any]:
 
 
 def scrc_lift_core_json_schema() -> dict[str, Any]:
-    """Return the complete source-aware LLM response schema."""
+    """Return the complete descriptive source-aware response schema.
+
+    This is the authoritative local schema used by CandidateCheck and the
+    mounted schema-inspection tools. The provider can use the machine-only
+    projection returned by :func:`scrc_lift_core_model_json_schema` when the
+    duplicated prose would needlessly enlarge a bounded Lift request.
+    """
 
     semantic_archive = _closed_object(
         {
@@ -1283,7 +1156,7 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
                 "additionalProperties": {
                     "type": "string",
                     "pattern": (
-                        "^(intent_function\\.)?body\\[[0-9]+\\]"
+                        "^body\\[[0-9]+\\]"
                         "((\\.body|\\.positive\\.body|\\.negative\\.body)"
                         "\\[[0-9]+\\])*$"
                     ),
@@ -1326,11 +1199,44 @@ def scrc_lift_core_json_schema() -> dict[str, Any]:
         GATE1_ARTIFACT_MODEL_FIELDS,
         description=render_gate1_artifact_envelope_grammar(),
     )
-    schema["$defs"] = {"intent_op": intent_op_json_schema()}
+    # ``intent_op_json_schema`` is embedded below the artifact root, while its
+    # recursive operation schema uses document-root ``#/$defs/...`` references.
+    # Keep both definitions at this document root.  In particular, a nested
+    # const literal must resolve against the same root as the operation body;
+    # leaving ``const_literal`` only inside ``$defs.intent_op`` makes a valid
+    # candidate fail with PointerToNowhere before CandidateCheck can diagnose
+    # its actual contents.
+    intent_op_schema = intent_op_json_schema()
+    schema["$defs"] = {
+        "const_literal": copy.deepcopy(
+            intent_op_schema["$defs"]["const_literal"]
+        ),
+        "intent_op": intent_op_schema,
+    }
     return copy.deepcopy(schema)
 
 
-def scrc_lift_core_text_format() -> dict[str, Any]:
+def _without_descriptions(value: Any) -> Any:
+    """Remove schema prose while preserving every machine constraint."""
+
+    if isinstance(value, dict):
+        return {
+            key: _without_descriptions(item)
+            for key, item in value.items()
+            if key != "description"
+        }
+    if isinstance(value, list):
+        return [_without_descriptions(item) for item in value]
+    return value
+
+
+def scrc_lift_core_model_json_schema() -> dict[str, Any]:
+    """Return the compact machine-only schema used on the provider wire."""
+
+    return _without_descriptions(scrc_lift_core_json_schema())
+
+
+def scrc_lift_core_text_format(*, compact: bool = False) -> dict[str, Any]:
     """Return the Responses format for Lift's source-aware LLM substage."""
 
     return {
@@ -1340,7 +1246,11 @@ def scrc_lift_core_text_format() -> dict[str, Any]:
         # robustness audit. B is the one closed top-level boundary; C and pi
         # are separate closed objects.
         "strict": False,
-        "schema": scrc_lift_core_json_schema(),
+        "schema": (
+            scrc_lift_core_model_json_schema()
+            if compact
+            else scrc_lift_core_json_schema()
+        ),
     }
 
 
@@ -1349,5 +1259,6 @@ __all__ = [
     "render_gate1_artifact_envelope_grammar",
     "render_semantic_archive_wire_grammar",
     "scrc_lift_core_json_schema",
+    "scrc_lift_core_model_json_schema",
     "scrc_lift_core_text_format",
 ]

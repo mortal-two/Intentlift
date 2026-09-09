@@ -372,6 +372,15 @@ def _input_files(
     source_ttir_observation: Mapping[str, Any] | None = None,
 ) -> dict[str, str]:
     packet = json.loads(request.user_input)
+    selected_frontend = str(packet.get("frontend") or "triton").casefold()
+    selected_source_kind = str(packet.get("source_kind") or "python").casefold()
+    if (
+        source_ttir_observation is not None
+        and (selected_frontend != "triton" or selected_source_kind != "python")
+    ):
+        raise ValueError(
+            "source_ttir_observation is valid only for Triton/TTIR Python source"
+        )
     anonymous_source = packet.get("anonymous_source")
     if not isinstance(anonymous_source, str) or not anonymous_source:
         raise ValueError("prepared Lift packet lacks anonymous Source")
@@ -442,11 +451,6 @@ owner. Its conversation and persistent workspace survive across formal Gate1
 continuations for the same Source; Replay remains a separate fresh process.
 
 - `source.py`: alpha-renamed Source available only to Lift.
-- `harness_view.json`: trusted anonymous compiler/Harness view.
-- `source_ttir.json`: optional exact compilation of this same anonymous Source
-  under the frozen anonymous Harness specialization, plus the existing Gate1
-  observer fingerprint. It is source-aware navigation evidence only and never
-  proposes or constructs J/C/pi.
 - `feedback.json`: null on the first round, otherwise only the explicitly
   allowed previous parser/TypeCheck/Gate1/Gate2 feedback, previous candidate, or the
   last worker's bounded source-free CandidateCheck diagnostic summary.
@@ -493,15 +497,19 @@ continuations for the same Source; Replay remains a separate fresh process.
   `/output/candidate.json`. The model supplies both strings; fixed code performs
   no handle allocation, reordering, inference, or semantic edit. Set
   `submit=true` to invoke the existing preflight after that exact replacement.
-- `tools/schema_query.py`: compact schema lookup (`top`, `catalog`, `op`,
-  `section`, `bundle`) so raw 1400-line schema never needs to be paged end-to-end.
-  The schema path defaults to the mounted artifact schema. Prefer one exact
-  `bundle op:NAME ... section:NAME ...` call once the required operations and
-  relations are known instead of spending one provider turn per leaf.
+- `tools/schema_query.py`: compact schema lookup (`top`, `catalog`, `op:NAME`,
+  and valid `section:NAME` selectors) so raw 1400-line schema never needs to be
+  paged end-to-end. Valid section selectors include `access`, `domain`,
+  `effect`, `scope`, `tensor`, `output_mapping`, and `pi_program_axis`;
+  `boundary` and `scopes` are not section names. The schema path defaults to
+  the mounted artifact schema. Prefer one exact `bundle op:NAME ...
+  section:NAME ...` call once the required operations and relations are known
+  instead of spending one provider turn per leaf.
 - `tools/context_query.py`: bounded lookup for bootstrap, exact external
   feedback, paged Source, Harness JSON paths, and focused contract/preflight
   matches. Its `harness-abi` command joins the already-authoritative p*/c*,
-  bound-non-C constexpr, and shape-coordinate declarations into one compact
+  concrete runtime bindings, selected frontend C values, compiler roles,
+  bound-non-C constexprs, and shape-coordinate declarations into one compact
   ledger. Its `candidate-abi` command compares the current draft with only
   Harness-authored mechanical ABI facts and never proposes semantic fields.
   Its paged `candidate-control` views project only the current LLM-authored
@@ -514,7 +522,7 @@ continuations for the same Source; Replay remains a separate fresh process.
   load/store/atomic call sites, and names that were lexically bound before a loop
   and written inside it. These remain navigation checklists, not inferred
   effects, carriers, or frontend tuple order.
-  When `source_ttir.json` is available, use `source-ttir`,
+  When `source_ttir.json` is available for a Triton/TTIR branch, use `source-ttir`,
   `source-ttir-find`, `source-ttir-outline`, `source-ttir-def-use`, and
   `source-observer --path ...` to inspect exact compiler facts without loading
   the complete TTIR/fingerprint. These commands never infer a J/C/pi field.
@@ -642,6 +650,9 @@ summarizes or interprets J/C/pi semantics during compaction.
     files = {
         "README.md": readme,
         "source.py": anonymous_source,
+        # These files are read through JSON-aware lookup tools.  Keep the
+        # mounted transport compact; the semantic values are unchanged and
+        # the focused query commands provide readable bounded projections.
         "harness_view.json": json.dumps(
             harness_view, indent=2, sort_keys=True, ensure_ascii=False
         )
@@ -691,6 +702,9 @@ class MiniSWELiftAdapter:
     compiler_view: Any = None
     effort: str | None = None
     source_symbol: str | None = None
+    source_kind: str = "python"
+    source_parameter_order: tuple[str, ...] = ()
+    source_to_opaque: Mapping[str, str] | None = None
     workflow: str = "single"
     worker_config: Mapping[str, Any] = field(default_factory=dict)
     model_timeout_seconds: float | None = None
@@ -756,7 +770,8 @@ class MiniSWELiftAdapter:
             raise RuntimeError("persistent Lift workspace lacks its input snapshot")
         if set(incoming) != set(snapshot):
             raise ValueError("persistent Lift input file set changed")
-        for relative in ("source.py", "harness_view.json"):
+        stable_paths = ["source.py", "harness_view.json"]
+        for relative in stable_paths:
             if incoming.get(relative) != snapshot.get(relative):
                 raise ValueError(
                     f"persistent Lift request input changed: {relative}"
@@ -1090,7 +1105,35 @@ class MiniSWELiftAdapter:
             source,
             compiler_view=self.compiler_view,
             relift_context=self._relift_context(feedback),
-            source_symbol=self.source_symbol,
+            source_symbol=getattr(
+                source_program, "lift_source_symbol", self.source_symbol
+            ),
+            source_kind=getattr(
+                source_program, "lift_source_kind", self.source_kind
+            ),
+            source_parameter_order=tuple(
+                getattr(
+                    source_program,
+                    "lift_parameter_order",
+                    self.source_parameter_order,
+                )
+            ),
+            source_to_opaque=(
+                dict(
+                    getattr(
+                        source_program,
+                        "lift_source_to_opaque",
+                        self.source_to_opaque,
+                    )
+                )
+                if getattr(
+                    source_program,
+                    "lift_source_to_opaque",
+                    self.source_to_opaque,
+                ) is not None
+                else None
+            ),
+            frontend=getattr(request, "frontend", "triton"),
         )
         round_index = len(self._records) + 1
         fresh_owner_session = self._session_history is None

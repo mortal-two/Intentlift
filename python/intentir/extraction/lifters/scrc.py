@@ -1652,6 +1652,15 @@ or pointer advance, the corresponding address_recomputed or pointer_advanced row
 must also carry `carrier_ref:p*` for that null-logical-ref scalar and the exact
 non-negative tensor `axis_ref`. This is the closed ownership link used by Replay;
 it does not make p* a logical tensor/value and it does not encode a pointer formula.
+The `axis_ref` is the logical tensor axis whose coordinate is multiplied by the
+carrier, not the vector lane axis by default. For a rank-2 access with logical
+index `[row,lane]` and a row-stride carrier on axis 0, the complete vector address
+is `row * stride + lane`; the lane has unit contiguous stride. Never multiply a
+row stride by the lane coordinate, and never multiply a pointer address by a
+logical extent scalar merely because that extent equals the physical row length.
+Use the Source address def-use and the existing J access index/axis binding to
+choose `axis_ref`; never infer it from ABI parameter order, carrier naming, or
+which index is materialized as a vector.
 Every such Source-used scalar must appear in one of those address rows, while an
 unrelated scalar must not be added merely because it is adjacent in the ABI.
 Pi cannot encode Source/Replay SSA ids, regions, instances, routes, order,
