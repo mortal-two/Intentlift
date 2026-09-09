@@ -282,7 +282,10 @@ class CuteGate1Runner:
                 observer_profile=CUTE_OBSERVER_PROFILE,
             )
         normal = self._arm(
-            artifact, source_fingerprint, source_case, masked=False
+            artifact,
+            source_fingerprint,
+            source_case,
+            masked=False,
         )
         if not normal.hard_closed:
             return Gate1ExecutionResult(
@@ -302,7 +305,10 @@ class CuteGate1Runner:
         if self.config.run_masked_j:
             masked_calls = 1
             masked_evidence = self._arm(
-                artifact, source_fingerprint, source_case, masked=True
+                artifact,
+                source_fingerprint,
+                source_case,
+                masked=True,
             )
         return Gate1ExecutionResult(
             status,

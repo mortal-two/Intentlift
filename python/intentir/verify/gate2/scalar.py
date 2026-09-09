@@ -45,7 +45,7 @@ from intentir.ir.functional_boundary import (
 )
 from intentir.ir.integer_range import proves_index_bounds
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
-from intentir.ir.model import IntentOp
+from intentir.ir.model import IntentOp, walk_intent_op_paths, walk_intent_ops
 from intentir.verify.gate1.model import (
     AccessKind,
     EffectKind,
@@ -54,7 +54,7 @@ from intentir.verify.gate1.model import (
     SemanticArchive,
 )
 
-from .model import ExecutionResult
+from .model import ExecutionResult, output_binding_digest, output_digest
 
 
 SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v24"
@@ -95,23 +95,11 @@ def _canonical_str_mapping(value: Mapping[str, str]) -> tuple[tuple[str, str], .
 
 
 def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
-    result: list[IntentOp] = []
-    for op in body:
-        result.append(op)
-        result.extend(_walk_ops(op.body))
-    return tuple(result)
+    return tuple(walk_intent_ops(body))
 
 
 def _node_table(j: SemanticArchive) -> dict[str, IntentOp]:
-    by_path: dict[str, IntentOp] = {}
-
-    def visit(body: Sequence[IntentOp], prefix: str = "body") -> None:
-        for index, op in enumerate(body):
-            path = f"{prefix}[{index}]"
-            by_path[path] = op
-            visit(op.body, f"{path}.body")
-
-    visit(j.intent.body)
+    by_path = dict(walk_intent_op_paths(j.intent.body))
     result: dict[str, IntentOp] = dict(by_path)
     for node_id, path in j.node_ids.items():
         if path in by_path:
@@ -525,18 +513,14 @@ def _validate_masked_sum_reduction(
         raise NotImplementedError(
             "E_J padded reduction requires the single physical tile axis 0"
         )
-    for name, value in (
-        ("identity", contract.identity),
-        ("masked_contribution", contract.masked_contribution),
+    if (
+        isinstance(contract.identity, bool)
+        or not isinstance(contract.identity, (int, float))
+        or float(contract.identity) != 0.0
     ):
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or float(value) != 0.0
-        ):
-            raise NotImplementedError(
-                f"E_J padded sum requires explicit neutral {name}=0"
-            )
+        raise NotImplementedError(
+            "E_J padded sum requires explicit neutral identity=0"
+        )
 
 
 def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
@@ -774,7 +758,7 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
             raise ValueError(
                 f"E_J store {access.access_id!r} does not target a J output"
             )
-        observable_value = output_values.get(access.tensor, access.tensor)
+        observable_value = output_values[access.tensor]
         output_binding = canonical_output_bindings.get(access.tensor)
         if (
             output_binding is not None
@@ -1292,6 +1276,10 @@ class ScalarLoweringRunner:
                     inputs,
                     broadcast_axes=broadcast_axes,
                     access_guard_relations=guarded_loads,
+                    consumer_extensions=(
+                        projection.consumer_extensions
+                        if projection is not None else ()
+                    ),
                     conditional_effect_stores=(
                         projection.conditional_effect_stores
                         if projection is not None else ()
@@ -1344,6 +1332,8 @@ class ScalarLoweringRunner:
                         spec.j.boundary.result_relations
                     ),
                     "execution_evidence": dict(execution.metadata),
+                    "output_digest": output_digest(outputs),
+                    "output_binding_digest": output_binding_digest(outputs),
                 },
             )
         except (CPUBackendUnsupportedError, NotImplementedError) as exc:

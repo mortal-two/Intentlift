@@ -673,6 +673,25 @@ class TTIRFingerprint:
         repr=False,
         compare=False,
     )
+    # Diagnostic-only normalized pointer-address forms for source-aware Lift.
+    # Each row is ``(effect_kind, pointer_base, polynomial, context)`` where
+    # ``polynomial`` contains only anonymous argument/program/lane atoms.  The
+    # forms are deliberately excluded from equality, serialization, and the
+    # digest: they can reject an impossible source-bound axis claim, but they
+    # can never weaken or alter Gate1 membership.
+    diagnostic_memory_address_forms: tuple[
+        tuple[
+            str,
+            str,
+            tuple[tuple[tuple[str, ...], int], ...],
+            tuple[str, ...],
+        ],
+        ...,
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
 
     @property
     def digest(self) -> str:
@@ -2050,6 +2069,28 @@ _REPRESENTATION_ANCHOR_OPS = {
 }
 
 
+def _is_identity_reshape(operation: _Operation) -> bool:
+    """Recognize only a type-preserving pure reshape.
+
+    Triton may insert ``tt.reshape`` around a value while lowering an
+    otherwise unchanged reduction.  A reshape is transparent here only when
+    its explicit input and output types are byte-for-byte identical; rank
+    changes, shape changes, and unknown signatures remain hard.
+    """
+
+    if operation.name != "tt.reshape":
+        return False
+    signature = _trailing_type_signature(operation.local_signature)
+    if signature is None:
+        return False
+    arrow = _find_top_level_token(signature, "->", last=True)
+    if arrow is None:
+        return False
+    left = _normalize_space(signature[:arrow])
+    right = _normalize_space(signature[arrow + 2 :])
+    return bool(left) and left == right
+
+
 def _representation_only_nodes(
     operations: Sequence[_Operation],
     result_to_node: Mapping[str, int],
@@ -2083,6 +2124,14 @@ def _representation_only_nodes(
         if node_id is None or node_id in value_nodes or node_id in active:
             return
         operation = node_by_id[node_id]
+
+        if _is_identity_reshape(operation):
+            # Keep the value boundary transparent: the reshape itself may be
+            # omitted from the fingerprint, but its producer still participates
+            # in the hard value dataflow.
+            for operand in operation.operands:
+                mark_value(operand, active | {node_id})
+            return
         value_nodes.add(node_id)
 
         # A load is the semantic value boundary.  Its pointer, mask, and fill
@@ -4695,6 +4744,8 @@ class TTIRParser:
             node_id = result_to_node[name]
             producer = node_by_id[node_id]
             if node_id in representation_only:
+                if _is_identity_reshape(producer) and producer.operands:
+                    return operand_ref(producer.operands[0], semantic=semantic)
                 return representation_ref(name)
             base = node_ref(node_id, semantic=semantic)
             if len(producer.result_names) <= 1:
@@ -5744,6 +5795,41 @@ class TTIRParser:
                 context,
             )
 
+        diagnostic_memory_address_forms: list[
+            tuple[
+                str,
+                str,
+                tuple[tuple[tuple[str, ...], int], ...],
+                tuple[str, ...],
+            ]
+        ] = []
+        for operation in operations:
+            if operation.name not in {"tt.load", "tt.store"} and not operation.name.startswith(
+                "tt.atomic"
+            ):
+                continue
+            if not operation.operands:
+                continue
+            pointer = pointer_form(operation.operands[0])
+            if pointer is None:
+                continue
+            context = tuple(
+                f"{node_by_id[owner].name}@{owner}"
+                for owner in operation.context
+            )
+            if operation.structured_if_arm is not None:
+                context += (f"structured_if_arm={operation.structured_if_arm}",)
+            if operation.fork_arm is not None:
+                context += (f"terminal_fork_arm={operation.fork_arm}",)
+            diagnostic_memory_address_forms.append(
+                (
+                    _semantic_op_name(operation, node_by_id, result_to_node),
+                    pointer[0],
+                    polynomial_payload(pointer[1]),
+                    context,
+                )
+            )
+
         return TTIRFingerprint(
             interface=RuntimeInterface(
                 tuple(interface_arguments),
@@ -5799,6 +5885,9 @@ class TTIRParser:
                 sorted(diagnostic_effect_traces)
             ),
             diagnostic_memory_effect_origins=diagnostic_memory_effect_origins,
+            diagnostic_memory_address_forms=tuple(
+                diagnostic_memory_address_forms
+            ),
         )
 
     def _infer_access(
