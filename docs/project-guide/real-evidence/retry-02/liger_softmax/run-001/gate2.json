@@ -1,0 +1,2938 @@
+{
+  "c0": {
+    "c0": 128
+  },
+  "cases": [
+    {
+      "case_id": "finite-hidden-1",
+      "input_digest": "cef4f3f1b757caa5481993d20727efebb81b942793e9ee0f87c54ae6bbbf7ba9",
+      "metadata": {
+        "adapter_protocol": "intentir.scrc.triton-workload-adapter.v6",
+        "c_slot_order": [
+          "BLOCK_SIZE"
+        ],
+        "comparison_policy": {
+          "mixed_precision_compute_tolerances": {
+            "bf16": {
+              "atol": 0.002,
+              "equal_nan": true,
+              "rtol": 0.02
+            },
+            "f16": {
+              "atol": 0.003,
+              "equal_nan": true,
+              "rtol": 0.02
+            },
+            "f32": {
+              "atol": 1e-06,
+              "equal_nan": true,
+              "rtol": 1e-05
+            }
+          },
+          "mixed_precision_selection": "per-output closed J dependency; lower-precision operand of contraction/reduce/scan only",
+          "policy_id": "intentir.gate2.default.v2",
+          "protocol": "intentir.scrc.gate2-q.v2",
+          "tolerances": {
+            "bf16": {
+              "atol": 0.002,
+              "equal_nan": true,
+              "rtol": 0.02
+            },
+            "f16": {
+              "atol": 0.003,
+              "equal_nan": true,
+              "rtol": 0.02
+            },
+            "f32": {
+              "atol": 1e-06,
+              "equal_nan": true,
+              "rtol": 1e-05
+            },
+            "f64": {
+              "atol": 1e-12,
+              "equal_nan": true,
+              "rtol": 1e-12
+            }
+          }
+        },
+        "compiler_slot_order": [],
+        "constexpr_parameter_order": [
+          "BLOCK_SIZE"
+        ],
+        "device_entry_symbol": "_softmax_single_block_forward_kernel",
+        "execution_generated_target_source_manifest": {
+          "arguments": [
+            {
+              "category": "buffer",
+              "dtype": "f32",
+              "logical_dtype": null,
+              "name": "Y_ptr",
+              "output_key": "y",
+              "role": "output",
+              "shape": [
+                2,
+                127
+              ],
+              "shape_contract": [
+                "h0",
+                "h1"
+              ],
+              "shape_coordinate": null,
+              "strides": null,
+              "value": null
+            },
+            {
+              "category": "runtime_scalar",
+              "dtype": "i64",
+              "logical_dtype": null,
+              "name": "Y_row_stride",
+              "output_key": null,
+              "role": "value",
+              "shape": null,
+              "shape_contract": null,
+              "shape_coordinate": null,
+              "strides": null,
+              "value": 127
+            },
+            {
+              "category": "buffer",
+              "dtype": "f32",
+              "logical_dtype": null,
+              "name": "X_ptr",
+              "output_key": null,
+              "role": "input",
+              "shape": [
+                2,
+                127
+              ],
+              "shape_contract": [
+                "h0",
+                "h1"
+              ],
+              "shape_coordinate": null,
+              "strides": null,
+              "value": null
+            },
+            {
+              "category": "runtime_scalar",
+              "dtype": "i64",
+              "logical_dtype": null,
+              "name": "X_row_stride",
+              "output_key": null,
+              "role": "value",
+              "shape": null,
+              "shape_contract": null,
+              "shape_coordinate": null,
+              "strides": null,
+              "value": 127
+            },
+            {
+              "category": "runtime_scalar",
+              "dtype": "i32",
+              "logical_dtype": null,
+              "name": "n_cols",
+              "output_key": null,
+              "role": "value",
+              "shape": null,
+              "shape_contract": null,
+              "shape_coordinate": "h1",
+              "strides": null,
+              "value": 127
+            },
+            {
+              "category": "c_slot",
+              "dtype": "i32",
+              "logical_dtype": null,
+              "name": "BLOCK_SIZE",
+              "output_key": null,
+              "role": "constexpr",
+              "shape": null,
+              "shape_contract": null,
+              "shape_coordinate": null,
+              "strides": null,
+              "value": 128
+            }
+          ],
+          "c_slot_order": [
+            "BLOCK_SIZE"
+          ],
+          "c_slot_values": {
+            "BLOCK_SIZE": 128
+          },
+          "c_source_constexpr_parameters": [
+            "BLOCK_SIZE"
+          ],
+          "compiler_slot_order": [],
+          "constexpr_parameter_order": [
+            "BLOCK_SIZE"
+          ],
+          "contract_ir_digest": "555f7796c11a71befc623a6cfcb1a6952fc9d41be1bab8ac2a8138e526ab377a",
+          "device_entry_symbol": "_softmax_single_block_forward_kernel",
+          "dimension_relations": [],
+          "e_c_interface_digest": "ebaa7b33eb9e11c6693b0835eca01e254b1398f5b093a5c2316f05fa1cca223b",
+          "execution_device_entry_symbol": null,
+          "execution_source_location": null,
+          "execution_source_sha256": null,
+          "execution_source_slice_sha256": null,
+          "grid": [
+            2
+          ],
+          "grid_contract": [
+            "rows"
+          ],
+          "grid_shape_coordinates": [
+            "h0"
+          ],
+          "j_digest": "7120070f1dd040e9237bf34559365ca9966eb569984108642c37eced25b2eb0e",
+          "j_dimension_relations": [],
+          "j_value_dimension_relations": [
+            {
+              "dimension_ref": "x1",
+              "relation": "eq",
+              "value_ref": "t1"
+            }
+          ],
+          "layout_relations": [
+            {
+              "layout": null,
+              "logical_dtype": "f32",
+              "memory_space": null,
+              "parameter": "Y_ptr",
+              "physical_dtype": "f32",
+              "physical_kind": "buffer",
+              "shape": [
+                2,
+                127
+              ],
+              "shape_contract": [
+                "h0",
+                "h1"
+              ],
+              "strides": null
+            },
+            {
+              "layout": null,
+              "logical_dtype": "f32",
+              "memory_space": null,
+              "parameter": "X_ptr",
+              "physical_dtype": "f32",
+              "physical_kind": "buffer",
+              "shape": [
+                2,
+                127
+              ],
+              "shape_contract": [
+                "h0",
+                "h1"
+              ],
+              "strides": null
+            }
+          ],
+          "lifecycle_records": [],
+          "output_bindings": [
+            {
+              "output_key": "y",
+              "parameter": "Y_ptr",
+              "role": "output"
+            }
+          ],
+          "protocol": "intentir.generated-target-source-manifest",
+          "runtime_parameter_order": [
+            "Y_ptr",
+            "Y_row_stride",
+            "X_ptr",
+            "X_row_stride",
+            "n_cols"
+          ],
+          "runtime_scalar_values": {
+            "X_row_stride": 127,
+            "Y_row_stride": 127,
+            "n_cols": 127
+          },
+          "semantic_constexpr_parameters": [],
+          "semantic_constexpr_values": {},
+          "shape_coordinate_bindings": [
+            {
+              "axis": 0,
+              "coordinate": "h0",
+              "extent": 2,
+              "parameter": "Y_ptr"
+            },
+            {
+              "axis": 1,
+              "coordinate": "h1",
+              "extent": 127,
+              "parameter": "Y_ptr"
+            },
+            {
+              "axis": 0,
+              "coordinate": "h0",
+              "extent": 2,
+              "parameter": "X_ptr"
+            },
+            {
+              "axis": 1,
+              "coordinate": "h1",
+              "extent": 127,
+              "parameter": "X_ptr"
+            }
+          ],
+          "shape_coordinate_values": {
+            "h0": 2,
+            "h1": 127
+          },
+          "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+          "source_parameter_order": [
+            "Y_ptr",
+            "Y_row_stride",
+            "X_ptr",
+            "X_row_stride",
+            "n_cols",
+            "BLOCK_SIZE"
+          ],
+          "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+          "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1",
+          "tensor_map_relations": [],
+          "value_dimension_relations": [
+            {
+              "dimension_ref": "h1",
+              "provenance": "explicit_shape_coordinate",
+              "relation": "eq",
+              "value_ref": "n_cols"
+            }
+          ]
+        },
+        "execution_generated_target_source_manifest_digest": "8fbbee31ac5e487e2fc971da75a526e43620d6e4455b49eac1f15fb908744628",
+        "final_generated_target_source_manifest": null,
+        "final_generated_target_source_manifest_digest": null,
+        "frontend": "triton",
+        "generated_target_source_manifest": {
+          "arguments": [
+            {
+              "category": "buffer",
+              "dtype": "f32",
+              "logical_dtype": null,
+              "name": "Y_ptr",
+              "output_key": "y",
+              "role": "output",
+              "shape": [
+                2,
+                127
+              ],
+              "shape_contract": [
+                "h0",
+                "h1"
+              ],
+              "shape_coordinate": null,
+              "strides": null,
+              "value": null
+            },
+            {
+              "category": "runtime_scalar",
+              "dtype": "i64",
+              "logical_dtype": null,
+              "name": "Y_row_stride",
+              "output_key": null,
+              "role": "value",
+              "shape": null,
+              "shape_contract": null,
+              "shape_coordinate": null,
+              "strides": null,
+              "value": 127
+            },
+            {
+              "category": "buffer",
+              "dtype": "f32",
+              "logical_dtype": null,
+              "name": "X_ptr",
+              "output_key": null,
+              "role": "input",
+              "shape": [
+                2,
+                127
+              ],
+              "shape_contract": [
+                "h0",
+                "h1"
+              ],
+              "shape_coordinate": null,
+              "strides": null,
+              "value": null
+            },
+            {
+              "category": "runtime_scalar",
+              "dtype": "i64",
+              "logical_dtype": null,
+              "name": "X_row_stride",
+              "output_key": null,
+              "role": "value",
+              "shape": null,
+              "shape_contract": null,
+              "shape_coordinate": null,
+              "strides": null,
+              "value": 127
+            },
+            {
+              "category": "runtime_scalar",
+              "dtype": "i32",
+              "logical_dtype": null,
+              "name": "n_cols",
+              "output_key": null,
+              "role": "value",
+              "shape": null,
+              "shape_contract": null,
+              "shape_coordinate": "h1",
+              "strides": null,
+              "value": 127
+            },
+            {
+              "category": "c_slot",
+              "dtype": "i32",
+              "logical_dtype": null,
+              "name": "BLOCK_SIZE",
+              "output_key": null,
+              "role": "constexpr",
+              "shape": null,
+              "shape_contract": null,
+              "shape_coordinate": null,
+              "strides": null,
+              "value": 128
+            }
+          ],
+          "c_slot_order": [
+            "BLOCK_SIZE"
+          ],
+          "c_slot_values": {
+            "BLOCK_SIZE": 128
+          },
+          "c_source_constexpr_parameters": [
+            "BLOCK_SIZE"
+          ],
+          "compiler_slot_order": [],
+          "constexpr_parameter_order": [
+            "BLOCK_SIZE"
+          ],
+          "contract_ir_digest": "555f7796c11a71befc623a6cfcb1a6952fc9d41be1bab8ac2a8138e526ab377a",
+          "device_entry_symbol": "_softmax_single_block_forward_kernel",
+          "dimension_relations": [],
+          "e_c_interface_digest": "ebaa7b33eb9e11c6693b0835eca01e254b1398f5b093a5c2316f05fa1cca223b",
+          "execution_device_entry_symbol": null,
+          "execution_source_location": null,
+          "execution_source_sha256": null,
+          "execution_source_slice_sha256": null,
+          "grid": [
+            2
+          ],
+          "grid_contract": [
+            "rows"
+          ],
+          "grid_shape_coordinates": [
+            "h0"
+          ],
+          "j_digest": "7120070f1dd040e9237bf34559365ca9966eb569984108642c37eced25b2eb0e",
+          "j_dimension_relations": [],
+          "j_value_dimension_relations": [
+            {
+              "dimension_ref": "x1",
+              "relation": "eq",
+              "value_ref": "t1"
+            }
+          ],
+          "layout_relations": [
+            {
+              "layout": null,
+              "logical_dtype": "f32",
+              "memory_space": null,
+              "parameter": "Y_ptr",
+              "physical_dtype": "f32",
+              "physical_kind": "buffer",
+              "shape": [
+                2,
+                127
+              ],
+              "shape_contract": [
+                "h0",
+                "h1"
+              ],
+              "strides": null
+            },
+            {
+              "layout": null,
+              "logical_dtype": "f32",
+              "memory_space": null,
+              "parameter": "X_ptr",
+              "physical_dtype": "f32",
+              "physical_kind": "buffer",
+              "shape": [
+                2,
+                127
+              ],
+              "shape_contract": [
+                "h0",
+                "h1"
+              ],
+              "strides": null
+            }
+          ],
+          "lifecycle_records": [],
+          "output_bindings": [
+            {
+              "output_key": "y",
+              "parameter": "Y_ptr",
+              "role": "output"
+            }
+          ],
+          "protocol": "intentir.generated-target-source-manifest",
+          "runtime_parameter_order": [
+            "Y_ptr",
+            "Y_row_stride",
+            "X_ptr",
+            "X_row_stride",
+            "n_cols"
+          ],
+          "runtime_scalar_values": {
+            "X_row_stride": 127,
+            "Y_row_stride": 127,
+            "n_cols": 127
+          },
+          "semantic_constexpr_parameters": [],
+          "semantic_constexpr_values": {},
+          "shape_coordinate_bindings": [
+            {
+              "axis": 0,
+              "coordinate": "h0",
+              "extent": 2,
+              "parameter": "Y_ptr"
+            },
+            {
+              "axis": 1,
+              "coordinate": "h1",
+              "extent": 127,
+              "parameter": "Y_ptr"
+            },
+            {
+              "axis": 0,
+              "coordinate": "h0",
+              "extent": 2,
+              "parameter": "X_ptr"
+            },
+            {
+              "axis": 1,
+              "coordinate": "h1",
+              "extent": 127,
+              "parameter": "X_ptr"
+            }
+          ],
+          "shape_coordinate_values": {
+            "h0": 2,
+            "h1": 127
+          },
+          "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+          "source_parameter_order": [
+            "Y_ptr",
+            "Y_row_stride",
+            "X_ptr",
+            "X_row_stride",
+            "n_cols",
+            "BLOCK_SIZE"
+          ],
+          "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+          "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1",
+          "tensor_map_relations": [],
+          "value_dimension_relations": [
+            {
+              "dimension_ref": "h1",
+              "provenance": "explicit_shape_coordinate",
+              "relation": "eq",
+              "value_ref": "n_cols"
+            }
+          ]
+        },
+        "generated_target_source_manifest_digest": "8fbbee31ac5e487e2fc971da75a526e43620d6e4455b49eac1f15fb908744628",
+        "input_profile": "capture-seed-v1",
+        "lifecycle_records": [
+          {
+            "artifact_digest": "bd814000376a2d0c8246e9fb0948931cc2c27fecedfab7d9054308e4e37d8ace",
+            "artifact_kind": "triton.compiled_pair",
+            "consumer": "gate2.triton.source+replay",
+            "output_binding_digest": null,
+            "output_digest": null,
+            "phase": "source_compile",
+            "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1"
+          },
+          {
+            "artifact_digest": "bd814000376a2d0c8246e9fb0948931cc2c27fecedfab7d9054308e4e37d8ace",
+            "artifact_kind": "triton.compiled_pair",
+            "consumer": "gate2.triton.source+replay",
+            "output_binding_digest": "47036058e19a0563a7fa9ec4e4c831c8fcd7bf91200defff77f4a21d627bcd22",
+            "output_digest": null,
+            "phase": "source_execute",
+            "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1"
+          },
+          {
+            "artifact_digest": "a494c6b03d8a62f8d9bbd17cd5f51a3757c1d5d391b5c809193766ece4a39bef",
+            "artifact_kind": "outputs",
+            "consumer": "gate2.triton.source+replay+j",
+            "output_binding_digest": "0fe0ab143d5c65df64cd7e14d08b28bf12ee28b551c2b940571bbc844b50d509",
+            "output_digest": "a494c6b03d8a62f8d9bbd17cd5f51a3757c1d5d391b5c809193766ece4a39bef",
+            "phase": "output_digest",
+            "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1"
+          }
+        ],
+        "lineage_complete": false,
+        "lineage_required": true,
+        "lineage_status": "execution_complete_reingress_pending",
+        "manifest_grid": [
+          2
+        ],
+        "manifest_grid_contract": [
+          "rows"
+        ],
+        "manifest_output_binding_digest": "e5d8a290786d7d0dfae817e776d4f6b459d9961a9ed82962046226ca637ca293",
+        "protocol": "source_replay_j_three_edges_q_v5",
+        "reference_output_digest": "e3183399ea8c34431499ed6bd77bcaec3175f486656fd15e861f1913ec975e58",
+        "reingress_source_slice_sha256": null,
+        "replay_artifact_digest": "bba4e08f85c9e0adb4632659787bf5637c1a6be588e4a7059620f0b95e70d254",
+        "source_artifact_digest": "7caf34df4e2cfbb6fd49de7f663fff08cfca43f959050b7a3fd17a19dfce6f2d",
+        "source_execution_program_sha256": "7850004e92088a69c48b97e276a7a200a5b36e9293d585560491d97e1c844fae",
+        "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+        "source_parameter_order": [
+          "Y_ptr",
+          "Y_row_stride",
+          "X_ptr",
+          "X_row_stride",
+          "n_cols",
+          "BLOCK_SIZE"
+        ],
+        "source_program_sha256": "7850004e92088a69c48b97e276a7a200a5b36e9293d585560491d97e1c844fae",
+        "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+        "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1",
+        "stage_metrics": {
+          "gate2_case_total": {
+            "elapsed_ms": 159.97236990369856,
+            "runs": 1,
+            "status": "gate2_pass"
+          },
+          "pairwise_comparison": {
+            "elapsed_ms": 4.431918961927295,
+            "runs": 1,
+            "status": "passed"
+          },
+          "refeval_execution": {
+            "elapsed_ms": 18.76837108284235,
+            "runs": 1,
+            "status": "passed"
+          },
+          "replay_execution": {
+            "elapsed_ms": 122.98793601803482,
+            "runs": 1,
+            "status": "passed"
+          },
+          "source_execution": {
+            "elapsed_ms": 9.743133094161749,
+            "runs": 1,
+            "status": "passed"
+          }
+        },
+        "test_mode": "finite_hidden_after_gate1"
+      },
+      "reference": {
+        "error": "",
+        "leg": "j",
+        "metadata": {
+          "access_relation_count": 2,
+          "boundary_digest": "6411a222306c9cdf8d982e62dd9f978664887b7de509fe9528acf54a54bfd652",
+          "boundary_profile": "logical_domain_reduction_padding_v3",
+          "boundary_projection": {
+            "access_axes": [
+              [
+                "a0",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ],
+              [
+                "a1",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ]
+            ],
+            "access_coordinates": [
+              [
+                "a0",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ],
+              [
+                "a1",
+                [
+                  "k0",
+                  "k1"
+                ]
+              ]
+            ],
+            "access_guard_relations": [
+              {
+                "access_kind": "load",
+                "access_ref": "a0",
+                "axes": [
+                  0
+                ],
+                "consumer_result": "v2",
+                "fill_value": "-inf",
+                "materialization": "access_local_pre_execution_select",
+                "node_ref": "n2",
+                "operand_index": 0,
+                "operand_ref": "t0",
+                "polarity": "positive",
+                "proof": "authored_access_guard_relation",
+                "tensor": "t0",
+                "value_ref": "v1"
+              },
+              {
+                "access_kind": "load",
+                "access_ref": "a0",
+                "axes": [
+                  0
+                ],
+                "consumer_result": "v5",
+                "fill_value": "-inf",
+                "materialization": "access_local_pre_execution_select",
+                "node_ref": "n5",
+                "operand_index": 0,
+                "operand_ref": "v4",
+                "polarity": "positive",
+                "proof": "authored_access_guard_relation",
+                "tensor": "t0",
+                "value_ref": "v1"
+              }
+            ],
+            "boundary_digest": "6411a222306c9cdf8d982e62dd9f978664887b7de509fe9528acf54a54bfd652",
+            "broadcast_axes": [
+              [
+                "v3",
+                [
+                  [
+                    "v2",
+                    [
+                      1
+                    ]
+                  ]
+                ]
+              ],
+              [
+                "v6",
+                [
+                  [
+                    "v5",
+                    [
+                      1
+                    ]
+                  ]
+                ]
+              ]
+            ],
+            "concat_store_partitions": [],
+            "conditional_effect_stores": [],
+            "constant_gathers": [],
+            "consumed": [
+              "access:a0",
+              "access:a1",
+              "access_guard:a0:v1:0:positive",
+              "broadcast:n3:v2",
+              "broadcast:n6:v5",
+              "consumer_extension:n2:0:a0",
+              "consumer_extension:n5:0:a0",
+              "domain:d0",
+              "domain:d1",
+              "effect:e0",
+              "effect:e1",
+              "output:t2",
+              "reduction:n2",
+              "reduction:n5",
+              "result_relation:t2",
+              "value_dimension:t1:x1:eq"
+            ],
+            "consumer_extensions": [
+              {
+                "access_ref": "a0",
+                "consumer_ref": "n2",
+                "identity_law": "two_sided",
+                "operand_index": 0,
+                "outside": {
+                  "dtype": "f32",
+                  "value": "-inf"
+                },
+                "tile_axis": 0
+              },
+              {
+                "access_ref": "a0",
+                "consumer_ref": "n5",
+                "identity_law": "two_sided",
+                "operand_index": 0,
+                "outside": {
+                  "dtype": "f32",
+                  "value": 0
+                },
+                "tile_axis": 0
+              }
+            ],
+            "context_domains": [],
+            "dimension_relations": [],
+            "direct_store_partitions": [],
+            "domains": [
+              [
+                "k0",
+                2
+              ],
+              [
+                "k1",
+                127
+              ]
+            ],
+            "erased_fill_count": 0,
+            "index_bounded_gathers": [],
+            "mixed_radix_accesses": [],
+            "predicated_access_count": 2,
+            "predicates": [
+              [
+                "a0",
+                {
+                  "guards": [],
+                  "lower_axes": [],
+                  "upper_bounds": [
+                    [
+                      "k1",
+                      127
+                    ]
+                  ]
+                }
+              ],
+              [
+                "a1",
+                {
+                  "guards": [],
+                  "lower_axes": [],
+                  "upper_bounds": [
+                    [
+                      "k1",
+                      127
+                    ]
+                  ]
+                }
+              ]
+            ],
+            "profile": "logical_domain_reduction_padding_v3",
+            "protocol": "intentir.j-functional-boundary.v22",
+            "proven_index_bounds": [],
+            "runtime_predicate_proofs": [],
+            "value_dimension_relations": [
+              {
+                "dimension_ref": "x1",
+                "relation": "eq",
+                "value_ref": "t1"
+              }
+            ]
+          },
+          "broadcast_consumer_count": 2,
+          "domain_relation_count": 2,
+          "effect_relation_count": 2,
+          "elapsed_ms": 18.76371307298541,
+          "erased_fill_count": 0,
+          "execution_evidence": {
+            "access_guard_load_materialization_count": 2,
+            "authority": "canonical_J_only",
+            "conditional_effect_store_count": 0,
+            "effect_if_count": 0,
+            "execution_mode": "bounded_j_only_scan_tiles",
+            "input_count": 2,
+            "logical_loop_step_count": 0,
+            "loop_count": 0,
+            "max_scan_tile_elements": 0,
+            "operation_count": 7,
+            "output_count": 1,
+            "protocol": "intentir.j-structured-cpu-reference.v10",
+            "scan_count": 0,
+            "scatter_count": 0,
+            "value_if_count": 0,
+            "zero_trip_loop_count": 0
+          },
+          "execution_stage": "refeval_execution",
+          "function": "scrc_j0",
+          "index_bounds_count": 0,
+          "j_digest": "7120070f1dd040e9237bf34559365ca9966eb569984108642c37eced25b2eb0e",
+          "output_binding_digest": "f13211bb72e0919e8ea626d504864403988a8d987c8a48059bf11c3fe722d751",
+          "output_digest": "e3183399ea8c34431499ed6bd77bcaec3175f486656fd15e861f1913ec975e58",
+          "path": "canonical J -> typed structured CPU reference",
+          "predicated_access_count": 2,
+          "protocol": "j_scalar_cpu_mlir_v24",
+          "result_relation_count": 1,
+          "runtime_predicate_proof_count": 0,
+          "scalar_spec_digest": "be7ed660ed5e60bedefc0f17c197d0c79406ca04a359e0163defd4ba1ae99190"
+        },
+        "ok": true,
+        "outputs": {
+          "y": {
+            "dtype": "float32",
+            "shape": [
+              2,
+              127
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay": {
+        "error": "",
+        "leg": "replay",
+        "metadata": {
+          "artifact_digest": "bba4e08f85c9e0adb4632659787bf5637c1a6be588e4a7059620f0b95e70d254",
+          "artifact_kind": "triton.cubin",
+          "binding_protocol": "triton_name_keyed_complete_abi_v1",
+          "c_slot_order": [
+            "BLOCK_SIZE"
+          ],
+          "compiled_artifacts": [
+            {
+              "digest": "bba4e08f85c9e0adb4632659787bf5637c1a6be588e4a7059620f0b95e70d254",
+              "kind": "cubin",
+              "ordinal": 0,
+              "size": 14168
+            }
+          ],
+          "compiler_slot_order": [],
+          "constexpr_parameter_order": [
+            "BLOCK_SIZE"
+          ],
+          "device_entry_symbol": "_softmax_single_block_forward_kernel",
+          "elapsed_ms": 122.98127799294889,
+          "execution_binding": {
+            "abi_digest": "f482d40319e7f75a6ce38a63acb5cceed85972a1c79d90af9ef9a8cfe2feb350",
+            "abi_order": [
+              "p0",
+              "p1",
+              "p2",
+              "p3",
+              "p4"
+            ],
+            "block": [],
+            "compiler_digest": "fa1bc039e185128381eab4b5baeb31f5c388ddfe8273a5298c4a2153b18f2fb1",
+            "compiler_identity": "triton",
+            "grid": [
+              2
+            ],
+            "leg": "replay",
+            "manifest_digest": "8fbbee31ac5e487e2fc971da75a526e43620d6e4455b49eac1f15fb908744628",
+            "manifest_output_binding_digest": "e5d8a290786d7d0dfae817e776d4f6b459d9961a9ed82962046226ca637ca293",
+            "output_keys": [
+              "y"
+            ],
+            "program_entry": "scrc_k0",
+            "program_execution_sha256": "8f9be332db0beb5c21964cdfb8a05d1a2101ea075a4bf72cdb8a966af390a0f0",
+            "program_source_sha256": "8f9be332db0beb5c21964cdfb8a05d1a2101ea075a4bf72cdb8a966af390a0f0",
+            "schedule_digest": "fca095f586b6fba93b732d38738c3add31d0850c0d17847a0bdb7e4a804e4245",
+            "schedule_names": [
+              "c0"
+            ],
+            "selected_device_entry": "_softmax_single_block_forward_kernel",
+            "shared_mem": 0,
+            "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+            "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+            "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1"
+          },
+          "execution_binding_digest": "ab5b93163f942b9cd77ad269850491b8bcbe2fa820275569610c5035b1d0b914",
+          "execution_generated_target_source_manifest": {
+            "arguments": [
+              {
+                "category": "buffer",
+                "dtype": "f32",
+                "logical_dtype": null,
+                "name": "Y_ptr",
+                "output_key": "y",
+                "role": "output",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "shape_coordinate": null,
+                "strides": null,
+                "value": null
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i64",
+                "logical_dtype": null,
+                "name": "Y_row_stride",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "buffer",
+                "dtype": "f32",
+                "logical_dtype": null,
+                "name": "X_ptr",
+                "output_key": null,
+                "role": "input",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "shape_coordinate": null,
+                "strides": null,
+                "value": null
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i64",
+                "logical_dtype": null,
+                "name": "X_row_stride",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i32",
+                "logical_dtype": null,
+                "name": "n_cols",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": "h1",
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "c_slot",
+                "dtype": "i32",
+                "logical_dtype": null,
+                "name": "BLOCK_SIZE",
+                "output_key": null,
+                "role": "constexpr",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 128
+              }
+            ],
+            "c_slot_order": [
+              "BLOCK_SIZE"
+            ],
+            "c_slot_values": {
+              "BLOCK_SIZE": 128
+            },
+            "c_source_constexpr_parameters": [
+              "BLOCK_SIZE"
+            ],
+            "compiler_slot_order": [],
+            "constexpr_parameter_order": [
+              "BLOCK_SIZE"
+            ],
+            "contract_ir_digest": "555f7796c11a71befc623a6cfcb1a6952fc9d41be1bab8ac2a8138e526ab377a",
+            "device_entry_symbol": "_softmax_single_block_forward_kernel",
+            "dimension_relations": [],
+            "e_c_interface_digest": "ebaa7b33eb9e11c6693b0835eca01e254b1398f5b093a5c2316f05fa1cca223b",
+            "execution_device_entry_symbol": null,
+            "execution_source_location": null,
+            "execution_source_sha256": null,
+            "execution_source_slice_sha256": null,
+            "grid": [
+              2
+            ],
+            "grid_contract": [
+              "rows"
+            ],
+            "grid_shape_coordinates": [
+              "h0"
+            ],
+            "j_digest": "7120070f1dd040e9237bf34559365ca9966eb569984108642c37eced25b2eb0e",
+            "j_dimension_relations": [],
+            "j_value_dimension_relations": [
+              {
+                "dimension_ref": "x1",
+                "relation": "eq",
+                "value_ref": "t1"
+              }
+            ],
+            "layout_relations": [
+              {
+                "layout": null,
+                "logical_dtype": "f32",
+                "memory_space": null,
+                "parameter": "Y_ptr",
+                "physical_dtype": "f32",
+                "physical_kind": "buffer",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "strides": null
+              },
+              {
+                "layout": null,
+                "logical_dtype": "f32",
+                "memory_space": null,
+                "parameter": "X_ptr",
+                "physical_dtype": "f32",
+                "physical_kind": "buffer",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "strides": null
+              }
+            ],
+            "lifecycle_records": [],
+            "output_bindings": [
+              {
+                "output_key": "y",
+                "parameter": "Y_ptr",
+                "role": "output"
+              }
+            ],
+            "protocol": "intentir.generated-target-source-manifest",
+            "runtime_parameter_order": [
+              "Y_ptr",
+              "Y_row_stride",
+              "X_ptr",
+              "X_row_stride",
+              "n_cols"
+            ],
+            "runtime_scalar_values": {
+              "X_row_stride": 127,
+              "Y_row_stride": 127,
+              "n_cols": 127
+            },
+            "semantic_constexpr_parameters": [],
+            "semantic_constexpr_values": {},
+            "shape_coordinate_bindings": [
+              {
+                "axis": 0,
+                "coordinate": "h0",
+                "extent": 2,
+                "parameter": "Y_ptr"
+              },
+              {
+                "axis": 1,
+                "coordinate": "h1",
+                "extent": 127,
+                "parameter": "Y_ptr"
+              },
+              {
+                "axis": 0,
+                "coordinate": "h0",
+                "extent": 2,
+                "parameter": "X_ptr"
+              },
+              {
+                "axis": 1,
+                "coordinate": "h1",
+                "extent": 127,
+                "parameter": "X_ptr"
+              }
+            ],
+            "shape_coordinate_values": {
+              "h0": 2,
+              "h1": 127
+            },
+            "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+            "source_parameter_order": [
+              "Y_ptr",
+              "Y_row_stride",
+              "X_ptr",
+              "X_row_stride",
+              "n_cols",
+              "BLOCK_SIZE"
+            ],
+            "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+            "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1",
+            "tensor_map_relations": [],
+            "value_dimension_relations": [
+              {
+                "dimension_ref": "h1",
+                "provenance": "explicit_shape_coordinate",
+                "relation": "eq",
+                "value_ref": "n_cols"
+              }
+            ]
+          },
+          "execution_generated_target_source_manifest_digest": "8fbbee31ac5e487e2fc971da75a526e43620d6e4455b49eac1f15fb908744628",
+          "execution_stage": "replay_execution",
+          "final_generated_target_source_manifest": null,
+          "final_generated_target_source_manifest_digest": null,
+          "frontend_compat": {
+            "normalized_sha256": "8f9be332db0beb5c21964cdfb8a05d1a2101ea075a4bf72cdb8a966af390a0f0",
+            "protocol": "triton_static_dot_transpose_v1",
+            "rewrite_count": 0
+          },
+          "function": "scrc_k0",
+          "generated_target_source_manifest": {
+            "arguments": [
+              {
+                "category": "buffer",
+                "dtype": "f32",
+                "logical_dtype": null,
+                "name": "Y_ptr",
+                "output_key": "y",
+                "role": "output",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "shape_coordinate": null,
+                "strides": null,
+                "value": null
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i64",
+                "logical_dtype": null,
+                "name": "Y_row_stride",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "buffer",
+                "dtype": "f32",
+                "logical_dtype": null,
+                "name": "X_ptr",
+                "output_key": null,
+                "role": "input",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "shape_coordinate": null,
+                "strides": null,
+                "value": null
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i64",
+                "logical_dtype": null,
+                "name": "X_row_stride",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i32",
+                "logical_dtype": null,
+                "name": "n_cols",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": "h1",
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "c_slot",
+                "dtype": "i32",
+                "logical_dtype": null,
+                "name": "BLOCK_SIZE",
+                "output_key": null,
+                "role": "constexpr",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 128
+              }
+            ],
+            "c_slot_order": [
+              "BLOCK_SIZE"
+            ],
+            "c_slot_values": {
+              "BLOCK_SIZE": 128
+            },
+            "c_source_constexpr_parameters": [
+              "BLOCK_SIZE"
+            ],
+            "compiler_slot_order": [],
+            "constexpr_parameter_order": [
+              "BLOCK_SIZE"
+            ],
+            "contract_ir_digest": "555f7796c11a71befc623a6cfcb1a6952fc9d41be1bab8ac2a8138e526ab377a",
+            "device_entry_symbol": "_softmax_single_block_forward_kernel",
+            "dimension_relations": [],
+            "e_c_interface_digest": "ebaa7b33eb9e11c6693b0835eca01e254b1398f5b093a5c2316f05fa1cca223b",
+            "execution_device_entry_symbol": null,
+            "execution_source_location": null,
+            "execution_source_sha256": null,
+            "execution_source_slice_sha256": null,
+            "grid": [
+              2
+            ],
+            "grid_contract": [
+              "rows"
+            ],
+            "grid_shape_coordinates": [
+              "h0"
+            ],
+            "j_digest": "7120070f1dd040e9237bf34559365ca9966eb569984108642c37eced25b2eb0e",
+            "j_dimension_relations": [],
+            "j_value_dimension_relations": [
+              {
+                "dimension_ref": "x1",
+                "relation": "eq",
+                "value_ref": "t1"
+              }
+            ],
+            "layout_relations": [
+              {
+                "layout": null,
+                "logical_dtype": "f32",
+                "memory_space": null,
+                "parameter": "Y_ptr",
+                "physical_dtype": "f32",
+                "physical_kind": "buffer",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "strides": null
+              },
+              {
+                "layout": null,
+                "logical_dtype": "f32",
+                "memory_space": null,
+                "parameter": "X_ptr",
+                "physical_dtype": "f32",
+                "physical_kind": "buffer",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "strides": null
+              }
+            ],
+            "lifecycle_records": [],
+            "output_bindings": [
+              {
+                "output_key": "y",
+                "parameter": "Y_ptr",
+                "role": "output"
+              }
+            ],
+            "protocol": "intentir.generated-target-source-manifest",
+            "runtime_parameter_order": [
+              "Y_ptr",
+              "Y_row_stride",
+              "X_ptr",
+              "X_row_stride",
+              "n_cols"
+            ],
+            "runtime_scalar_values": {
+              "X_row_stride": 127,
+              "Y_row_stride": 127,
+              "n_cols": 127
+            },
+            "semantic_constexpr_parameters": [],
+            "semantic_constexpr_values": {},
+            "shape_coordinate_bindings": [
+              {
+                "axis": 0,
+                "coordinate": "h0",
+                "extent": 2,
+                "parameter": "Y_ptr"
+              },
+              {
+                "axis": 1,
+                "coordinate": "h1",
+                "extent": 127,
+                "parameter": "Y_ptr"
+              },
+              {
+                "axis": 0,
+                "coordinate": "h0",
+                "extent": 2,
+                "parameter": "X_ptr"
+              },
+              {
+                "axis": 1,
+                "coordinate": "h1",
+                "extent": 127,
+                "parameter": "X_ptr"
+              }
+            ],
+            "shape_coordinate_values": {
+              "h0": 2,
+              "h1": 127
+            },
+            "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+            "source_parameter_order": [
+              "Y_ptr",
+              "Y_row_stride",
+              "X_ptr",
+              "X_row_stride",
+              "n_cols",
+              "BLOCK_SIZE"
+            ],
+            "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+            "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1",
+            "tensor_map_relations": [],
+            "value_dimension_relations": [
+              {
+                "dimension_ref": "h1",
+                "provenance": "explicit_shape_coordinate",
+                "relation": "eq",
+                "value_ref": "n_cols"
+              }
+            ]
+          },
+          "generated_target_source_manifest_digest": "8fbbee31ac5e487e2fc971da75a526e43620d6e4455b49eac1f15fb908744628",
+          "grid": [
+            2
+          ],
+          "lineage_required": true,
+          "manifest_grid": [
+            2
+          ],
+          "manifest_grid_contract": [
+            "rows"
+          ],
+          "manifest_output_binding_digest": "e5d8a290786d7d0dfae817e776d4f6b459d9961a9ed82962046226ca637ca293",
+          "output_binding_digest": "f13211bb72e0919e8ea626d504864403988a8d987c8a48059bf11c3fe722d751",
+          "output_digest": "6c3ef23974273ea0aafb399ce6a8e6afd52e717e2b9c2a55d3236a12e4e24bef",
+          "program_execution_sha256": "8f9be332db0beb5c21964cdfb8a05d1a2101ea075a4bf72cdb8a966af390a0f0",
+          "program_source_sha256": "8f9be332db0beb5c21964cdfb8a05d1a2101ea075a4bf72cdb8a966af390a0f0",
+          "reingress_source_slice_sha256": null,
+          "source_execution_program_sha256": "7850004e92088a69c48b97e276a7a200a5b36e9293d585560491d97e1c844fae",
+          "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+          "source_parameter_order": [
+            "Y_ptr",
+            "Y_row_stride",
+            "X_ptr",
+            "X_row_stride",
+            "n_cols",
+            "BLOCK_SIZE"
+          ],
+          "source_program_sha256": "7850004e92088a69c48b97e276a7a200a5b36e9293d585560491d97e1c844fae",
+          "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+          "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1"
+        },
+        "ok": true,
+        "outputs": {
+          "y": {
+            "dtype": "float32",
+            "shape": [
+              2,
+              127
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "replay_j": {
+        "left": "replay",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": true,
+            "equality_required": true,
+            "max_abs_error": 2.7939677238464355e-09,
+            "output": "y",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v2",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v2",
+        "right": "j"
+      },
+      "source": {
+        "error": "",
+        "leg": "source",
+        "metadata": {
+          "artifact_digest": "7caf34df4e2cfbb6fd49de7f663fff08cfca43f959050b7a3fd17a19dfce6f2d",
+          "artifact_kind": "triton.cubin",
+          "binding_protocol": "triton_name_keyed_complete_abi_v1",
+          "c_slot_order": [
+            "BLOCK_SIZE"
+          ],
+          "compiled_artifacts": [
+            {
+              "digest": "7caf34df4e2cfbb6fd49de7f663fff08cfca43f959050b7a3fd17a19dfce6f2d",
+              "kind": "cubin",
+              "ordinal": 0,
+              "size": 14208
+            }
+          ],
+          "compiler_slot_order": [],
+          "constexpr_parameter_order": [
+            "BLOCK_SIZE"
+          ],
+          "device_entry_symbol": "_softmax_single_block_forward_kernel",
+          "elapsed_ms": 9.737326996400952,
+          "execution_binding": {
+            "abi_digest": "f482d40319e7f75a6ce38a63acb5cceed85972a1c79d90af9ef9a8cfe2feb350",
+            "abi_order": [
+              "p0",
+              "p1",
+              "p2",
+              "p3",
+              "p4"
+            ],
+            "block": [],
+            "compiler_digest": "fa1bc039e185128381eab4b5baeb31f5c388ddfe8273a5298c4a2153b18f2fb1",
+            "compiler_identity": "triton",
+            "grid": [
+              2
+            ],
+            "leg": "source",
+            "manifest_digest": "8fbbee31ac5e487e2fc971da75a526e43620d6e4455b49eac1f15fb908744628",
+            "manifest_output_binding_digest": "e5d8a290786d7d0dfae817e776d4f6b459d9961a9ed82962046226ca637ca293",
+            "output_keys": [
+              "y"
+            ],
+            "program_entry": "scrc_k0",
+            "program_execution_sha256": "7850004e92088a69c48b97e276a7a200a5b36e9293d585560491d97e1c844fae",
+            "program_source_sha256": "7850004e92088a69c48b97e276a7a200a5b36e9293d585560491d97e1c844fae",
+            "schedule_digest": "fca095f586b6fba93b732d38738c3add31d0850c0d17847a0bdb7e4a804e4245",
+            "schedule_names": [
+              "c0"
+            ],
+            "selected_device_entry": "_softmax_single_block_forward_kernel",
+            "shared_mem": 0,
+            "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+            "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+            "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1"
+          },
+          "execution_binding_digest": "2492ab4ca03d262351d0ca6eb752f79a9f9ae18d5fdd964211cc7d3213cf7051",
+          "execution_generated_target_source_manifest": {
+            "arguments": [
+              {
+                "category": "buffer",
+                "dtype": "f32",
+                "logical_dtype": null,
+                "name": "Y_ptr",
+                "output_key": "y",
+                "role": "output",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "shape_coordinate": null,
+                "strides": null,
+                "value": null
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i64",
+                "logical_dtype": null,
+                "name": "Y_row_stride",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "buffer",
+                "dtype": "f32",
+                "logical_dtype": null,
+                "name": "X_ptr",
+                "output_key": null,
+                "role": "input",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "shape_coordinate": null,
+                "strides": null,
+                "value": null
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i64",
+                "logical_dtype": null,
+                "name": "X_row_stride",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i32",
+                "logical_dtype": null,
+                "name": "n_cols",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": "h1",
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "c_slot",
+                "dtype": "i32",
+                "logical_dtype": null,
+                "name": "BLOCK_SIZE",
+                "output_key": null,
+                "role": "constexpr",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 128
+              }
+            ],
+            "c_slot_order": [
+              "BLOCK_SIZE"
+            ],
+            "c_slot_values": {
+              "BLOCK_SIZE": 128
+            },
+            "c_source_constexpr_parameters": [
+              "BLOCK_SIZE"
+            ],
+            "compiler_slot_order": [],
+            "constexpr_parameter_order": [
+              "BLOCK_SIZE"
+            ],
+            "contract_ir_digest": "555f7796c11a71befc623a6cfcb1a6952fc9d41be1bab8ac2a8138e526ab377a",
+            "device_entry_symbol": "_softmax_single_block_forward_kernel",
+            "dimension_relations": [],
+            "e_c_interface_digest": "ebaa7b33eb9e11c6693b0835eca01e254b1398f5b093a5c2316f05fa1cca223b",
+            "execution_device_entry_symbol": null,
+            "execution_source_location": null,
+            "execution_source_sha256": null,
+            "execution_source_slice_sha256": null,
+            "grid": [
+              2
+            ],
+            "grid_contract": [
+              "rows"
+            ],
+            "grid_shape_coordinates": [
+              "h0"
+            ],
+            "j_digest": "7120070f1dd040e9237bf34559365ca9966eb569984108642c37eced25b2eb0e",
+            "j_dimension_relations": [],
+            "j_value_dimension_relations": [
+              {
+                "dimension_ref": "x1",
+                "relation": "eq",
+                "value_ref": "t1"
+              }
+            ],
+            "layout_relations": [
+              {
+                "layout": null,
+                "logical_dtype": "f32",
+                "memory_space": null,
+                "parameter": "Y_ptr",
+                "physical_dtype": "f32",
+                "physical_kind": "buffer",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "strides": null
+              },
+              {
+                "layout": null,
+                "logical_dtype": "f32",
+                "memory_space": null,
+                "parameter": "X_ptr",
+                "physical_dtype": "f32",
+                "physical_kind": "buffer",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "strides": null
+              }
+            ],
+            "lifecycle_records": [],
+            "output_bindings": [
+              {
+                "output_key": "y",
+                "parameter": "Y_ptr",
+                "role": "output"
+              }
+            ],
+            "protocol": "intentir.generated-target-source-manifest",
+            "runtime_parameter_order": [
+              "Y_ptr",
+              "Y_row_stride",
+              "X_ptr",
+              "X_row_stride",
+              "n_cols"
+            ],
+            "runtime_scalar_values": {
+              "X_row_stride": 127,
+              "Y_row_stride": 127,
+              "n_cols": 127
+            },
+            "semantic_constexpr_parameters": [],
+            "semantic_constexpr_values": {},
+            "shape_coordinate_bindings": [
+              {
+                "axis": 0,
+                "coordinate": "h0",
+                "extent": 2,
+                "parameter": "Y_ptr"
+              },
+              {
+                "axis": 1,
+                "coordinate": "h1",
+                "extent": 127,
+                "parameter": "Y_ptr"
+              },
+              {
+                "axis": 0,
+                "coordinate": "h0",
+                "extent": 2,
+                "parameter": "X_ptr"
+              },
+              {
+                "axis": 1,
+                "coordinate": "h1",
+                "extent": 127,
+                "parameter": "X_ptr"
+              }
+            ],
+            "shape_coordinate_values": {
+              "h0": 2,
+              "h1": 127
+            },
+            "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+            "source_parameter_order": [
+              "Y_ptr",
+              "Y_row_stride",
+              "X_ptr",
+              "X_row_stride",
+              "n_cols",
+              "BLOCK_SIZE"
+            ],
+            "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+            "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1",
+            "tensor_map_relations": [],
+            "value_dimension_relations": [
+              {
+                "dimension_ref": "h1",
+                "provenance": "explicit_shape_coordinate",
+                "relation": "eq",
+                "value_ref": "n_cols"
+              }
+            ]
+          },
+          "execution_generated_target_source_manifest_digest": "8fbbee31ac5e487e2fc971da75a526e43620d6e4455b49eac1f15fb908744628",
+          "execution_stage": "source_execution",
+          "final_generated_target_source_manifest": null,
+          "final_generated_target_source_manifest_digest": null,
+          "frontend_compat": {
+            "normalized_sha256": "7850004e92088a69c48b97e276a7a200a5b36e9293d585560491d97e1c844fae",
+            "protocol": "triton_static_dot_transpose_v1",
+            "rewrite_count": 0
+          },
+          "function": "scrc_k0",
+          "generated_target_source_manifest": {
+            "arguments": [
+              {
+                "category": "buffer",
+                "dtype": "f32",
+                "logical_dtype": null,
+                "name": "Y_ptr",
+                "output_key": "y",
+                "role": "output",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "shape_coordinate": null,
+                "strides": null,
+                "value": null
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i64",
+                "logical_dtype": null,
+                "name": "Y_row_stride",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "buffer",
+                "dtype": "f32",
+                "logical_dtype": null,
+                "name": "X_ptr",
+                "output_key": null,
+                "role": "input",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "shape_coordinate": null,
+                "strides": null,
+                "value": null
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i64",
+                "logical_dtype": null,
+                "name": "X_row_stride",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "runtime_scalar",
+                "dtype": "i32",
+                "logical_dtype": null,
+                "name": "n_cols",
+                "output_key": null,
+                "role": "value",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": "h1",
+                "strides": null,
+                "value": 127
+              },
+              {
+                "category": "c_slot",
+                "dtype": "i32",
+                "logical_dtype": null,
+                "name": "BLOCK_SIZE",
+                "output_key": null,
+                "role": "constexpr",
+                "shape": null,
+                "shape_contract": null,
+                "shape_coordinate": null,
+                "strides": null,
+                "value": 128
+              }
+            ],
+            "c_slot_order": [
+              "BLOCK_SIZE"
+            ],
+            "c_slot_values": {
+              "BLOCK_SIZE": 128
+            },
+            "c_source_constexpr_parameters": [
+              "BLOCK_SIZE"
+            ],
+            "compiler_slot_order": [],
+            "constexpr_parameter_order": [
+              "BLOCK_SIZE"
+            ],
+            "contract_ir_digest": "555f7796c11a71befc623a6cfcb1a6952fc9d41be1bab8ac2a8138e526ab377a",
+            "device_entry_symbol": "_softmax_single_block_forward_kernel",
+            "dimension_relations": [],
+            "e_c_interface_digest": "ebaa7b33eb9e11c6693b0835eca01e254b1398f5b093a5c2316f05fa1cca223b",
+            "execution_device_entry_symbol": null,
+            "execution_source_location": null,
+            "execution_source_sha256": null,
+            "execution_source_slice_sha256": null,
+            "grid": [
+              2
+            ],
+            "grid_contract": [
+              "rows"
+            ],
+            "grid_shape_coordinates": [
+              "h0"
+            ],
+            "j_digest": "7120070f1dd040e9237bf34559365ca9966eb569984108642c37eced25b2eb0e",
+            "j_dimension_relations": [],
+            "j_value_dimension_relations": [
+              {
+                "dimension_ref": "x1",
+                "relation": "eq",
+                "value_ref": "t1"
+              }
+            ],
+            "layout_relations": [
+              {
+                "layout": null,
+                "logical_dtype": "f32",
+                "memory_space": null,
+                "parameter": "Y_ptr",
+                "physical_dtype": "f32",
+                "physical_kind": "buffer",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "strides": null
+              },
+              {
+                "layout": null,
+                "logical_dtype": "f32",
+                "memory_space": null,
+                "parameter": "X_ptr",
+                "physical_dtype": "f32",
+                "physical_kind": "buffer",
+                "shape": [
+                  2,
+                  127
+                ],
+                "shape_contract": [
+                  "h0",
+                  "h1"
+                ],
+                "strides": null
+              }
+            ],
+            "lifecycle_records": [],
+            "output_bindings": [
+              {
+                "output_key": "y",
+                "parameter": "Y_ptr",
+                "role": "output"
+              }
+            ],
+            "protocol": "intentir.generated-target-source-manifest",
+            "runtime_parameter_order": [
+              "Y_ptr",
+              "Y_row_stride",
+              "X_ptr",
+              "X_row_stride",
+              "n_cols"
+            ],
+            "runtime_scalar_values": {
+              "X_row_stride": 127,
+              "Y_row_stride": 127,
+              "n_cols": 127
+            },
+            "semantic_constexpr_parameters": [],
+            "semantic_constexpr_values": {},
+            "shape_coordinate_bindings": [
+              {
+                "axis": 0,
+                "coordinate": "h0",
+                "extent": 2,
+                "parameter": "Y_ptr"
+              },
+              {
+                "axis": 1,
+                "coordinate": "h1",
+                "extent": 127,
+                "parameter": "Y_ptr"
+              },
+              {
+                "axis": 0,
+                "coordinate": "h0",
+                "extent": 2,
+                "parameter": "X_ptr"
+              },
+              {
+                "axis": 1,
+                "coordinate": "h1",
+                "extent": 127,
+                "parameter": "X_ptr"
+              }
+            ],
+            "shape_coordinate_values": {
+              "h0": 2,
+              "h1": 127
+            },
+            "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+            "source_parameter_order": [
+              "Y_ptr",
+              "Y_row_stride",
+              "X_ptr",
+              "X_row_stride",
+              "n_cols",
+              "BLOCK_SIZE"
+            ],
+            "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+            "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1",
+            "tensor_map_relations": [],
+            "value_dimension_relations": [
+              {
+                "dimension_ref": "h1",
+                "provenance": "explicit_shape_coordinate",
+                "relation": "eq",
+                "value_ref": "n_cols"
+              }
+            ]
+          },
+          "generated_target_source_manifest_digest": "8fbbee31ac5e487e2fc971da75a526e43620d6e4455b49eac1f15fb908744628",
+          "grid": [
+            2
+          ],
+          "lineage_required": true,
+          "manifest_grid": [
+            2
+          ],
+          "manifest_grid_contract": [
+            "rows"
+          ],
+          "manifest_output_binding_digest": "e5d8a290786d7d0dfae817e776d4f6b459d9961a9ed82962046226ca637ca293",
+          "output_binding_digest": "f13211bb72e0919e8ea626d504864403988a8d987c8a48059bf11c3fe722d751",
+          "output_digest": "6c3ef23974273ea0aafb399ce6a8e6afd52e717e2b9c2a55d3236a12e4e24bef",
+          "program_execution_sha256": "7850004e92088a69c48b97e276a7a200a5b36e9293d585560491d97e1c844fae",
+          "program_source_sha256": "7850004e92088a69c48b97e276a7a200a5b36e9293d585560491d97e1c844fae",
+          "reingress_source_slice_sha256": null,
+          "source_execution_program_sha256": "7850004e92088a69c48b97e276a7a200a5b36e9293d585560491d97e1c844fae",
+          "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+          "source_parameter_order": [
+            "Y_ptr",
+            "Y_row_stride",
+            "X_ptr",
+            "X_row_stride",
+            "n_cols",
+            "BLOCK_SIZE"
+          ],
+          "source_program_sha256": "7850004e92088a69c48b97e276a7a200a5b36e9293d585560491d97e1c844fae",
+          "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+          "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1"
+        },
+        "ok": true,
+        "outputs": {
+          "y": {
+            "dtype": "float32",
+            "shape": [
+              2,
+              127
+            ]
+          }
+        },
+        "unsupported": false
+      },
+      "source_j": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": true,
+            "equality_required": true,
+            "max_abs_error": 2.7939677238464355e-09,
+            "output": "y",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v2",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v2",
+        "right": "j"
+      },
+      "source_replay": {
+        "left": "source",
+        "outputs": [
+          {
+            "atol": 1e-06,
+            "detail": "",
+            "equal_nan": true,
+            "equality_required": true,
+            "max_abs_error": 0.0,
+            "output": "y",
+            "passed": true,
+            "policy_id": "intentir.gate2.default.v2",
+            "relation_kind": "tolerance",
+            "rtol": 1e-05
+          }
+        ],
+        "passed": true,
+        "policy_id": "intentir.gate2.default.v2",
+        "right": "replay"
+      },
+      "status": "gate2_pass"
+    }
+  ],
+  "failed_case_ids": [],
+  "manifest_lineage": {
+    "c_slot_order": [
+      "BLOCK_SIZE"
+    ],
+    "compiler_slot_order": [],
+    "constexpr_parameter_order": [
+      "BLOCK_SIZE"
+    ],
+    "device_entry_symbol": "_softmax_single_block_forward_kernel",
+    "execution_generated_target_source_manifest": {
+      "arguments": [
+        {
+          "category": "buffer",
+          "dtype": "f32",
+          "logical_dtype": null,
+          "name": "Y_ptr",
+          "output_key": "y",
+          "role": "output",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "shape_coordinate": null,
+          "strides": null,
+          "value": null
+        },
+        {
+          "category": "runtime_scalar",
+          "dtype": "i64",
+          "logical_dtype": null,
+          "name": "Y_row_stride",
+          "output_key": null,
+          "role": "value",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": null,
+          "strides": null,
+          "value": 127
+        },
+        {
+          "category": "buffer",
+          "dtype": "f32",
+          "logical_dtype": null,
+          "name": "X_ptr",
+          "output_key": null,
+          "role": "input",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "shape_coordinate": null,
+          "strides": null,
+          "value": null
+        },
+        {
+          "category": "runtime_scalar",
+          "dtype": "i64",
+          "logical_dtype": null,
+          "name": "X_row_stride",
+          "output_key": null,
+          "role": "value",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": null,
+          "strides": null,
+          "value": 127
+        },
+        {
+          "category": "runtime_scalar",
+          "dtype": "i32",
+          "logical_dtype": null,
+          "name": "n_cols",
+          "output_key": null,
+          "role": "value",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": "h1",
+          "strides": null,
+          "value": 127
+        },
+        {
+          "category": "c_slot",
+          "dtype": "i32",
+          "logical_dtype": null,
+          "name": "BLOCK_SIZE",
+          "output_key": null,
+          "role": "constexpr",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": null,
+          "strides": null,
+          "value": 128
+        }
+      ],
+      "c_slot_order": [
+        "BLOCK_SIZE"
+      ],
+      "c_slot_values": {
+        "BLOCK_SIZE": 128
+      },
+      "c_source_constexpr_parameters": [
+        "BLOCK_SIZE"
+      ],
+      "compiler_slot_order": [],
+      "constexpr_parameter_order": [
+        "BLOCK_SIZE"
+      ],
+      "contract_ir_digest": "555f7796c11a71befc623a6cfcb1a6952fc9d41be1bab8ac2a8138e526ab377a",
+      "device_entry_symbol": "_softmax_single_block_forward_kernel",
+      "dimension_relations": [],
+      "e_c_interface_digest": "ebaa7b33eb9e11c6693b0835eca01e254b1398f5b093a5c2316f05fa1cca223b",
+      "execution_device_entry_symbol": null,
+      "execution_source_location": null,
+      "execution_source_sha256": null,
+      "execution_source_slice_sha256": null,
+      "grid": [
+        2
+      ],
+      "grid_contract": [
+        "rows"
+      ],
+      "grid_shape_coordinates": [
+        "h0"
+      ],
+      "j_digest": "7120070f1dd040e9237bf34559365ca9966eb569984108642c37eced25b2eb0e",
+      "j_dimension_relations": [],
+      "j_value_dimension_relations": [
+        {
+          "dimension_ref": "x1",
+          "relation": "eq",
+          "value_ref": "t1"
+        }
+      ],
+      "layout_relations": [
+        {
+          "layout": null,
+          "logical_dtype": "f32",
+          "memory_space": null,
+          "parameter": "Y_ptr",
+          "physical_dtype": "f32",
+          "physical_kind": "buffer",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "strides": null
+        },
+        {
+          "layout": null,
+          "logical_dtype": "f32",
+          "memory_space": null,
+          "parameter": "X_ptr",
+          "physical_dtype": "f32",
+          "physical_kind": "buffer",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "strides": null
+        }
+      ],
+      "lifecycle_records": [],
+      "output_bindings": [
+        {
+          "output_key": "y",
+          "parameter": "Y_ptr",
+          "role": "output"
+        }
+      ],
+      "protocol": "intentir.generated-target-source-manifest",
+      "runtime_parameter_order": [
+        "Y_ptr",
+        "Y_row_stride",
+        "X_ptr",
+        "X_row_stride",
+        "n_cols"
+      ],
+      "runtime_scalar_values": {
+        "X_row_stride": 127,
+        "Y_row_stride": 127,
+        "n_cols": 127
+      },
+      "semantic_constexpr_parameters": [],
+      "semantic_constexpr_values": {},
+      "shape_coordinate_bindings": [
+        {
+          "axis": 0,
+          "coordinate": "h0",
+          "extent": 2,
+          "parameter": "Y_ptr"
+        },
+        {
+          "axis": 1,
+          "coordinate": "h1",
+          "extent": 127,
+          "parameter": "Y_ptr"
+        },
+        {
+          "axis": 0,
+          "coordinate": "h0",
+          "extent": 2,
+          "parameter": "X_ptr"
+        },
+        {
+          "axis": 1,
+          "coordinate": "h1",
+          "extent": 127,
+          "parameter": "X_ptr"
+        }
+      ],
+      "shape_coordinate_values": {
+        "h0": 2,
+        "h1": 127
+      },
+      "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+      "source_parameter_order": [
+        "Y_ptr",
+        "Y_row_stride",
+        "X_ptr",
+        "X_row_stride",
+        "n_cols",
+        "BLOCK_SIZE"
+      ],
+      "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+      "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1",
+      "tensor_map_relations": [],
+      "value_dimension_relations": [
+        {
+          "dimension_ref": "h1",
+          "provenance": "explicit_shape_coordinate",
+          "relation": "eq",
+          "value_ref": "n_cols"
+        }
+      ]
+    },
+    "execution_generated_target_source_manifest_digest": "8fbbee31ac5e487e2fc971da75a526e43620d6e4455b49eac1f15fb908744628",
+    "final_generated_target_source_manifest": {
+      "arguments": [
+        {
+          "category": "buffer",
+          "dtype": "f32",
+          "logical_dtype": null,
+          "name": "Y_ptr",
+          "output_key": "y",
+          "role": "output",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "shape_coordinate": null,
+          "strides": null,
+          "value": null
+        },
+        {
+          "category": "runtime_scalar",
+          "dtype": "i64",
+          "logical_dtype": null,
+          "name": "Y_row_stride",
+          "output_key": null,
+          "role": "value",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": null,
+          "strides": null,
+          "value": 127
+        },
+        {
+          "category": "buffer",
+          "dtype": "f32",
+          "logical_dtype": null,
+          "name": "X_ptr",
+          "output_key": null,
+          "role": "input",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "shape_coordinate": null,
+          "strides": null,
+          "value": null
+        },
+        {
+          "category": "runtime_scalar",
+          "dtype": "i64",
+          "logical_dtype": null,
+          "name": "X_row_stride",
+          "output_key": null,
+          "role": "value",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": null,
+          "strides": null,
+          "value": 127
+        },
+        {
+          "category": "runtime_scalar",
+          "dtype": "i32",
+          "logical_dtype": null,
+          "name": "n_cols",
+          "output_key": null,
+          "role": "value",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": "h1",
+          "strides": null,
+          "value": 127
+        },
+        {
+          "category": "c_slot",
+          "dtype": "i32",
+          "logical_dtype": null,
+          "name": "BLOCK_SIZE",
+          "output_key": null,
+          "role": "constexpr",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": null,
+          "strides": null,
+          "value": 128
+        }
+      ],
+      "c_slot_order": [
+        "BLOCK_SIZE"
+      ],
+      "c_slot_values": {
+        "BLOCK_SIZE": 128
+      },
+      "c_source_constexpr_parameters": [
+        "BLOCK_SIZE"
+      ],
+      "compiler_slot_order": [],
+      "constexpr_parameter_order": [
+        "BLOCK_SIZE"
+      ],
+      "contract_ir_digest": "555f7796c11a71befc623a6cfcb1a6952fc9d41be1bab8ac2a8138e526ab377a",
+      "device_entry_symbol": "_softmax_single_block_forward_kernel",
+      "dimension_relations": [],
+      "e_c_interface_digest": "ebaa7b33eb9e11c6693b0835eca01e254b1398f5b093a5c2316f05fa1cca223b",
+      "execution_device_entry_symbol": null,
+      "execution_source_location": null,
+      "execution_source_sha256": null,
+      "execution_source_slice_sha256": null,
+      "grid": [
+        2
+      ],
+      "grid_contract": [
+        "rows"
+      ],
+      "grid_shape_coordinates": [
+        "h0"
+      ],
+      "j_digest": "7120070f1dd040e9237bf34559365ca9966eb569984108642c37eced25b2eb0e",
+      "j_dimension_relations": [],
+      "j_value_dimension_relations": [
+        {
+          "dimension_ref": "x1",
+          "relation": "eq",
+          "value_ref": "t1"
+        }
+      ],
+      "layout_relations": [
+        {
+          "layout": null,
+          "logical_dtype": "f32",
+          "memory_space": null,
+          "parameter": "Y_ptr",
+          "physical_dtype": "f32",
+          "physical_kind": "buffer",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "strides": null
+        },
+        {
+          "layout": null,
+          "logical_dtype": "f32",
+          "memory_space": null,
+          "parameter": "X_ptr",
+          "physical_dtype": "f32",
+          "physical_kind": "buffer",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "strides": null
+        }
+      ],
+      "lifecycle_records": [
+        {
+          "artifact_digest": "bd814000376a2d0c8246e9fb0948931cc2c27fecedfab7d9054308e4e37d8ace",
+          "artifact_kind": "triton.compiled_pair",
+          "consumer": "gate2.triton.source+replay",
+          "output_binding_digest": null,
+          "output_digest": null,
+          "phase": "source_compile",
+          "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1"
+        },
+        {
+          "artifact_digest": "bd814000376a2d0c8246e9fb0948931cc2c27fecedfab7d9054308e4e37d8ace",
+          "artifact_kind": "triton.compiled_pair",
+          "consumer": "gate2.triton.source+replay",
+          "output_binding_digest": "47036058e19a0563a7fa9ec4e4c831c8fcd7bf91200defff77f4a21d627bcd22",
+          "output_digest": null,
+          "phase": "source_execute",
+          "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1"
+        },
+        {
+          "artifact_digest": "a494c6b03d8a62f8d9bbd17cd5f51a3757c1d5d391b5c809193766ece4a39bef",
+          "artifact_kind": "outputs",
+          "consumer": "gate2.triton.source+replay+j",
+          "output_binding_digest": "0fe0ab143d5c65df64cd7e14d08b28bf12ee28b551c2b940571bbc844b50d509",
+          "output_digest": "a494c6b03d8a62f8d9bbd17cd5f51a3757c1d5d391b5c809193766ece4a39bef",
+          "phase": "output_digest",
+          "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1"
+        }
+      ],
+      "output_bindings": [
+        {
+          "output_key": "y",
+          "parameter": "Y_ptr",
+          "role": "output"
+        }
+      ],
+      "protocol": "intentir.generated-target-source-manifest",
+      "runtime_parameter_order": [
+        "Y_ptr",
+        "Y_row_stride",
+        "X_ptr",
+        "X_row_stride",
+        "n_cols"
+      ],
+      "runtime_scalar_values": {
+        "X_row_stride": 127,
+        "Y_row_stride": 127,
+        "n_cols": 127
+      },
+      "semantic_constexpr_parameters": [],
+      "semantic_constexpr_values": {},
+      "shape_coordinate_bindings": [
+        {
+          "axis": 0,
+          "coordinate": "h0",
+          "extent": 2,
+          "parameter": "Y_ptr"
+        },
+        {
+          "axis": 1,
+          "coordinate": "h1",
+          "extent": 127,
+          "parameter": "Y_ptr"
+        },
+        {
+          "axis": 0,
+          "coordinate": "h0",
+          "extent": 2,
+          "parameter": "X_ptr"
+        },
+        {
+          "axis": 1,
+          "coordinate": "h1",
+          "extent": 127,
+          "parameter": "X_ptr"
+        }
+      ],
+      "shape_coordinate_values": {
+        "h0": 2,
+        "h1": 127
+      },
+      "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+      "source_parameter_order": [
+        "Y_ptr",
+        "Y_row_stride",
+        "X_ptr",
+        "X_row_stride",
+        "n_cols",
+        "BLOCK_SIZE"
+      ],
+      "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+      "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1",
+      "tensor_map_relations": [],
+      "value_dimension_relations": [
+        {
+          "dimension_ref": "h1",
+          "provenance": "explicit_shape_coordinate",
+          "relation": "eq",
+          "value_ref": "n_cols"
+        }
+      ]
+    },
+    "final_generated_target_source_manifest_digest": "74c5eead953c1463364c1f4fb719c99c9fc001b94f74076fd72b5d86fb383b28",
+    "generated_target_source_manifest": {
+      "arguments": [
+        {
+          "category": "buffer",
+          "dtype": "f32",
+          "logical_dtype": null,
+          "name": "Y_ptr",
+          "output_key": "y",
+          "role": "output",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "shape_coordinate": null,
+          "strides": null,
+          "value": null
+        },
+        {
+          "category": "runtime_scalar",
+          "dtype": "i64",
+          "logical_dtype": null,
+          "name": "Y_row_stride",
+          "output_key": null,
+          "role": "value",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": null,
+          "strides": null,
+          "value": 127
+        },
+        {
+          "category": "buffer",
+          "dtype": "f32",
+          "logical_dtype": null,
+          "name": "X_ptr",
+          "output_key": null,
+          "role": "input",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "shape_coordinate": null,
+          "strides": null,
+          "value": null
+        },
+        {
+          "category": "runtime_scalar",
+          "dtype": "i64",
+          "logical_dtype": null,
+          "name": "X_row_stride",
+          "output_key": null,
+          "role": "value",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": null,
+          "strides": null,
+          "value": 127
+        },
+        {
+          "category": "runtime_scalar",
+          "dtype": "i32",
+          "logical_dtype": null,
+          "name": "n_cols",
+          "output_key": null,
+          "role": "value",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": "h1",
+          "strides": null,
+          "value": 127
+        },
+        {
+          "category": "c_slot",
+          "dtype": "i32",
+          "logical_dtype": null,
+          "name": "BLOCK_SIZE",
+          "output_key": null,
+          "role": "constexpr",
+          "shape": null,
+          "shape_contract": null,
+          "shape_coordinate": null,
+          "strides": null,
+          "value": 128
+        }
+      ],
+      "c_slot_order": [
+        "BLOCK_SIZE"
+      ],
+      "c_slot_values": {
+        "BLOCK_SIZE": 128
+      },
+      "c_source_constexpr_parameters": [
+        "BLOCK_SIZE"
+      ],
+      "compiler_slot_order": [],
+      "constexpr_parameter_order": [
+        "BLOCK_SIZE"
+      ],
+      "contract_ir_digest": "555f7796c11a71befc623a6cfcb1a6952fc9d41be1bab8ac2a8138e526ab377a",
+      "device_entry_symbol": "_softmax_single_block_forward_kernel",
+      "dimension_relations": [],
+      "e_c_interface_digest": "ebaa7b33eb9e11c6693b0835eca01e254b1398f5b093a5c2316f05fa1cca223b",
+      "execution_device_entry_symbol": null,
+      "execution_source_location": null,
+      "execution_source_sha256": null,
+      "execution_source_slice_sha256": null,
+      "grid": [
+        2
+      ],
+      "grid_contract": [
+        "rows"
+      ],
+      "grid_shape_coordinates": [
+        "h0"
+      ],
+      "j_digest": "7120070f1dd040e9237bf34559365ca9966eb569984108642c37eced25b2eb0e",
+      "j_dimension_relations": [],
+      "j_value_dimension_relations": [
+        {
+          "dimension_ref": "x1",
+          "relation": "eq",
+          "value_ref": "t1"
+        }
+      ],
+      "layout_relations": [
+        {
+          "layout": null,
+          "logical_dtype": "f32",
+          "memory_space": null,
+          "parameter": "Y_ptr",
+          "physical_dtype": "f32",
+          "physical_kind": "buffer",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "strides": null
+        },
+        {
+          "layout": null,
+          "logical_dtype": "f32",
+          "memory_space": null,
+          "parameter": "X_ptr",
+          "physical_dtype": "f32",
+          "physical_kind": "buffer",
+          "shape": [
+            2,
+            127
+          ],
+          "shape_contract": [
+            "h0",
+            "h1"
+          ],
+          "strides": null
+        }
+      ],
+      "lifecycle_records": [],
+      "output_bindings": [
+        {
+          "output_key": "y",
+          "parameter": "Y_ptr",
+          "role": "output"
+        }
+      ],
+      "protocol": "intentir.generated-target-source-manifest",
+      "runtime_parameter_order": [
+        "Y_ptr",
+        "Y_row_stride",
+        "X_ptr",
+        "X_row_stride",
+        "n_cols"
+      ],
+      "runtime_scalar_values": {
+        "X_row_stride": 127,
+        "Y_row_stride": 127,
+        "n_cols": 127
+      },
+      "semantic_constexpr_parameters": [],
+      "semantic_constexpr_values": {},
+      "shape_coordinate_bindings": [
+        {
+          "axis": 0,
+          "coordinate": "h0",
+          "extent": 2,
+          "parameter": "Y_ptr"
+        },
+        {
+          "axis": 1,
+          "coordinate": "h1",
+          "extent": 127,
+          "parameter": "Y_ptr"
+        },
+        {
+          "axis": 0,
+          "coordinate": "h0",
+          "extent": 2,
+          "parameter": "X_ptr"
+        },
+        {
+          "axis": 1,
+          "coordinate": "h1",
+          "extent": 127,
+          "parameter": "X_ptr"
+        }
+      ],
+      "shape_coordinate_values": {
+        "h0": 2,
+        "h1": 127
+      },
+      "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+      "source_parameter_order": [
+        "Y_ptr",
+        "Y_row_stride",
+        "X_ptr",
+        "X_row_stride",
+        "n_cols",
+        "BLOCK_SIZE"
+      ],
+      "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+      "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1",
+      "tensor_map_relations": [],
+      "value_dimension_relations": [
+        {
+          "dimension_ref": "h1",
+          "provenance": "explicit_shape_coordinate",
+          "relation": "eq",
+          "value_ref": "n_cols"
+        }
+      ]
+    },
+    "generated_target_source_manifest_digest": "8fbbee31ac5e487e2fc971da75a526e43620d6e4455b49eac1f15fb908744628",
+    "lineage_required": true,
+    "manifest_grid": [
+      2
+    ],
+    "manifest_grid_contract": [
+      "rows"
+    ],
+    "manifest_output_binding_digest": "e5d8a290786d7d0dfae817e776d4f6b459d9961a9ed82962046226ca637ca293",
+    "reingress_source_slice_sha256": null,
+    "source_location": "dataset://Liger-Kernel/src/liger_kernel/ops/softmax.py",
+    "source_parameter_order": [
+      "Y_ptr",
+      "Y_row_stride",
+      "X_ptr",
+      "X_row_stride",
+      "n_cols",
+      "BLOCK_SIZE"
+    ],
+    "source_sha256": "b60391c7a30ad480c3b592aa19aae3d083c8563a802045175d83e28a785176d2",
+    "source_slice_sha256": "1363f3d9f060eafb65ab32d847f3439461ad0428eb7a200ab2ded4ae24dc11b1"
+  },
+  "passed": true,
+  "status_counts": {
+    "gate2_pass": 1
+  },
+  "suite_id": "high_performance:liger_softmax"
+}
