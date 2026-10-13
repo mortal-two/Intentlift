@@ -36,6 +36,7 @@ class BatchClassification(str, Enum):
     CASE_UNAVAILABLE = "case_unavailable"
     HARNESS_INVALID = "harness_invalid"
     OBSERVER_UNSUPPORTED = "observer_unsupported"
+    LIFT_PROVIDER_PREPARATION = "lift_provider_preparation"
     LIFT_RESPONSE_REJECTED = "lift_response_rejected"
     TYPECHECK_FAILED = "typecheck_failed"
     REPLAY_RESPONSE_REJECTED = "replay_response_rejected"
@@ -214,25 +215,35 @@ class ConcurrentSCRCBatchRunner:
             return BatchReport(mode, (), scheduling_values)
 
         completed: dict[int, BatchCaseResult] = {}
-        with ThreadPoolExecutor(
-            max_workers=min(self.case_workers, len(indexed_entries)),
-            thread_name_prefix="scrc-case",
-        ) as pool:
-            future_to_index = {
-                pool.submit(_validated_case_result, entry, executor): index
-                for index, entry in indexed_entries
-            }
-            for future in as_completed(future_to_index):
-                index = future_to_index[future]
-                # _validated_case_result contains the case-local exception
-                # boundary.  This fallback covers executor-level failures such
-                # as a broken Future implementation without cancelling peers.
-                try:
-                    completed[index] = future.result()
-                except Exception as exc:  # pragma: no cover - defensive only
-                    completed[index] = _infrastructure_failure(
-                        indexed_entries[index][1], exc
-                    )
+        # A one-case live run is intentionally executed by the process main
+        # thread.  The Responses model's fail-closed SSE deadline uses the
+        # main-thread interval timer; wrapping this degenerate case in a
+        # ThreadPoolExecutor silently disables that deadline because Python
+        # signals cannot interrupt a worker thread.  Multi-case batches keep
+        # their bounded parallel isolation below.
+        if self.case_workers == 1 and len(indexed_entries) == 1:
+            index, entry = indexed_entries[0]
+            completed[index] = _validated_case_result(entry, executor)
+        else:
+            with ThreadPoolExecutor(
+                max_workers=min(self.case_workers, len(indexed_entries)),
+                thread_name_prefix="scrc-case",
+            ) as pool:
+                future_to_index = {
+                    pool.submit(_validated_case_result, entry, executor): index
+                    for index, entry in indexed_entries
+                }
+                for future in as_completed(future_to_index):
+                    index = future_to_index[future]
+                    # _validated_case_result contains the case-local exception
+                    # boundary.  This fallback covers executor-level failures such
+                    # as a broken Future implementation without cancelling peers.
+                    try:
+                        completed[index] = future.result()
+                    except Exception as exc:  # pragma: no cover - defensive only
+                        completed[index] = _infrastructure_failure(
+                            indexed_entries[index][1], exc
+                        )
 
         # Completion order is proof-irrelevant.  Registry ordinals determine
         # the aggregate order; declaration position only breaks malformed ties

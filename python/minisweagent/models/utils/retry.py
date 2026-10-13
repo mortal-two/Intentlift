@@ -5,12 +5,35 @@ from collections.abc import Callable
 
 from tenacity import (
     Retrying,
-    before_sleep_log,
     retry_if_exception,
     retry_if_not_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
+
+
+def _before_sleep_sanitized(logger: logging.Logger) -> Callable:
+    """Produce a retry callback that never prints provider exception text.
+
+    Transport relays can embed request identifiers, endpoint information, or
+    their complete error body in an exception's string representation.
+    Tenacity's stock ``before_sleep_log`` formats that representation directly.
+    The retry receipt needs only the exception class and attempt ordinal; the
+    caller's structured evidence remains the authority for the safe failure
+    classification.
+    """
+
+    def callback(retry_state) -> None:
+        outcome = retry_state.outcome
+        exc = outcome.exception() if outcome is not None else None
+        exception_name = type(exc).__name__ if exc is not None else "UnknownError"
+        logger.warning(
+            "retrying provider transport after %s; next attempt=%d",
+            exception_name,
+            retry_state.attempt_number + 1,
+        )
+
+    return callback
 
 
 def retry(
@@ -47,6 +70,6 @@ def retry(
         reraise=True,
         stop=stop_after_attempt(max_attempts),
         wait=wait_exponential(multiplier=1, min=4, max=60),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
+        before_sleep=_before_sleep_sanitized(logger),
         retry=retry_condition,
     )

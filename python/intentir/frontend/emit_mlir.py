@@ -29,8 +29,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import math
 import re
-from typing import AbstractSet
-
+from typing import Any
 from intentir.ir.intent_op_contract import (
     ATOMIC_CAS_RETRIES,
     ATOMIC_KINDS,
@@ -45,6 +44,7 @@ from intentir.ir.intent_op_contract import (
     MAP_UNARY_FNS,
     MAP_UNARY_PREDICATE_FNS,
     RAGGED_OPS,
+    _broadcast_projection,
     canonicalize_dtype,
     map_binary_result_dtype,
     map_unary_result_dtype,
@@ -301,131 +301,6 @@ def _broadcast_checked(
             )
         result.append(max(left, right))
     return result
-
-
-def _broadcast_projection(
-    shape: list[object] | None,
-    axes: Sequence[int],
-    target_shape: Sequence[object] | None = None,
-    *,
-    unit_dimensions: AbstractSet[str] = frozenset(),
-) -> tuple[list[object] | None, tuple[int, ...]]:
-    """Project one operand onto the consumer rank using Layer-B axes.
-
-    A broadcast axis may already exist as a size-one dimension (``[M, 1]``
-    broadcast over axis 1) or may be absent from a lower-rank operand
-    (``[N]`` broadcast over axis 0 into ``[M, N]``).  Only the latter case
-    requires ``tensor.expand_shape`` rank insertion.  When a consumer shape is
-    available, preserve the operand dimensions in order and allow dimensions
-    to be omitted only at declared broadcast axes.
-    """
-
-    if shape is None:
-        return None, ()
-    if not axes:
-        return list(shape), ()
-    target_rank = (
-        len(target_shape)
-        if target_shape is not None
-        else len(shape) + len(axes)
-    )
-    normalized: list[int] = []
-    for raw_axis in axes:
-        if isinstance(raw_axis, bool) or not isinstance(raw_axis, int):
-            raise NotImplementedError(
-                "emit_mlir broadcast axes currently require integer positions"
-            )
-        axis = raw_axis if raw_axis >= 0 else raw_axis + target_rank
-        if axis < 0 or axis >= target_rank:
-            raise ValueError(
-                f"broadcast axis {raw_axis} is outside target rank {target_rank}"
-            )
-        normalized.append(axis)
-    if len(set(normalized)) != len(normalized):
-        raise ValueError("broadcast axes must be unique")
-
-    if target_shape is None:
-        inserted = set(normalized)
-        source = iter(shape)
-        return (
-            [
-                1 if index in inserted else next(source)
-                for index in range(target_rank)
-            ],
-            tuple(sorted(inserted)),
-        )
-
-    target = list(target_shape)
-    if len(shape) > target_rank:
-        raise ValueError(
-            f"broadcast axes {list(axes)} cannot project rank {len(shape)} "
-            f"operand to consumer rank {target_rank}"
-        )
-    if not shape:
-        # A rank-0 tensor uses the empty affine input map and therefore
-        # broadcasts across the complete consumer domain without materializing
-        # rank insertion.  Boundary axes remain audited semantic facts, but
-        # need not enumerate every consumer dimension for a scalar.
-        return [1] * target_rank, tuple(range(target_rank))
-    axis_set = set(normalized)
-    memo: dict[tuple[int, int], tuple[int, ...] | None] = {}
-
-    def is_unit(extent: object) -> bool:
-        return extent == 1 or (
-            isinstance(extent, str) and extent in unit_dimensions
-        )
-
-    def same_extent(left: object, right: object) -> bool:
-        return left == right or (is_unit(left) and is_unit(right))
-
-    def align(source_index: int, target_index: int) -> tuple[int, ...] | None:
-        key = (source_index, target_index)
-        if key in memo:
-            return memo[key]
-        if target_index == target_rank:
-            result = () if source_index == len(shape) else None
-            memo[key] = result
-            return result
-
-        if target_index in axis_set:
-            # Prefer retaining an already-present singleton at the same target
-            # position.  If that cannot complete the alignment, treat this
-            # declared broadcast axis as the missing rank dimension.
-            if source_index < len(shape) and is_unit(shape[source_index]):
-                suffix = align(source_index + 1, target_index + 1)
-                if suffix is not None:
-                    memo[key] = suffix
-                    return suffix
-            suffix = align(source_index, target_index + 1)
-            if suffix is not None:
-                result = (target_index, *suffix)
-                memo[key] = result
-                return result
-        elif (
-            source_index < len(shape)
-            and same_extent(shape[source_index], target[target_index])
-        ):
-            suffix = align(source_index + 1, target_index + 1)
-            if suffix is not None:
-                memo[key] = suffix
-                return suffix
-
-        memo[key] = None
-        return None
-
-    inserted_axes = align(0, 0)
-    if inserted_axes is None:
-        raise ValueError(
-            f"operand shape {shape} cannot align with consumer shape {target} "
-            f"using broadcast axes {list(axes)}; existing broadcast "
-            "dimensions must be size one and missing dimensions must be "
-            "declared broadcast axes"
-        )
-    projected = [
-        1 if index in axis_set else target_extent
-        for index, target_extent in enumerate(target)
-    ]
-    return projected, inserted_axes
 
 
 def _insert_broadcast_axes(
@@ -1126,7 +1001,7 @@ def _infer_op(
             d, env, raw_ranks, context="gather data operand"
         )
         axis = _fold_axis(raw_axis, raw_rank, fold)
-        mode = op.attrs.get("mode", "along_axis")
+        mode = op.attrs["mode"]
         if mode not in {"along_axis", "take"}:
             raise ValueError(
                 f"emit_mlir: gather mode {mode!r} is not supported"
@@ -1509,9 +1384,12 @@ def _declared_op_dtype(op: IntentOp) -> str | None:
 
 
 def _cast_target_dtype(attrs: Mapping[str, object]) -> str:
-    """Read canonical `to_dtype` and the archived `dtype` spelling."""
+    """Read the sole canonical cast target attribute."""
 
-    value = attrs.get("to_dtype", attrs.get("dtype"))
+    try:
+        value = attrs["to_dtype"]
+    except KeyError as exc:
+        raise ValueError("emit_mlir: cast requires attrs.to_dtype") from exc
     return _normalize_dtype(value, "cast target dtype")
 
 
@@ -1624,7 +1502,7 @@ def _operation_raw_result_rank(
     }:
         return known[0]
     if op.op == "gather":
-        mode = op.attrs.get("mode", "along_axis")
+        mode = op.attrs["mode"]
         data_rank = operand_ranks[0] if operand_ranks else None
         index_rank = operand_ranks[1] if len(operand_ranks) > 1 else None
         if mode == "along_axis" and index_rank is not None:
@@ -1996,7 +1874,22 @@ def _infer_op_dtypes(
     elif op.op == "arg_reduce":
         inferred = ["i32"]
     elif op.op == "iota":
-        inferred = [_normalize_dtype(a.get("dtype", "i32"), "iota dtype")]
+        # ``dtype`` is optional on the wire.  When it is omitted, the
+        # authored result type is the only available source-of-truth for the
+        # logical index width (for example ``type.dtype: index`` is the
+        # canonical i64 spelling).  Falling back to i32 unconditionally here
+        # makes a valid i64/index iota fail before TypeCheck and disagrees with
+        # the structured reference evaluator, which already uses the result
+        # type as the default.  An explicitly authored attrs.dtype remains
+        # authoritative and is checked against the result type below.
+        inferred = [
+            _normalize_dtype(
+                a["dtype"] if "dtype" in a else (
+                    _declared_op_dtype(op) or "i32"
+                ),
+                "iota dtype",
+            )
+        ]
     elif op.op == "nonzero":
         inferred = ["i64"]
     elif op.op in ("const", "rand"):
@@ -3725,7 +3618,7 @@ class _Printer:
                 self.raw_ranks,
                 context="gather data operand",
             )
-            mode = a.get("mode", "along_axis")
+            mode = a["mode"]
             # A bare IntentFunction has no Layer-B proof channel.  The caller
             # may pass only the exact projection derived from canonical J;
             # otherwise the target-specific authorization is never invented.
@@ -3809,6 +3702,7 @@ class _Printer:
             atomic = a.get("atomic")
             ordering = a.get("ordering")
             memory_scope = a.get("memory_scope")
+            scatter_reduce = a["reduce"] if op.op == "scatter" else "none"
             if op.op == "atomic_scatter" and atomic != "cas":
                 raise ValueError(
                     "emit_mlir: atomic_scatter requires atomic='cas'"
@@ -3833,7 +3727,7 @@ class _Printer:
                     raise ValueError(
                         "emit_mlir: atomic='cas' requires a closed memory_scope"
                     )
-                if a.get("reduce", "none") != "none":
+                if scatter_reduce != "none":
                     raise ValueError(
                         "emit_mlir: atomic='cas' requires reduce='none'"
                     )
@@ -3847,7 +3741,7 @@ class _Printer:
                 result_ssa = self.fresh(updated)
                 observed_ssa = self.fresh(observed)
                 rendered_attrs = (
-                    f'axis = {axis} : i64, mode = "{a.get("mode", "along_axis")}", '
+                    f'axis = {axis} : i64, mode = "{a["mode"]}", '
                     f'atomic = "cas", ordering = "{ordering}", '
                     f'memory_scope = "{memory_scope}", cas_retry = "{retry}"'
                 )
@@ -3884,11 +3778,11 @@ class _Printer:
                     raise ValueError(
                         "emit_mlir: atomic scatter requires a closed memory_scope"
                     )
-                if atomic == "add" and a.get("reduce", "none") != "add":
+                if atomic == "add" and scatter_reduce != "add":
                     raise ValueError(
                         "emit_mlir: atomic='add' requires reduce='add'"
                     )
-                if atomic == "cas" and a.get("reduce", "none") != "none":
+                if atomic == "cas" and scatter_reduce != "none":
                     raise ValueError(
                         "emit_mlir: atomic='cas' requires reduce='none'"
                     )
@@ -3900,8 +3794,8 @@ class _Printer:
                 )
             self.lines.append(
                 f'{indent}{r} = intent.scatter {d}, {i}, {s} '
-                f'{{axis = {axis} : i64, mode = "{a.get("mode", "along_axis")}", '
-                f'reduce = "{a.get("reduce", "none")}"{atomic_attrs}}} : '
+                f'{{axis = {axis} : i64, mode = "{a["mode"]}", '
+                f'reduce = "{scatter_reduce}"{atomic_attrs}}} : '
                 f'({td}, {ti}, {ts}) -> {self._ttn(op.result, env)}')
         elif op.op == "nonzero":
             # Dynamic-shape output (C8): [nnz, ndim] i64 index rows. The emitted
@@ -3994,8 +3888,13 @@ class _Printer:
                 f'{indent}{r} = intent.triu {x} {{k = {int(a.get("k", 0))} : i64}} : '
                 f'({self._ttn(op.operands[0], env)}) -> {self._ttn(op.result, env)}')
         elif op.op == "iota":
-            # Integer column-index vector; print its declared integer width.
-            dt = a.get("dtype", "i32")
+            # Integer column-index vector; print the explicit dtype, or the
+            # declared result dtype when the optional attribute is omitted.
+            # This is the same defaulting rule used by dtype inference and the
+            # structured reference evaluator.
+            dt = a.get("dtype")
+            if dt is None:
+                dt = self.dtypes.get(op.result) or _declared_op_dtype(op) or "i32"
             shape = env[op.result]
             if len(shape) != 1:
                 raise ValueError("iota result must resolve to rank 1")
@@ -4474,6 +4373,7 @@ def emit_module(
     proven_index_bounds: IndexBoundsProjection | None = None,
     value_dimension_equalities: Sequence[tuple[int, int]] = (),
     output_values: Mapping[str, str] | None = None,
+    canonical_output_bindings: Sequence[Any] | None = None,
     inplace_outputs: Sequence[int] = (),
     paired_rotation: tuple[str, tuple[int, int, int, int], tuple[int, ...]]
     | None = None,
@@ -4505,7 +4405,49 @@ def emit_module(
             )
         env[t.name] = _fold_shape(full, fold)
         _record_raw_rank(raw_ranks, t.name, len(full), "function input")
-    output_names = tuple(t.name for t in fn.outputs)
+    # The accepted construction record owns output order, logical type and
+    # return value.  ``IntentFunction.outputs`` remains in this low-level
+    # printer because it is the materialized function ABI, but for canonical
+    # callers it is only a fail-closed mirror of that shared record.
+    if canonical_output_bindings is None:
+        output_contracts = tuple(
+            (tensor.name, tensor.dtype, tuple(tensor.shape), None)
+            for tensor in fn.outputs
+        )
+    else:
+        bindings = tuple(canonical_output_bindings)
+        if len(bindings) != len(fn.outputs):
+            raise ValueError(
+                "emit_module: canonical output bindings must cover every "
+                "materialized function output"
+            )
+        output_contracts: tuple[tuple[str, str, tuple[object, ...], str], ...] = ()
+        checked_contracts: list[tuple[str, str, tuple[object, ...], str]] = []
+        for index, (tensor, binding) in enumerate(zip(fn.outputs, bindings, strict=True)):
+            output = getattr(binding, "output", None)
+            output_type = getattr(binding, "output_type", None)
+            value = getattr(binding, "value", None)
+            abi_index = getattr(binding, "abi_index", None)
+            dtype = getattr(output_type, "dtype", None)
+            shape = getattr(output_type, "shape", None)
+            if (
+                not isinstance(output, str)
+                or not isinstance(value, str)
+                or isinstance(abi_index, bool)
+                or abi_index != index
+                or not isinstance(dtype, str)
+                or not isinstance(shape, tuple)
+                or tensor.name != output
+                or tensor.dtype != dtype
+                or tuple(tensor.shape) != shape
+            ):
+                raise ValueError(
+                    "emit_module: materialized output ABI disagrees with its "
+                    "canonical output binding"
+                )
+            checked_contracts.append((output, dtype, shape, value))
+        output_contracts = tuple(checked_contracts)
+    output_names = tuple(output for output, _dtype, _shape, _value in output_contracts)
     return_outputs = tuple(item.output for item in fn.returns)
     if return_outputs != output_names:
         raise ValueError(
@@ -4515,7 +4457,28 @@ def emit_module(
     authored_return_values = {item.output: item.value for item in fn.returns}
     if len(authored_return_values) != len(fn.returns):
         raise ValueError("emit_module: duplicate logical return output")
-    if output_values is None:
+    canonical_return_values = {
+        output: value
+        for output, _dtype, _shape, value in output_contracts
+        if value is not None
+    }
+    if canonical_output_bindings is not None:
+        if authored_return_values != canonical_return_values:
+            raise ValueError(
+                "emit_module: materialized returns disagree with canonical "
+                "output bindings"
+            )
+        if output_values is None:
+            return_values = canonical_return_values
+        else:
+            provided_return_values = dict(output_values)
+            if provided_return_values != canonical_return_values:
+                raise ValueError(
+                    "emit_module: output_values must exactly match canonical "
+                    "output bindings"
+                )
+            return_values = canonical_return_values
+    elif output_values is None:
         return_values = authored_return_values
     else:
         provided_return_values = dict(output_values)
@@ -4524,10 +4487,13 @@ def emit_module(
                 "emit_module: output_values must exactly match the complete "
                 "IntentFunction.returns binding"
             )
-        return_values = authored_return_values
-    unknown_return_outputs = sorted(
-        set(return_values) - {item.name for item in fn.outputs}
-    )
+        # The canonical construction output record is the authority for the
+        # emitted return mapping.  IntentFunction.returns is checked above so
+        # a stale materialized function cannot silently diverge, but the
+        # consumer must use the shared record after that proof rather than
+        # rebuilding the mapping from the function wrapper.
+        return_values = provided_return_values
+    unknown_return_outputs = sorted(set(return_values) - set(output_names))
     if unknown_return_outputs:
         raise ValueError(
             "emit_module: logical returns reference undeclared outputs "
@@ -4536,18 +4502,18 @@ def emit_module(
     # A reduce whose result is a declared external output may intentionally
     # collapse its reduced axes (e.g. row_sum [M,N] -> [M]).  Seed only output
     # contracts; intermediate reductions retain the existing keepdims default.
-    for t in fn.outputs:
-        full = _resolve(t.shape, extents)
+    for output, _dtype, declared_shape, _value in output_contracts:
+        full = _resolve(declared_shape, extents)
         prefix = _fold_prefix_len(full, fold)
         if prefix and any(d != 1 for d in full[:prefix]):
             raise ValueError(
-                f"emit_mlir: cannot fold {fold} leading dims of output {t.name} "
+                f"emit_mlir: cannot fold {fold} leading dims of output {output} "
                 f"(shape {full}); folded dims must be size 1"
             )
         output_shape = _fold_shape(full, fold)
-        env[t.name] = output_shape
-        _record_raw_rank(raw_ranks, t.name, len(full), "function output")
-        returned_value = return_values[t.name]
+        env[output] = output_shape
+        _record_raw_rank(raw_ranks, output, len(full), "function output")
+        returned_value = return_values[output]
         previous_shape = env.get(returned_value)
         if previous_shape is not None and previous_shape != output_shape:
             raise ValueError(
@@ -4601,23 +4567,23 @@ def emit_module(
         )
 
     outs: list[tuple[str, str]] = []
-    for t in fn.outputs:
-        value = return_values[t.name]
+    for output, dtype, _declared_shape, _value in output_contracts:
+        value = return_values[output]
         if value not in p.ssa:
             raise ValueError(
-                f"emit_module: output {t.name!r} return value {value!r} was never produced"
+                f"emit_module: output {output!r} return value {value!r} was never produced"
             )
-        if value not in env or env[value] != env[t.name]:
+        if value not in env or env[value] != env[output]:
             raise ValueError(
-                f"emit_module: output {t.name!r} shape {env[t.name]} does not "
+                f"emit_module: output {output!r} shape {env[output]} does not "
                 f"match return value {value!r} shape {env.get(value)}"
             )
-        if value not in dtypes or dtypes[value] != dtypes[t.name]:
+        if value not in dtypes or dtypes[value] != dtype:
             raise ValueError(
-                f"emit_module: output {t.name!r} dtype {dtypes[t.name]} does not "
+                f"emit_module: output {output!r} dtype {dtype} does not "
                 f"match return value {value!r} dtype {dtypes.get(value)}"
             )
-        outs.append((t.name, value))
+        outs.append((output, value))
     ovals = ", ".join(p.ssa[value] for _output, value in outs)
     # Respect i1 (comparison) / integer (iota) result element types so the
     # function signature matches the value actually produced.

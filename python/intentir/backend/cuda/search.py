@@ -55,6 +55,7 @@ from intentir.frontend.canonical_j import (
     LOGICAL_FULL_AXIS_STEP_MATERIALIZATION,
     STRUCTURED_SCAN_LOOP_MATERIALIZATION,
 )
+from intentir.ir.canonical_j import j_elaboration
 from intentir.ir.layer_c import (
     ImplementationChoice,
     LayerCBinding,
@@ -80,7 +81,6 @@ from intentir.backend.protocol import (
     serialize_target_plugin,
     validate_target_plugin,
 )
-from intentir.ir.model import walk_intent_op_paths
 from intentir.verify.gate1.model import RefinementKind, SemanticArchive
 
 from .program import analyze_j_for_cuda
@@ -1010,15 +1010,35 @@ def _cuda_loop_attachment(
 ) -> tuple[str, int | str | None] | None:
     if not isinstance(j, SemanticArchive):
         raise TypeError("CUDA Layer-C interface requires SemanticArchive")
-    node_by_path = {path: node_id for node_id, path in j.node_ids.items()}
+    records = {
+        record["path"]: record
+        for record in j_elaboration(j).operation_records
+    }
+    typed_rows = j_elaboration(j).typed_operation_rows
+    if typed_rows is None:
+        raise CudaContractError(
+            "CUDA structured loop requires canonical typed operation records"
+        )
+    authored_by_path = j_elaboration(j).authored_node_by_path(j.node_ids)
     loops: list[tuple[str, Any]] = []
-    for index, operation in enumerate(j.intent.body):
+    for path, operation in typed_rows:
+        if "." in path or not path.startswith("body["):
+            continue
         if operation.op != "loop":
             continue
-        node_id = operation.node_id or node_by_path.get(f"body[{index}]")
-        if node_id is None:
+        record = records.get(path)
+        node_id = record.get("id") if isinstance(record, Mapping) else None
+        if not isinstance(node_id, str):
             raise CudaContractError(
                 "CUDA structured loop lacks a stable J node attachment"
+            )
+        if authored_by_path.get(path, node_id) != node_id:
+            raise CudaContractError(
+                "CUDA structured loop node id disagrees with canonical J"
+            )
+        if operation.node_id is not None and operation.node_id != node_id:
+            raise CudaContractError(
+                "CUDA structured loop typed id disagrees with canonical J"
             )
         loops.append((node_id, operation))
     if not loops:
@@ -1175,6 +1195,12 @@ def cuda_allowed_authorizations(
     if not isinstance(state, BackendSearchState):
         raise TypeError("CUDA authorization derivation requires BackendSearchState")
     nodes = _cuda_node_operations(state.base.j)
+    value_types = j_elaboration(state.base.j).value_type_by_name
+
+    def result_dtype(operation: Any) -> str | None:
+        result = getattr(operation, "result", None)
+        value_type = value_types.get(result) if isinstance(result, str) else None
+        return value_type.dtype if value_type is not None else None
     reduction_subjects = {
         item.node_ref
         for item in state.base.j.boundary.reductions
@@ -1207,11 +1233,13 @@ def _cuda_node_operations(
 ) -> dict[str, Any]:
     """Resolve stable J node ids to their canonical Intent operations."""
 
-    by_path = dict(walk_intent_op_paths(j.intent.body))
+    result = j_elaboration(j).construction_records.typed_operation_by_ref(j.node_ids)
+    if result is None:
+        raise ValueError("CUDA search requires canonical operation records")
     return {
-        node_ref: by_path[path]
-        for node_ref, path in j.node_ids.items()
-        if path in by_path
+        node_ref: result[node_ref]
+        for node_ref in j.node_ids
+        if node_ref in result
     }
 
 
@@ -1304,11 +1332,7 @@ def _cuda_required_authorizations(
             )
         for reduction in reductions:
             operation = nodes[reduction.node_ref]
-            dtype = (
-                operation.type.get("dtype")
-                if isinstance(operation.type, Mapping)
-                else None
-            )
+            dtype = result_dtype(operation)
             assoc = operation.attrs.get("assoc")
             if assoc in {"associative", "float_nondeterministic"}:
                 matches = _cuda_matching_authorizations(
@@ -1358,11 +1382,7 @@ def _cuda_required_authorizations(
                 "CUDA contraction candidate has no J contraction subject"
             )
         for node_ref, operation in contractions:
-            dtype = (
-                operation.type.get("dtype")
-                if isinstance(operation.type, Mapping)
-                else None
-            )
+            dtype = result_dtype(operation)
             if dtype == "f32":
                 continue
             matches = _cuda_matching_authorizations(
@@ -2102,23 +2122,26 @@ def _row_elements_per_thread(state: BackendSearchState) -> int:
     changes hard admission or the candidate universe.
     """
 
-    payload = state.base.j.to_json()["intent"]["intent_function"]["body"]
-
-    def contains_dense_transcendental(value: Any) -> bool:
-        if isinstance(value, Mapping):
-            if (
-                value.get("op") == "map_unary"
-                and value.get("attrs", {}).get("fn")
-                in {"exp", "log", "sigmoid", "tanh"}
-                and len(value.get("type", {}).get("shape", [])) >= 2
-            ):
-                return True
-            return any(contains_dense_transcendental(item) for item in value.values())
-        if isinstance(value, list):
-            return any(contains_dense_transcendental(item) for item in value)
-        return False
-
-    return 4 if contains_dense_transcendental(payload) else 8
+    elaboration = j_elaboration(state.base.j)
+    typed_rows = elaboration.typed_operation_rows
+    if typed_rows is None:
+        return 8
+    value_types = elaboration.value_type_by_name
+    for _path, operation in typed_rows:
+        result_type = (
+            value_types.get(operation.result)
+            if isinstance(operation.result, str)
+            else None
+        )
+        if (
+            operation.op == "map_unary"
+            and operation.attrs.get("fn") in {"exp", "log", "sigmoid", "tanh"}
+            and result_type is not None
+            and result_type.is_tensor
+            and len(result_type.shape) >= 2
+        ):
+            return 4
+    return 8
 
 
 def _materialized_row_extents(
@@ -2140,9 +2163,17 @@ def _materialized_row_extents(
             for dim in shape
         )
 
+    # Logical outputs have one authoritative order and type surface: the
+    # canonical output construction records.  Reading ``intent.outputs`` here
+    # would make schedule pruning independently reconstruct an output shape
+    # view after Gate1 already accepted the record bundle.
+    output_bindings = j_elaboration(state.base.j).output_bindings
     shapes = [
         *[resolve_shape(item.shape) for item in state.base.j.intent.inputs],
-        *[resolve_shape(item.shape) for item in state.base.j.intent.outputs],
+        *[
+            resolve_shape(binding.output_type.shape)
+            for binding in output_bindings
+        ],
     ]
     rank2 = [shape for shape in shapes if len(shape) == 2]
     concrete = [
@@ -2199,20 +2230,12 @@ def _row_numeric_opportunities(
 ) -> tuple[bool, bool, int]:
     """Return A-visible numeric opportunities and last-axis reduction count."""
 
-    payload = state.base.j.to_json()["intent"]["intent_function"]["body"]
-    nodes: list[Mapping[str, Any]] = []
-
-    def collect(value: Any) -> None:
-        if isinstance(value, Mapping):
-            if isinstance(value.get("op"), str):
-                nodes.append(value)
-            for item in value.values():
-                collect(item)
-        elif isinstance(value, list):
-            for item in value:
-                collect(item)
-
-    collect(payload)
+    typed_rows = j_elaboration(state.base.j).typed_operation_rows
+    if typed_rows is None:
+        raise CudaContractError(
+            "CUDA numeric opportunity analysis requires canonical operations"
+        )
+    nodes = [operation._structural_payload() for _path, operation in typed_rows]
     producers = {
         str(node["result"]): node
         for node in nodes
@@ -2262,24 +2285,29 @@ def _row_numeric_opportunities(
 def _has_cross_row_float_sum(state: BackendSearchState) -> bool:
     """Return whether A exposes an axis-0 sum feeding a rank-0 output."""
 
-    if not any(len(output.shape) == 0 for output in state.base.j.intent.outputs):
+    if not any(
+        len(binding.output_type.shape) == 0
+        for binding in j_elaboration(state.base.j).output_bindings
+    ):
         return False
-    payload = state.base.j.to_json()["intent"]["intent_function"]["body"]
-    if not isinstance(payload, list):
+    typed_rows = j_elaboration(state.base.j).typed_operation_rows
+    if typed_rows is None:
         return False
     return any(
-        isinstance(node, Mapping)
-        and node.get("op") == "reduce"
-        and node.get("attrs", {}).get("fn") == "sum"
-        and node.get("attrs", {}).get("axes") == [0]
-        for node in payload
+        operation.op == "reduce"
+        and operation.attrs.get("fn") == "sum"
+        and operation.attrs.get("axes") == [0]
+        for _path, operation in typed_rows
     )
 
 
 def _raw_moment_variance_opportunity(state: BackendSearchState) -> bool:
     """Match A's mean followed by a centered-square row reduction."""
 
-    body = state.base.j.intent.body
+    typed_rows = j_elaboration(state.base.j).typed_operation_rows
+    if typed_rows is None:
+        return False
+    body = tuple(operation for _path, operation in typed_rows)
     producers = {
         item.result: item
         for item in body
@@ -2363,33 +2391,36 @@ def _row_materialization_opportunity(state: BackendSearchState) -> bool:
     sufficient legality check for vector width, aliasing, and expression form.
     """
 
-    function = state.base.j.to_json()["intent"]["intent_function"]
-    raw_body = function.get("body", [])
-    raw_outputs = function.get("outputs", [])
-    if not isinstance(raw_body, list) or not isinstance(raw_outputs, list):
+    typed_rows = j_elaboration(state.base.j).typed_operation_rows
+    if typed_rows is None:
         return False
-    body = [item for item in raw_body if isinstance(item, Mapping)]
-    output_names = {
-        str(item["name"])
-        for item in raw_outputs
-        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    body = tuple(operation for _path, operation in typed_rows)
+    output_bindings = j_elaboration(state.base.j).output_bindings
+    output_names = {item.output for item in output_bindings}
+    output_type_by_name = {
+        item.output: item.output_type for item in output_bindings
     }
     nodes_by_result = {
-        str(item["result"]): item
+        result: item
         for item in body
-        if isinstance(item.get("result"), str)
+        for result in (
+            (item.result,)
+            if isinstance(item.result, str)
+            else tuple(item.result)
+            if isinstance(item.result, list)
+            else ()
+        )
+        if isinstance(result, str)
     }
     reductions = [
         item
         for item in body
-        if item.get("op") == "reduce"
-        and isinstance(item.get("attrs"), Mapping)
-        and item["attrs"].get("axes") == [1]
+        if item.op == "reduce" and item.attrs.get("axes") == [1]
     ]
     if len(reductions) != 1:
         return False
-    reduction_operands = reductions[0].get("operands", [])
-    if not isinstance(reduction_operands, list) or len(reduction_operands) != 1:
+    reduction_operands = reductions[0].operands
+    if len(reduction_operands) != 1:
         return False
     reduction_input = reduction_operands[0]
     if not isinstance(reduction_input, str):
@@ -2403,9 +2434,7 @@ def _row_materialization_opportunity(state: BackendSearchState) -> bool:
         node = nodes_by_result.get(value)
         if node is None:
             return False
-        operands = node.get("operands", [])
-        if not isinstance(operands, list):
-            return False
+        operands = node.operands
         visiting.add(value)
         try:
             return any(
@@ -2422,11 +2451,9 @@ def _row_materialization_opportunity(state: BackendSearchState) -> bool:
         node = nodes_by_result.get(value)
         if node is None:
             return False
-        if node.get("op") == "select":
+        if node.op == "select":
             return True
-        operands = node.get("operands", [])
-        if not isinstance(operands, list):
-            return False
+        operands = node.operands
         visiting.add(value)
         try:
             return any(
@@ -2438,13 +2465,10 @@ def _row_materialization_opportunity(state: BackendSearchState) -> bool:
 
     for output in output_names:
         producer = nodes_by_result.get(output)
-        if producer is None or producer.get("op") != "map_binary":
+        if producer is None or producer.op != "map_binary":
             continue
-        result_type = producer.get("type", {})
-        if not isinstance(result_type, Mapping):
-            continue
-        shape = result_type.get("shape")
-        if not isinstance(shape, list) or len(shape) != 2:
+        output_type = output_type_by_name.get(output)
+        if output_type is None or len(output_type.shape) != 2:
             continue
         if not depends_on(reduction_input, output, set()):
             continue
@@ -2460,7 +2484,9 @@ def _row_materialization_opportunity(state: BackendSearchState) -> bool:
 
 
 def _referenced_intent_inputs(state: BackendSearchState) -> frozenset[str]:
-    body = state.base.j.to_json()["intent"]["intent_function"]["body"]
+    operation_records = j_elaboration(state.base.j).operation_records
+    if not operation_records:
+        return frozenset()
     referenced: set[str] = set()
 
     def collect(value: Any) -> None:
@@ -2476,7 +2502,14 @@ def _referenced_intent_inputs(state: BackendSearchState) -> frozenset[str]:
             for item in value:
                 collect(item)
 
-    collect(body)
+    # Walk the authored operation payloads already owned by the canonical
+    # construction table.  This keeps search heuristics from rebuilding a
+    # second body/path interpretation while retaining the existing conservative
+    # reference collection for operation-specific fields.
+    for record in operation_records:
+        wire = record.get("wire")
+        if isinstance(wire, Mapping):
+            collect(wire)
     return frozenset(referenced)
 
 
@@ -2484,12 +2517,12 @@ def _elementwise_thread_hint(state: BackendSearchState) -> int | None:
     """Retile a logical row packet to enough CUDA threads for target occupancy."""
 
     extents = state.base.extents
-    for output in state.base.j.intent.outputs:
-        if len(output.shape) != 2:
+    for output in j_elaboration(state.base.j).output_bindings:
+        if len(output.output_type.shape) != 2:
             continue
         rows, columns = (
             extents[item] if isinstance(item, str) else item
-            for item in output.shape
+            for item in output.output_type.shape
         )
         if not isinstance(rows, int) or not isinstance(columns, int):
             return None
@@ -3841,7 +3874,10 @@ def enumerate_cuda_candidates(
             )
 
     output_rank = max(
-        (len(item.shape) for item in state.base.j.intent.outputs),
+        (
+            len(binding.output_type.shape)
+            for binding in j_elaboration(state.base.j).output_bindings
+        ),
         default=1,
     )
     for width in (64, 128, 256):

@@ -42,6 +42,7 @@ from intentir.backend.riscv.search import (
 )
 from intentir.backend.workload_cost import derive_j_workload_cost
 from intentir.backend.protocol import LoweringRequest
+from intentir.ir.canonical_j import j_elaboration
 from intentir.ir.production_snapshot import load_production_snapshot
 from intentir.ir.value_dimension import (
     resolve_runtime_output_shapes,
@@ -79,10 +80,10 @@ def _output_rules(snapshot: Any, comparison_policy: Any) -> dict[str, Any]:
         item.output: item.kind for item in snapshot.j.boundary.result_relations
     }
     result = {}
-    for output in snapshot.j.intent.outputs:
-        kind = relations.get(output.name, ResultRelationKind.EXACT)
-        rule = comparison_policy.rule_for(kind, output.dtype)
-        result[output.name] = {
+    for binding in j_elaboration(snapshot.j).output_bindings:
+        kind = relations.get(binding.output, ResultRelationKind.EXACT)
+        rule = comparison_policy.rule_for(kind, binding.output_type.dtype)
+        result[binding.output] = {
             "comparison_class": kind.value,
             "dtype": rule.dtype,
             "tolerance": (
@@ -163,6 +164,9 @@ def _entry(
     comparison_policy.validate_j(snapshot.j)
     case = suite.cases[0]
     dims = case.refeval.dims_map
+    canonical_outputs = j_elaboration(snapshot.j).output_bindings
+    if not canonical_outputs:
+        raise ValueError("accepted J has no canonical output bindings")
     runtime_inputs = [
         np.asarray(case.values[case.refeval.input_binding_map[item.name]])
         for item in snapshot.j.intent.inputs
@@ -174,9 +178,10 @@ def _entry(
     )
     runtime_output_shapes = resolve_runtime_output_shapes(
         snapshot.j.intent,
-        [item.shape for item in snapshot.j.intent.outputs],
+        [list(item.output_type.shape) for item in canonical_outputs],
         runtime_inputs,
         dims=dims,
+        canonical_output_bindings=canonical_outputs,
     )
     constexpr_bindings = constexpr_input_bindings(
         snapshot.j,
@@ -333,18 +338,16 @@ def _entry(
     reference_outputs, reference_kind, canonical_j_reference_error = (
         _canonical_reference_outputs(prepared, case)
     )
-    for output, shape in zip(
-        snapshot.j.intent.outputs, runtime_output_shapes, strict=True
-    ):
-        output_key = case.refeval.output_binding_map[output.name]
+    for output, shape in zip(canonical_outputs, runtime_output_shapes, strict=True):
+        output_key = case.refeval.output_binding_map[output.output]
         if output_key not in reference_outputs:
             raise RuntimeError(
-                f"canonical reference omitted output {output.name!r}"
+                f"canonical reference omitted output {output.output!r}"
             )
         actual_shape = tuple(np.asarray(reference_outputs[output_key]).shape)
         if actual_shape != shape:
             raise RuntimeError(
-                f"canonical reference output shape for {output.name!r} differs "
+                f"canonical reference output shape for {output.output!r} differs "
                 f"from the J-derived runtime shape: {actual_shape} != {shape}"
             )
     return {
@@ -377,14 +380,12 @@ def _entry(
         },
         "output_specs": [
             {
-                "name": item.name,
-                "dtype": item.dtype,
+                "name": item.output,
+                "dtype": item.output_type.dtype,
                 "shape": list(shape),
-                "shape_contract": list(item.shape),
+                "shape_contract": list(item.output_type.shape),
             }
-            for item, shape in zip(
-                snapshot.j.intent.outputs, runtime_output_shapes, strict=True
-            )
+            for item, shape in zip(canonical_outputs, runtime_output_shapes, strict=True)
         ],
         "output_rules": _output_rules(snapshot, comparison_policy),
         "values": encode_values(case.values),

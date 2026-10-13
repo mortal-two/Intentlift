@@ -6,9 +6,14 @@ import copy
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
-from intentir.ir.canonical_j import canonicalize_gate1_artifact
+from intentir.ir.canonical_construction import (
+    CANONICAL_C_WIRE_FIELDS,
+    CANONICAL_J_WIRE_FIELDS,
+    CanonicalHandleAllocator,
+)
+from intentir.ir.canonical_j import canonicalize_gate1_artifact, j_elaboration
 from .codegen import (
     TRITON_REPLAY_ABI_CONTRACT,
     TRITON_REPLAY_API_CONTRACT,
@@ -23,6 +28,7 @@ from .model import (
     _nested_root_owned_field_paths,
     opaque_replay_representation,
 )
+from .pi import per_program_scalar_keepdims_reductions
 
 
 REPLAY_PACKET_SCHEMA = "intentir.scrc.replay-input.v3"
@@ -34,7 +40,10 @@ PUBLIC_FRONTEND_CONTEXT = {
             "Write one self-contained public Triton module with exactly one "
             "@triton.jit function named scrc_k0. Its parameters are the declared "
             "J.signature handles, followed in order by complete C slots whose kind "
-            "is constexpr and which remain annotated tl.constexpr. Their C values "
+            "is constexpr and which remain annotated tl.constexpr. If U_f contains "
+            "callable_abi_order, use that exact anonymous declaration order instead "
+            "of the canonical J-then-C order; it carries ordering only and does not "
+            "change J/C ownership. Their C values "
             "are exact compile bindings, not replacements for the callable handles; "
             "kind=compiler slots belong only to the external invocation. When C is "
             "absent, compile the parameterized J directly. J alone supplies semantics. "
@@ -112,29 +121,30 @@ _FORBIDDEN_KEYS = frozenset(
 )
 
 _REPLAY_COMPONENT_KEYS = {
-    "j": frozenset(
-        {
-            "kernel_id", "intent", "node_ids", "boundary", "signature",
-            "scopes", "storage", "dimension_constraints",
-            "value_dimension_relations",
-            "dimension_relations",
-        }
-    ),
-    "c": frozenset({"slots", "values"}),
+    # Replay transports an accepted J view without the outer artifact
+    # envelope.  Its field set must still come from the canonical J wire
+    # authority; keeping a second hand-written list here lets Replay accept a
+    # shape that CandidateCheck/Gate1 do not understand.
+    "j": frozenset(CANONICAL_J_WIRE_FIELDS),
+    "c": frozenset(CANONICAL_C_WIRE_FIELDS),
 }
 _U_F_KEYS = frozenset(
     {
         "protocol",
         "frontend",
         "replay_function",
+        "callable_abi_order",
         "retrieval_scope",
         "tool_access",
         "compile_entry",
         "compile_entry_contract",
         "representation_contract",
+        "semantic_view",
     }
 )
 _U_F_PACKET_KEYS = frozenset({"protocol", "frontend", "replay_function"})
+
+_CALLABLE_ABI_HANDLE = re.compile(r"(?:p|c)[0-9]+")
 
 _REPRESENTATION_CONTRACT_KEYS = frozenset(
     {"address_bindings", "program_bindings"}
@@ -314,6 +324,72 @@ def _validate_representation_contract(
         seen_program_domains.add(domain_ref)
 
 
+def _validate_callable_abi_order(
+    value: Any,
+    *,
+    j: Mapping[str, Any],
+    c: Mapping[str, Any] | None,
+    path: str,
+) -> None:
+    """Validate an anonymous Source-observed callable declaration order.
+
+    J and C keep their semantic/implementation ownership split.  This optional
+    sidecar carries only the order in which the already-anonymized callable
+    exposes those handles.  It is therefore safe for source-blind Replay while
+    still preserving ABIs in which a C constexpr is interleaved with J
+    parameters.
+    """
+
+    if not isinstance(value, (list, tuple)):
+        raise SchemaError(f"{path} must be an array")
+    handles = list(value)
+    if not all(
+        isinstance(handle, str) and _CALLABLE_ABI_HANDLE.fullmatch(handle)
+        for handle in handles
+    ):
+        raise SchemaError(
+            f"{path} must contain only anonymous p*/c* callable handles"
+        )
+    if len(handles) != len(set(handles)):
+        raise SchemaError(f"{path} must not contain duplicate handles")
+
+    signature = j.get("signature")
+    parameters = (
+        signature.get("parameters")
+        if isinstance(signature, Mapping)
+        else None
+    )
+    expected = [
+        str(item.get("name"))
+        for item in parameters or []
+        if isinstance(item, Mapping)
+    ]
+    if isinstance(c, Mapping):
+        slots = c.get("slots")
+        expected.extend(
+            str(item.get("name"))
+            for item in slots or []
+            if isinstance(item, Mapping) and item.get("kind") == "constexpr"
+        )
+    expected_set = set(expected)
+    actual_set = set(handles)
+    if actual_set != expected_set or len(handles) != len(expected):
+        missing = sorted(expected_set - actual_set)
+        extra = sorted(actual_set - expected_set)
+        details = []
+        if missing:
+            details.append(f"missing={missing}")
+        if extra:
+            details.append(f"extra={extra}")
+        if len(handles) != len(expected):
+            details.append(f"expected_count={len(expected)}")
+            details.append(f"actual_count={len(handles)}")
+        raise SchemaError(
+            f"{path} must exactly cover J.signature and C constexpr handles"
+            + (f" ({', '.join(details)})" if details else "")
+        )
+
+
 def _walk(value: Any, path: str = "$" ):
     yield path, value
     if isinstance(value, dict):
@@ -372,7 +448,9 @@ def _validate_source_isolated_payload(
             raise SchemaError(
                 "Replay payload c requires at least one slot; omit c for J-only Replay"
             )
-        expected_names = [f"c{index}" for index in range(len(config.slots))]
+        expected_names = list(
+            CanonicalHandleAllocator.canonical_names("c", len(config.slots))
+        )
         if [slot.name for slot in config.slots] != expected_names:
             raise SchemaError(
                 "Replay payload c slots must use declaration-order handles c0, c1, ..."
@@ -392,6 +470,13 @@ def _validate_source_isolated_payload(
             j=payload["j"],
             path="Replay payload u_f.representation_contract",
         )
+    if "callable_abi_order" in u_f:
+        _validate_callable_abi_order(
+            u_f["callable_abi_order"],
+            j=payload["j"],
+            c=c,
+            path="Replay payload u_f.callable_abi_order",
+        )
     required_u_f = set(_U_F_PACKET_KEYS)
     missing_u_f = sorted(required_u_f - set(u_f))
     if missing_u_f:
@@ -406,6 +491,10 @@ def _validate_source_isolated_payload(
         raise SchemaError("Replay payload u_f has an unsupported frontend") from exc
     if u_f["replay_function"] != "scrc_k0":
         raise SchemaError("Replay payload u_f must use canonical replay_function")
+    if "semantic_view" in u_f and u_f["semantic_view"] != "masked_j":
+        raise SchemaError(
+            "Replay payload u_f.semantic_view must be 'masked_j' when present"
+        )
     fixed_context = PUBLIC_FRONTEND_CONTEXT.get(frontend.value, {})
     missing_context = sorted(set(fixed_context) - set(u_f))
     if missing_context:
@@ -477,6 +566,7 @@ def build_rewriter_packet(
     *,
     frontend: Frontend | str = Frontend.TRITON,
     masked: bool = False,
+    callable_abi_order: Sequence[str] | None = None,
 ) -> ReplayPacket:
     """Build J plus the accepted Source/Harness-bound C when present.
 
@@ -513,6 +603,15 @@ def build_rewriter_packet(
             "replay_function": "scrc_k0",
         }
     )
+    if callable_abi_order is not None:
+        context["callable_abi_order"] = list(callable_abi_order)
+    if masked:
+        # The masked-J diagnostic arm deliberately does not contain a J which
+        # can cross normal canonical elaboration. Mark that host-produced
+        # projection explicitly so Replay ingress may consume only its
+        # rank/ABI-preserving surface without treating an arbitrary malformed
+        # normal packet as masked input.
+        context["semantic_view"] = "masked_j"
     representation_contract = opaque_replay_representation(artifact)
     if representation_contract:
         context["representation_contract"] = representation_contract
@@ -525,11 +624,15 @@ def build_rewriter_payload(
     *,
     frontend: Frontend | str = Frontend.TRITON,
     masked: bool = False,
+    callable_abi_order: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Build exactly ``J + source-bound C + U_f`` when C is present."""
 
     return build_rewriter_packet(
-        artifact, frontend=frontend, masked=masked
+        artifact,
+        frontend=frontend,
+        masked=masked,
+        callable_abi_order=callable_abi_order,
     ).to_json()
 
 
@@ -537,11 +640,13 @@ def build_normal_rewriter_view(
     artifact: Gate1Artifact,
     *,
     frontend: Frontend | str = Frontend.TRITON,
+    callable_abi_order: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     return build_rewriter_payload(
         artifact,
         frontend=frontend,
         masked=False,
+        callable_abi_order=callable_abi_order,
     )
 
 
@@ -549,11 +654,13 @@ def build_masked_rewriter_view(
     artifact: Gate1Artifact,
     *,
     frontend: Frontend | str = Frontend.TRITON,
+    callable_abi_order: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     return build_rewriter_payload(
         artifact,
         frontend=frontend,
         masked=True,
+        callable_abi_order=callable_abi_order,
     )
 
 
@@ -567,6 +674,12 @@ def _source_blind_structure_ledger(artifact: Gate1Artifact) -> str:
     ``access_ref`` rows mechanically visible without exposing Source, pi, or
     any observation from the other arm.
     """
+    # Prompt facts must use the same canonical operation/output table as
+    # Replay and Gate1.  Reading only IntentFunction.body here would silently
+    # drop loop/conditional descendants and would make output_mappings a
+    # second output authority.
+    artifact = canonicalize_gate1_artifact(artifact)
+    elaboration = j_elaboration(artifact.j)
     j_view = artifact.rewriter_view(masked=False)
     j = j_view.get("j") if isinstance(j_view, Mapping) else None
     boundary = j.get("boundary") if isinstance(j, Mapping) else None
@@ -596,28 +709,18 @@ def _source_blind_structure_ledger(artifact: Gate1Artifact) -> str:
             "kind": accesses[access_ref].get("kind"),
             "tensor": accesses[access_ref].get("tensor"),
             "index_expression": accesses[access_ref].get("index_expression"),
+            "node_ref": accesses[access_ref].get("node_ref"),
         }
         for access_ref in ordered_refs
     ]
 
-    intent = j.get("intent") if isinstance(j, Mapping) else None
-    intent_function = (
-        intent.get("intent_function")
-        if isinstance(intent, Mapping)
-        else None
-    )
-    body = (
-        intent_function.get("body")
-        if isinstance(intent_function, Mapping)
-        else None
-    )
+    operation_records = elaboration.operation_records
     reductions = [
         {
-            "result": item.get("result"),
+            "result": item["results"][0] if item.get("results") else None,
             "operand": (
-                item.get("operands", [None])[0]
-                if isinstance(item.get("operands"), list)
-                and item.get("operands")
+                item["operands"][0]
+                if item.get("operands")
                 else None
             ),
             "fn": (item.get("attrs") or {}).get("fn")
@@ -633,14 +736,180 @@ def _source_blind_structure_ledger(artifact: Gate1Artifact) -> str:
             ),
             "result_shape": [],
         }
-        for item in body or []
-        if isinstance(item, Mapping) and item.get("op") == "reduce"
+        for item in operation_records
+        if item.get("op") == "reduce"
+        and len(item.get("results", ())) == 1
+    ]
+    broadcasts = [
+        {
+            "node_ref": item.get("node_ref"),
+            "operand": item.get("operand"),
+            "axes": item.get("axes"),
+        }
+        for item in (boundary.get("broadcasts", []) if isinstance(boundary, Mapping) else [])
+        if isinstance(item, Mapping)
     ]
     body_by_result = {
-        str(item.get("result")): item
-        for item in body or []
-        if isinstance(item, Mapping) and isinstance(item.get("result"), str)
+        result: item
+        for item in operation_records
+        for result in item.get("results", ())
     }
+    body_by_id = {
+        item["id"]: item
+        for item in operation_records
+    }
+    output_values_by_node: dict[str, set[str]] = {}
+    for binding in elaboration.output_bindings:
+        if binding.node_ref is not None:
+            output_values_by_node.setdefault(binding.node_ref, set()).add(binding.value)
+    output_value_by_node = {
+        node_ref: next(iter(values))
+        for node_ref, values in output_values_by_node.items()
+        if len(values) == 1
+    }
+    effect_position_by_access = {
+        str(effect.get("access_ref")): index
+        for index, effect in enumerate(
+            boundary.get("effects", []) if isinstance(boundary, Mapping) else []
+        )
+        if isinstance(effect, Mapping)
+        and isinstance(effect.get("access_ref"), str)
+    }
+    for row in access_rows:
+        node_ref = row.get("node_ref")
+        row["effect_index"] = effect_position_by_access.get(row["access_ref"])
+        row["output_value"] = output_value_by_node.get(node_ref)
+
+    def provenance_path(
+        value: Any,
+        target: Any,
+        active: set[str] | None = None,
+    ) -> list[dict[str, Any]] | None:
+        if value == target:
+            return []
+        if not isinstance(value, str):
+            return None
+        active = set() if active is None else set(active)
+        if value in active:
+            return None
+        producer = body_by_result.get(value)
+        if producer is None:
+            return None
+        active.add(value)
+        for operand in producer.get("operands", []):
+            path = provenance_path(operand, target, active)
+            if path is not None:
+                return [
+                    {
+                        "id": producer.get("id"),
+                        "op": producer.get("op"),
+                        "result": value,
+                    },
+                    *path,
+                ]
+        return None
+
+    def first_identity_breaker(
+        path: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        # The path is listed from the access toward the consumer below.  Keep
+        # this deliberately conservative: zero is preserved by multiplication,
+        # while add/sub require the outside identity to be re-materialized.
+        for step in path:
+            if step.get("op") != "map_binary":
+                continue
+            operation = body_by_id.get(str(step.get("id")))
+            fn = (
+                operation.get("attrs", {}).get("fn")
+                if isinstance(operation, Mapping)
+                and isinstance(operation.get("attrs"), Mapping)
+                else None
+            )
+            if fn in {"add", "sub"}:
+                return {**step, "fn": fn}
+        return None
+
+    consumer_extensions = []
+    for item in (
+        boundary.get("consumer_extensions", [])
+        if isinstance(boundary, Mapping)
+        else []
+    ):
+        if not isinstance(item, Mapping):
+            continue
+        access_ref = item.get("access_ref")
+        access = accesses.get(access_ref) if isinstance(access_ref, str) else None
+        consumer = body_by_id.get(str(item.get("consumer_ref")))
+        operand_index = item.get("operand_index")
+        operand = None
+        if (
+            isinstance(consumer, Mapping)
+            and isinstance(operand_index, int)
+            and not isinstance(operand_index, bool)
+            and isinstance(consumer.get("operands"), (list, tuple))
+            and 0 <= operand_index < len(consumer["operands"])
+        ):
+            operand = consumer["operands"][operand_index]
+        path = (
+            provenance_path(operand, access.get("tensor"))
+            if isinstance(access, Mapping)
+            else None
+        )
+        forward_path = list(reversed(path or []))
+        identity_breaker = first_identity_breaker(forward_path)
+        chain_operations = [
+            body_by_id.get(str(step.get("id")))
+            for step in forward_path
+        ]
+        closed_exp_identity = (
+            isinstance(access, Mapping)
+            and access.get("fill_value") == "-inf"
+            and isinstance(item.get("outside"), Mapping)
+            and item["outside"].get("value") == 0
+            and any(
+                isinstance(operation, Mapping)
+                and operation.get("op") == "map_binary"
+                and isinstance(operation.get("attrs"), Mapping)
+                and operation["attrs"].get("fn") == "sub"
+                for operation in chain_operations
+            )
+            and any(
+                isinstance(operation, Mapping)
+                and operation.get("op") == "map_unary"
+                and isinstance(operation.get("attrs"), Mapping)
+                and operation["attrs"].get("fn") == "exp"
+                for operation in chain_operations
+            )
+        )
+        consumer_extensions.append(
+            {
+                "access_ref": access_ref,
+                "consumer_ref": item.get("consumer_ref"),
+                "operand_index": operand_index,
+                "consumer_operand": operand,
+                "producer_chain": forward_path,
+                "identity_breaker": identity_breaker,
+                "identity_form": (
+                    "closed_neg_inf_to_zero_through_exp"
+                    if closed_exp_identity
+                    else (
+                        "generic_post_consumer_identity"
+                        if identity_breaker is not None
+                        else "already_closed"
+                    )
+                ),
+                "requires_post_consumer_identity": (
+                    identity_breaker is not None and not closed_exp_identity
+                ),
+                "access_fill_value": (
+                    access.get("fill_value")
+                    if isinstance(access, Mapping)
+                    else None
+                ),
+                "tile_axis": item.get("tile_axis"),
+                "outside": item.get("outside"),
+            }
+        )
     for reduction in reductions:
         result = reduction.get("result")
         producer = body_by_result.get(str(result))
@@ -652,6 +921,8 @@ def _source_blind_structure_ledger(artifact: Gate1Artifact) -> str:
     payload = {
         "boundary_transfer_count": len(access_rows),
         "boundary_transfers_in_effect_order": access_rows,
+        "consumer_extensions_in_J_order": consumer_extensions,
+        "broadcasts_in_J_order": broadcasts,
         "reductions_in_J_order": reductions,
     }
     return (
@@ -660,19 +931,130 @@ def _source_blind_structure_ledger(artifact: Gate1Artifact) -> str:
         "boundary row, in this order. Distinct access_ref values are distinct "
         "occurrences even when tensor and address are equal; never cache, hoist, "
         "or merge one row into another. Emit one target local reduction for each "
-        "listed J reduction and preserve its operand/dataflow. The ledger is "
-        "closed input, not optional advice:\n"
+        "listed J reduction and preserve its operand/dataflow. For every listed "
+        "consumer extension, follow the listed producer_chain, and make its typed "
+        "outside identity reach that exact consumer operand. For an entry whose "
+        "identity_form is closed_neg_inf_to_zero_through_exp, preserve the "
+        "masked load's other=-inf and choose one of these equivalent closed "
+        "spellings: feed the exp result directly to the reduction, use "
+        "where(mask, exp_result, 0.0) after exp, or use "
+        "where(mask, centered_value, -inf) immediately before exp. Never use "
+        "where(mask, centered_value, 0.0) before exp, because exp(0)=1 and that "
+        "is not the outside identity. For other entries, when the ledger says "
+        "requires_post_consumer_identity=true, apply one predicate/select "
+        "immediately after the listed identity_breaker and before later producer "
+        "steps; do not delay it until after an identity-preserving map. When "
+        "false and the typed load fill already equals the outside identity, do "
+        "not add a redundant select. A load fill is not a substitute when a later map changes the value, and shared accesses keep "
+        "one consumer edge per extension. Preserve every listed broadcast at its "
+        "node and operand. The ledger is closed input, not optional advice:\n"
         + json.dumps(payload, sort_keys=True, ensure_ascii=False, allow_nan=False)
         + "\n"
     )
 
 
+def _replay_abi_audit(
+    artifact: Gate1Artifact,
+    *,
+    frontend: Frontend,
+    callable_abi_order: Sequence[str] | None = None,
+) -> str:
+    """Render the exact callable ABI audit for the current Replay packet.
+
+    The static frontend contract describes the rule, but a source-blind model
+    still has to apply it to the anonymous handles in this particular J/C
+    packet.  Keep the concrete declaration-order lists in the instruction
+    channel so a ``p*`` handle cannot silently change kind between J and the
+    target source.  This is diagnostic guidance only; the ingress checker
+    remains authoritative.
+    """
+
+    parameters = tuple(artifact.j.signature.parameters)
+    if frontend is Frontend.TRITON:
+        j_names = [parameter.name for parameter in parameters]
+        j_constexpr = [
+            parameter.name
+            for parameter in parameters
+            if getattr(parameter.kind, "value", parameter.kind) == "constexpr"
+        ]
+        c_constexpr = [
+            slot.name
+            for slot in artifact.c.slots
+            if getattr(slot.kind, "value", slot.kind) == "constexpr"
+        ]
+        expected = (
+            list(callable_abi_order)
+            if callable_abi_order is not None
+            else [*j_names, *c_constexpr]
+        )
+        runtime = [name for name in expected if name not in {*j_constexpr, *c_constexpr}]
+        representation = opaque_replay_representation(artifact)
+        address_bindings = representation.get("address_bindings", [])
+        program_bindings = representation.get("program_bindings", [])
+        return (
+            "\nCRITICAL final ABI audit for this exact Triton packet: the entry "
+            "parameter names and order MUST be "
+            + json.dumps(expected, ensure_ascii=False)
+            + "; the ONLY parameters that may carry `tl.constexpr` are "
+            + json.dumps([*j_constexpr, *c_constexpr], ensure_ascii=False)
+            + "; these parameters MUST remain unannotated runtime handles: "
+            + json.dumps(runtime, ensure_ascii=False)
+            + ". Do not infer kind from the p* spelling, use of a value, or "
+            "parameter position. The optional callable_abi_order is only an "
+            "anonymous Source ABI ordering witness; it does not authorize moving "
+            "a handle between J and C. Before returning, inspect the complete function "
+            "signature against these three lists; a mismatch is an invalid "
+            "Replay source even if the body is otherwise semantically plausible. "
+            "The following exact representation rows are mandatory, not examples: "
+            "for every address row, use its carrier in the pointer expression for "
+            "the named access and multiply the coordinate of the named tensor axis "
+            "by that carrier; do not omit a row, substitute an extent, or use the "
+            "carrier as a value/control input. Address rows="
+            + json.dumps(address_bindings, sort_keys=True, ensure_ascii=False)
+            + "; program rows="
+            + json.dumps(program_bindings, sort_keys=True, ensure_ascii=False)
+            + ".\n"
+        )
+    if frontend is Frontend.CUDA:
+        return (
+            "\nCRITICAL final ABI audit for this exact CUDA packet: keep the "
+            "kernel's positional runtime parameters exactly in J.signature order; "
+            "C slots are compile/launch choices and must not become extra kernel "
+            "parameters.\n"
+        )
+    if frontend is Frontend.TILELANG:
+        return (
+            "\nCRITICAL final ABI audit for this exact TileLang packet: keep the "
+            "declared J.signature handles in order; C slots are compile-time "
+            "schedule choices, never extra logical runtime parameters.\n"
+        )
+    return (
+        "\nCRITICAL final ABI audit for this exact CuTe packet: preserve the "
+        "declared J.signature positional runtime ABI; C slots configure only "
+        "representation or launch and never become device/entry runtime "
+        "parameters.\n"
+    )
+
+
 def _concise_instructions(
-    *, frontend: Frontend, masked: bool, uses_c: bool, structure_ledger: str
+    *,
+    artifact: Gate1Artifact,
+    frontend: Frontend,
+    masked: bool,
+    uses_c: bool,
+    structure_ledger: str,
+    callable_abi_order: Sequence[str] | None = None,
 ) -> str:
     output = "CUDA C++" if frontend is Frontend.CUDA else "Python"
     masked_clause = (
-        " J is masked for this representation audit; do not reconstruct it."
+        " J is masked for this representation audit; do not reconstruct its "
+        "semantic values. The presence of a masked `predicate` field is still "
+        "structural: emit a valid boolean mask for that transfer. The presence "
+        "of a masked `fill_value` field is also structural: pass a type-correct "
+        "`other` only together with that mask; never call `tl.load` with "
+        "`other` and no `mask`. An access row without a predicate has neither "
+        "a target mask nor an `other` argument. Preserve the masked transfer "
+        "count and effect order."
         if masked
         else ""
     )
@@ -710,6 +1092,19 @@ def _concise_instructions(
             "or Triton TTIR assumptions."
         ),
     }[frontend]
+    scalar_keepdims = per_program_scalar_keepdims_reductions(
+        artifact.j,
+        artifact.pi,
+    )
+    projection_clause = (
+        " J/pi prove that rowwise keepdims reductions "
+        + ",".join(scalar_keepdims)
+        + " have one scalar carrier per directly mapped target row. Keep that "
+        "carrier scalar; never use tl.reshape to make `(1,)`, and broadcast only "
+        "at an actual vector consumer."
+        if scalar_keepdims
+        else ""
+    )
     return (
         "You are one fresh source-blind Replay coding agent. Return one complete "
         f"self-contained {output} source module and no prose. J is the sole semantic "
@@ -719,14 +1114,19 @@ def _concise_instructions(
         "semantic inputs. Use only public frontend APIs and the canonical "
         "J.signature and optional C handles. Source, Gate feedback, previous Replay and "
         "kernel templates are unavailable. The packet's U_f gives the callable ABI "
-        "and, when present, a closed source-blind representation contract."
-        + TRITON_REPLAY_ABI_CONTRACT
-        + TRITON_REPLAY_CONTROL_CONTRACT
-        + TRITON_REPLAY_STRUCTURE_CONTRACT
+        "and, when present, a closed source-blind representation contract. Its "
+        "compile_entry_contract is the exact target API, ABI, control and structural "
+        "ingress contract; follow it completely."
+        + projection_clause
         + structure_ledger
         + implementation_clause
         + masked_clause
         + frontend_clause
+        + _replay_abi_audit(
+            artifact,
+            frontend=frontend,
+            callable_abi_order=callable_abi_order,
+        )
     )
 
 
@@ -735,18 +1135,22 @@ def build_rewriter_prompt(
     *,
     frontend: Frontend | str = Frontend.TRITON,
     masked: bool = False,
+    callable_abi_order: Sequence[str] | None = None,
 ) -> tuple[str, str]:
     payload = build_rewriter_payload(
         artifact,
         frontend=frontend,
         masked=masked,
+        callable_abi_order=callable_abi_order,
     )
     frontend = Frontend(frontend)
     return _concise_instructions(
+        artifact=artifact,
         frontend=frontend,
         masked=masked,
         uses_c=bool(artifact.c.slots),
         structure_ledger=_source_blind_structure_ledger(artifact),
+        callable_abi_order=callable_abi_order,
     ), json.dumps(
         payload, sort_keys=True, ensure_ascii=False, allow_nan=False
     )

@@ -310,6 +310,12 @@ class CuteGate1Runner:
                 source_case,
                 masked=True,
             )
+        status = (
+            Gate1Status.REPLAY_CLOSED
+            if not self.config.run_masked_j
+            or (masked_evidence is not None and masked_evidence.comparable)
+            else Gate1Status.NO_CLOSURE
+        )
         return Gate1ExecutionResult(
             status,
             digest,

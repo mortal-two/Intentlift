@@ -27,6 +27,7 @@ from intentir.backend.riscv.contract import (
     riscv_allowed_authorizations,
     validate_riscv_target_contract,
 )
+from intentir.ir.canonical_j import j_elaboration
 from intentir.ir.layer_c import (
     ImplementationChoice,
     LayerCBinding,
@@ -60,6 +61,58 @@ RVV_LAYER_C_BACKEND_KIND = "riscv"
 _PARALLEL_TILES = (1, 2, 4, 8, 16, 32, 64, 128)
 _REDUCTION_TILES = (1, 2, 4, 8, 16, 32, 64, 128)
 _JOINT_TILES = ((1, 4), (2, 8), (4, 16), (8, 32), (16, 64), (32, 128))
+
+
+def _canonical_pattern_records(
+    j: SemanticArchive,
+) -> tuple[Any, tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
+    """Return the one elaborated operation/boundary view for RVV matching.
+
+    Search features are admissibility hints, but they still must not rebuild a
+    second interpretation by walking raw ``intent_function.body``.  The
+    elaboration's construction bundle owns lexical paths, typed values, output
+    order and boundary rows, so every structural matcher below receives only
+    projections from that bundle.
+    """
+
+    elaboration = j_elaboration(j)
+    all_records = tuple(elaboration.operation_records)
+    if any(
+        not isinstance(record, Mapping)
+        or not isinstance(record.get("wire"), Mapping)
+        for record in all_records
+    ):
+        raise RiscvContractError(
+            "RISC-V search requires complete canonical operation records"
+        )
+    top_level = tuple(
+        record
+        for record in all_records
+        if re.fullmatch(r"body\[\d+\]", str(record.get("path")))
+    )
+    return elaboration, top_level, all_records
+
+
+def _record_type(
+    elaboration: Any,
+    value: Any,
+) -> Any | None:
+    return (
+        elaboration.value_type_by_name.get(value)
+        if isinstance(value, str)
+        else None
+    )
+
+
+def _record_result(record: Mapping[str, Any]) -> str | None:
+    results = record.get("results")
+    return (
+        results[0]
+        if isinstance(results, (tuple, list))
+        and len(results) == 1
+        and isinstance(results[0], str)
+        else None
+    )
 
 
 def _schedule_universe() -> tuple[RiscvSchedule, ...]:
@@ -296,7 +349,7 @@ def _dtype_bits(dtype: str) -> int | None:
 
 
 def _operation_facts(
-    value: Any,
+    j: SemanticArchive,
 ) -> tuple[set[tuple[int, ...]], bool, list[int], bool, bool]:
     reduction_axes: set[tuple[int, ...]] = set()
     has_scan = False
@@ -304,39 +357,29 @@ def _operation_facts(
     has_reassociable_float_reduction = False
     has_contraction = False
 
-    def visit(item: Any) -> None:
-        nonlocal has_scan, has_reassociable_float_reduction, has_contraction
-        if isinstance(item, Mapping):
-            dtype = item.get("dtype")
-            if isinstance(dtype, str):
-                bits = _dtype_bits(dtype)
-                if bits is not None:
-                    float_bits.append(bits)
-            op = item.get("op")
-            has_contraction = has_contraction or op == "contraction"
-            if op in {"reduce", "scan"}:
-                has_scan = has_scan or op == "scan"
-                attrs = item.get("attrs", {})
-                if (
-                    op == "reduce"
-                    and isinstance(attrs, Mapping)
-                    and attrs.get("assoc") == "float_nondeterministic"
-                ):
-                    has_reassociable_float_reduction = True
-                raw_axes = attrs.get("axes", [attrs.get("axis")]) if isinstance(
-                    attrs, Mapping
-                ) else []
-                if isinstance(raw_axes, list) and all(
-                    isinstance(axis, int) for axis in raw_axes
-                ):
-                    reduction_axes.add(tuple(int(axis) for axis in raw_axes))
-            for child in item.values():
-                visit(child)
-        elif isinstance(item, (list, tuple)):
-            for child in item:
-                visit(child)
-
-    visit(value)
+    elaboration, _top_level, records = _canonical_pattern_records(j)
+    for value_type in elaboration.value_type_by_name.values():
+        dtype = getattr(value_type, "dtype", None)
+        if isinstance(dtype, str):
+            bits = _dtype_bits(dtype)
+            if bits is not None:
+                float_bits.append(bits)
+    for record in records:
+        op = record.get("op")
+        has_contraction = has_contraction or op == "contraction"
+        if op not in {"reduce", "scan"}:
+            continue
+        has_scan = has_scan or op == "scan"
+        attrs = record.get("attrs")
+        if not isinstance(attrs, Mapping):
+            continue
+        if op == "reduce" and attrs.get("assoc") == "float_nondeterministic":
+            has_reassociable_float_reduction = True
+        raw_axes = attrs.get("axes", [attrs.get("axis")])
+        if isinstance(raw_axes, list) and all(
+            isinstance(axis, int) for axis in raw_axes
+        ):
+            reduction_axes.add(tuple(int(axis) for axis in raw_axes))
     return (
         reduction_axes,
         has_scan,
@@ -346,111 +389,72 @@ def _operation_facts(
     )
 
 
-def _has_typed_rowmask_graph(value: Mapping[str, Any]) -> bool:
-    intent = value.get("intent")
-    if not isinstance(intent, Mapping):
-        return False
-    function = intent.get("intent_function")
-    if not isinstance(function, Mapping):
-        return False
-    inputs = function.get("inputs")
-    body = function.get("body")
-    outputs = function.get("outputs")
-    if not isinstance(inputs, list) or not isinstance(body, list) or not isinstance(outputs, list):
-        return False
-    input_by_name = {
-        item.get("name"): item
-        for item in inputs
-        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
-    }
-    if len(body) != 2 or len(outputs) != 1:
+def _has_typed_rowmask_graph(j: SemanticArchive) -> bool:
+    elaboration, body, _records = _canonical_pattern_records(j)
+    if len(body) != 2 or len(elaboration.output_bindings) != 1:
         return False
     cast, product = body
-    if not isinstance(cast, Mapping) or not isinstance(product, Mapping):
-        return False
     cast_operands = cast.get("operands")
     product_operands = product.get("operands")
-    cast_type = cast.get("type")
-    product_type = product.get("type")
+    cast_result = _record_result(cast)
+    product_result = _record_result(product)
+    cast_type = _record_type(elaboration, cast_result)
+    product_type = _record_type(elaboration, product_result)
     attrs = product.get("attrs")
     if (
         cast.get("op") != "cast"
         or not isinstance(cast_operands, list)
         or len(cast_operands) != 1
-        or not isinstance(cast_type, Mapping)
-        or cast_type.get("dtype") != "f32"
-        or cast.get("result") is None
+        or getattr(cast_type, "dtype", None) != "f32"
+        or cast_result is None
         or product.get("op") != "map_binary"
         or not isinstance(attrs, Mapping)
         or attrs.get("fn", "mul") != "mul"
         or not isinstance(product_operands, list)
         or len(product_operands) != 2
-        or cast.get("result") not in product_operands
-        or not isinstance(product_type, Mapping)
-        or product_type.get("dtype") != "f32"
+        or cast_result not in product_operands
+        or getattr(product_type, "dtype", None) != "f32"
     ):
         return False
-    mask = input_by_name.get(cast_operands[0])
+    mask = _record_type(elaboration, cast_operands[0])
     data_name = next(
-        (operand for operand in product_operands if operand != cast.get("result")),
+        (operand for operand in product_operands if operand != cast_result),
         None,
     )
-    data = input_by_name.get(data_name)
-    mask_shape = mask.get("shape") if isinstance(mask, Mapping) else None
-    data_shape = data.get("shape") if isinstance(data, Mapping) else None
-    result_shape = product_type.get("shape")
-    output = outputs[0]
+    data = _record_type(elaboration, data_name)
+    mask_shape = getattr(mask, "shape", None)
+    data_shape = getattr(data, "shape", None)
+    result_shape = getattr(product_type, "shape", None)
+    output = elaboration.output_bindings[0]
     return bool(
-        isinstance(mask, Mapping)
-        and mask.get("dtype") == "i1"
-        and isinstance(mask_shape, list)
+        getattr(mask, "dtype", None) == "i1"
+        and isinstance(mask_shape, tuple)
         and len(mask_shape) == 1
-        and isinstance(data, Mapping)
-        and data.get("dtype") == "f32"
-        and isinstance(data_shape, list)
+        and getattr(data, "dtype", None) == "f32"
+        and isinstance(data_shape, tuple)
         and len(data_shape) == 2
         and data_shape[0] == mask_shape[0]
         and result_shape == data_shape
-        and isinstance(output, Mapping)
-        and output.get("name") == product.get("result")
-        and output.get("dtype") == "f32"
-        and output.get("shape") == data_shape
+        and output.value == product_result
+        and output.output_type.dtype == "f32"
+        and output.output_type.shape == data_shape
     )
 
 
-def _has_typed_gather_chain(value: Mapping[str, Any]) -> bool:
-    intent = value.get("intent")
-    if not isinstance(intent, Mapping):
-        return False
-    function = intent.get("intent_function")
-    if not isinstance(function, Mapping):
-        return False
-    inputs = function.get("inputs")
-    body = function.get("body")
-    outputs = function.get("outputs")
-    if (
-        not isinstance(inputs, list)
-        or not isinstance(body, list)
-        or not isinstance(outputs, list)
-        or len(body) != 2
-        or len(outputs) != 1
-    ):
+def _has_typed_gather_chain(j: SemanticArchive) -> bool:
+    elaboration, body, _records = _canonical_pattern_records(j)
+    if len(body) != 2 or len(elaboration.output_bindings) != 1:
         return False
     first, second = body
-    if not isinstance(first, Mapping) or not isinstance(second, Mapping):
-        return False
     first_operands = first.get("operands")
     second_operands = second.get("operands")
     first_attrs = first.get("attrs")
     second_attrs = second.get("attrs")
-    first_type = first.get("type")
-    second_type = second.get("type")
-    output = outputs[0]
-    input_by_name = {
-        item.get("name"): item
-        for item in inputs
-        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
-    }
+    first_result = _record_result(first)
+    second_result = _record_result(second)
+    first_type = _record_type(elaboration, first_result)
+    second_type = _record_type(elaboration, second_result)
+    output = elaboration.output_bindings[0]
     if (
         first.get("op") != "gather"
         or second.get("op") != "gather"
@@ -458,109 +462,54 @@ def _has_typed_gather_chain(value: Mapping[str, Any]) -> bool:
         or len(first_operands) != 2
         or not isinstance(second_operands, list)
         or len(second_operands) != 2
-        or second_operands[0] != first.get("result")
+        or second_operands[0] != first_result
         or not isinstance(first_attrs, Mapping)
         or first_attrs.get("mode") != "take"
         or first_attrs.get("axis") != 0
         or not isinstance(second_attrs, Mapping)
         or second_attrs.get("mode") != "along_axis"
         or second_attrs.get("axis") != 1
-        or not isinstance(first_type, Mapping)
-        or first_type.get("dtype") != "f32"
-        or not isinstance(second_type, Mapping)
-        or second_type.get("dtype") != "f32"
-        or not isinstance(output, Mapping)
-        or output.get("name") != second.get("result")
+        or getattr(first_type, "dtype", None) != "f32"
+        or getattr(second_type, "dtype", None) != "f32"
+        or output.value != second_result
     ):
         return False
-    data = input_by_name.get(first_operands[0])
-    rows = input_by_name.get(first_operands[1])
-    columns = input_by_name.get(second_operands[1])
+    data = _record_type(elaboration, first_operands[0])
+    rows = _record_type(elaboration, first_operands[1])
+    columns = _record_type(elaboration, second_operands[1])
     return bool(
-        isinstance(data, Mapping)
-        and data.get("dtype") == "f32"
-        and isinstance(data.get("shape"), list)
-        and len(data["shape"]) == 2
-        and isinstance(rows, Mapping)
-        and rows.get("dtype") == "i32"
-        and isinstance(rows.get("shape"), list)
-        and len(rows["shape"]) == 1
-        and isinstance(columns, Mapping)
-        and columns.get("dtype") == "i32"
-        and columns.get("shape") == rows.get("shape")
-        and second_type.get("shape") == rows.get("shape")
+        getattr(data, "dtype", None) == "f32"
+        and isinstance(getattr(data, "shape", None), tuple)
+        and len(data.shape) == 2
+        and getattr(rows, "dtype", None) == "i32"
+        and isinstance(getattr(rows, "shape", None), tuple)
+        and len(rows.shape) == 1
+        and getattr(columns, "dtype", None) == "i32"
+        and columns.shape == rows.shape
+        and second_type.shape == rows.shape
     )
 
 
-def _has_two_public_outputs(value: Mapping[str, Any]) -> bool:
-    intent = value.get("intent")
-    if not isinstance(intent, Mapping):
-        return False
-    function = intent.get("intent_function")
-    if not isinstance(function, Mapping):
-        return False
-    outputs = function.get("outputs")
-    return bool(
-        isinstance(outputs, list)
-        and len(outputs) == 2
-        and all(isinstance(output, Mapping) for output in outputs)
-    )
+def _has_two_public_outputs(j: SemanticArchive) -> bool:
+    return len(j_elaboration(j).output_bindings) == 2
 
 
-def _has_typed_flash_attention_graph(value: Mapping[str, Any]) -> bool:
+def _has_typed_flash_attention_graph(j: SemanticArchive) -> bool:
     """Match the closed structured stable-attention J without kernel names."""
 
-    intent = value.get("intent")
-    boundary = value.get("boundary")
-    constraints = value.get("dimension_constraints")
+    elaboration, top_level_operations, all_records = _canonical_pattern_records(j)
+    boundary = elaboration.boundary_record
+    constraints = tuple(j.dimension_constraints)
     if (
-        not isinstance(intent, Mapping)
-        or not isinstance(boundary, Mapping)
-        or not isinstance(constraints, list)
+        not isinstance(boundary, Mapping)
         or boundary.get("aliases") not in (None, [])
     ):
         return False
-    function = intent.get("intent_function")
-    if not isinstance(function, Mapping):
+    # Physical public outputs are owned by the construction output rows; do
+    # not re-read ``intent.outputs`` as a second ABI declaration.
+    if len(elaboration.output_bindings) != 3 or not top_level_operations:
         return False
-    inputs = function.get("inputs")
-    outputs = function.get("outputs")
-    body = function.get("body")
-    if (
-        not isinstance(inputs, list)
-        or not isinstance(outputs, list)
-        or not isinstance(body, list)
-        or len(inputs) != 6
-        or len(outputs) != 3
-    ):
-        return False
-
-    input_by_name = {
-        item.get("name"): item
-        for item in inputs
-        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
-    }
-    output_by_name = {
-        item.get("name"): item
-        for item in outputs
-        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
-    }
-    operations: list[Mapping[str, Any]] = []
-
-    def visit(items: Any) -> None:
-        if not isinstance(items, list):
-            return
-        for item in items:
-            if not isinstance(item, Mapping):
-                continue
-            operations.append(item)
-            visit(item.get("body"))
-            for arm in ("positive", "negative"):
-                region = item.get(arm)
-                if isinstance(region, Mapping):
-                    visit(region.get("body"))
-
-    visit(body)
+    operations = list(all_records)
     contractions = [item for item in operations if item.get("op") == "contraction"]
     loops = [item for item in operations if item.get("op") == "loop"]
     scatters = [item for item in operations if item.get("op") == "scatter"]
@@ -601,7 +550,8 @@ def _has_typed_flash_attention_graph(value: Mapping[str, Any]) -> bool:
         or len(pv_operands) != 2
     ):
         return False
-    scans = loops[0].get("scan")
+    loop_wire = loops[0].get("wire")
+    scans = loop_wire.get("scan") if isinstance(loop_wire, Mapping) else None
     scan_sources = {
         item.get("name"): item.get("from")
         for item in scans
@@ -611,22 +561,22 @@ def _has_typed_flash_attention_graph(value: Mapping[str, Any]) -> bool:
     } if isinstance(scans, list) else {}
 
     def boundary_input(name: Any) -> Any:
-        return input_by_name.get(scan_sources.get(name, name))
+        return _record_type(elaboration, scan_sources.get(name, name))
 
     query = boundary_input(qk_operands[0])
     key = boundary_input(qk_operands[1])
     value_input = boundary_input(pv_operands[1])
-    if not all(isinstance(item, Mapping) for item in (query, key, value_input)):
+    if any(item is None for item in (query, key, value_input)):
         return False
-    query_shape = query.get("shape")
-    key_shape = key.get("shape")
-    value_shape = value_input.get("shape")
+    query_shape = query.shape
+    key_shape = key.shape
+    value_shape = value_input.shape
     if (
-        query.get("dtype") != "f16"
-        or key.get("dtype") != "f16"
-        or value_input.get("dtype") != "f16"
-        or not isinstance(query_shape, list)
-        or not isinstance(key_shape, list)
+        query.dtype != "f16"
+        or key.dtype != "f16"
+        or value_input.dtype != "f16"
+        or not isinstance(query_shape, tuple)
+        or not isinstance(key_shape, tuple)
         or len(query_shape) != 4
         or len(key_shape) != 4
         or value_shape != key_shape
@@ -634,31 +584,36 @@ def _has_typed_flash_attention_graph(value: Mapping[str, Any]) -> bool:
         or query_shape[2:] != key_shape[2:]
     ):
         return False
+    output_types = [item.output_type for item in elaboration.output_bindings]
     rank_four_outputs = [
-        item
-        for item in output_by_name.values()
-        if item.get("dtype") == "f16" and item.get("shape") == query_shape
+        item for item in output_types
+        if item.dtype == "f16" and item.shape == query_shape
     ]
     rank_three_outputs = [
-        item
-        for item in output_by_name.values()
-        if item.get("dtype") == "f32"
-        and isinstance(item.get("shape"), list)
-        and len(item["shape"]) == 3
-        and item["shape"][:2] == [query_shape[0], query_shape[2]]
+        item for item in output_types
+        if item.dtype == "f32"
+        and len(item.shape) == 3
+        and item.shape[:2] == (query_shape[0], query_shape[2])
+    ]
+    output_only = {
+        item.output
+        for item in elaboration.output_bindings
+        if item.abi_parameter_mode == "output"
+    }
+    input_types = [
+        value_type
+        for name, value_type in elaboration.value_type_by_name.items()
+        if name.startswith("t") and name not in output_only
     ]
     scalar_f32_inputs = [
-        item
-        for item in input_by_name.values()
-        if item.get("dtype") == "f32" and item.get("shape") == []
+        item for item in input_types
+        if item.dtype == "f32" and item.shape == ()
     ]
     scratch_inputs = [
-        item
-        for item in input_by_name.values()
-        if item.get("dtype") == "f32"
-        and isinstance(item.get("shape"), list)
-        and len(item["shape"]) == 3
-        and item["shape"][:2] == [query_shape[0], query_shape[2]]
+        item for item in input_types
+        if item.dtype == "f32"
+        and len(item.shape) == 3
+        and item.shape[:2] == (query_shape[0], query_shape[2])
     ]
     if (
         len(rank_four_outputs) != 1
@@ -667,7 +622,7 @@ def _has_typed_flash_attention_graph(value: Mapping[str, Any]) -> bool:
         or len(scratch_inputs) != 1
     ):
         return False
-    loop_trip = loops[0].get("trip")
+    loop_trip = loop_wire.get("trip") if isinstance(loop_wire, Mapping) else None
     if not isinstance(loop_trip, Mapping) or loop_trip.get("axis") != key_shape[1]:
         return False
     reduction_facts = {
@@ -713,7 +668,7 @@ def _has_typed_flash_attention_graph(value: Mapping[str, Any]) -> bool:
         )
     ):
         return False
-    padded = scratch_inputs[0]["shape"][2]
+    padded = scratch_inputs[0].shape[2]
     return any(
         isinstance(item, str)
         and item.replace(" ", "")
@@ -740,9 +695,8 @@ def _project_c_priors(
     tuple[dict[str, Any], ...],
     dict[str, Any],
 ]:
-    payload = state.base.j.to_json()
     reduction_axes, has_scan, float_bits, _has_reassociation, _has_contraction = (
-        _operation_facts(payload)
+        _operation_facts(state.base.j)
     )
     vlen_bits = _target_vlen_bits(state)
     element_bits = max(float_bits, default=32)
@@ -771,18 +725,11 @@ def _project_c_priors(
                 {**prior.to_record(), "reason": "non_positive_numeric_value"}
             )
             continue
-        axis_ref = prior.axis_ref if isinstance(prior.axis_ref, int) else None
-        if prior.role == "reduction_tile_extent" and axis_ref is not None:
-            maps_to_reduction = any(axis_ref in axes for axes in reduction_axes)
-            if not maps_to_reduction:
-                ignored.append(
-                    {
-                        **prior.to_record(),
-                        "reason": "reduction_tile_axis_is_not_a_reduction_axis",
-                    }
-                )
-                continue
-        elif prior.role == "reduction_tile_extent" and len(reduction_axes) == 1:
+        # CPrior is deliberately target-neutral and carries no Layer-C axis
+        # attachment.  Keep the projection explicit instead of referring to
+        # a non-existent per-prior axis field.
+        axis_ref = None
+        if prior.role == "reduction_tile_extent" and len(reduction_axes) == 1:
             maps_to_reduction = True
         elif prior.role == "reduction_tile_extent" and not reduction_axes:
             ignored.append(
@@ -1032,16 +979,35 @@ def _riscv_loop_attachment(
 ) -> tuple[str, int | str | None] | None:
     if not isinstance(j, SemanticArchive):
         raise TypeError("RISC-V Layer-C interface requires SemanticArchive")
-    node_by_path = {path: node_id for node_id, path in j.node_ids.items()}
+    typed_rows = j_elaboration(j).typed_operation_rows
+    if typed_rows is None:
+        raise RiscvContractError(
+            "RISC-V structured loop requires canonical typed operation records"
+        )
+    records = {
+        record["path"]: record
+        for record in j_elaboration(j).operation_records
+    }
+    authored_by_path = j_elaboration(j).authored_node_by_path(j.node_ids)
     loops: list[tuple[str, Any]] = []
-    for index, operation in enumerate(j.intent.body):
+    for path, operation in typed_rows:
+        if "." in path or not path.startswith("body["):
+            continue
         if operation.op != "loop":
             continue
-        path = f"body[{index}]"
-        node_id = operation.node_id or node_by_path.get(path)
-        if node_id is None:
+        record = records.get(path)
+        node_id = record.get("id") if isinstance(record, Mapping) else None
+        if not isinstance(node_id, str):
             raise RiscvContractError(
                 "RISC-V structured loop lacks a stable J node attachment"
+            )
+        if authored_by_path.get(path, node_id) != node_id:
+            raise RiscvContractError(
+                "RISC-V structured loop node id disagrees with canonical J"
+            )
+        if operation.node_id is not None and operation.node_id != node_id:
+            raise RiscvContractError(
+                "RISC-V structured loop typed id disagrees with canonical J"
             )
         loops.append((node_id, operation))
     if not loops:
@@ -1372,19 +1338,18 @@ def plan_riscv_search(
     if not isinstance(state, BackendSearchState):
         raise TypeError("RVV search planning requires BackendSearchState")
     contract = derive_riscv_contract_view(state)
-    j_payload = state.base.j.to_json()
     reduction_axes, _has_scan, _float_bits, has_reassociation, has_contraction = (
-        _operation_facts(j_payload)
+        _operation_facts(state.base.j)
     )
-    has_typed_rowmask = _has_typed_rowmask_graph(j_payload)
-    has_typed_gather_chain = _has_typed_gather_chain(j_payload)
+    has_typed_rowmask = _has_typed_rowmask_graph(state.base.j)
+    has_typed_gather_chain = _has_typed_gather_chain(state.base.j)
     has_paired_rotation = (
         'intent.paired_rotation = "interleaved"' in state.base.intent_mlir
         and "intentir.paired-last-axis-rotation.v1" in state.base.intent_mlir
     )
-    has_streaming_attention = _has_typed_flash_attention_graph(j_payload)
+    has_streaming_attention = _has_typed_flash_attention_graph(state.base.j)
     has_sibling_outputs = (
-        _has_two_public_outputs(j_payload)
+        _has_two_public_outputs(state.base.j)
         and not reduction_axes
         and not has_paired_rotation
     )

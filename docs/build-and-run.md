@@ -8,7 +8,7 @@
 - LLVM 与 MLIR 20（当前构建在 20.1.8 上验证）；
 - C++17 编译器。
 
-真实 Triton/TileLang/CUDA 闭包还需要兼容的 PyTorch、Triton、CUDA 工具链和 NVIDIA GPU。TileLang Source 需要可用的 TileLang 安装。RVV 目标执行需要对应 sysroot、LLVM 工具链和目标机或运行环境。外部多前端 Dataset 默认位于仓库同级的 `Dataset/`，也可通过 `INTENTIR_DATASET_ROOT` 或 CLI 参数指定。
+真实 Triton/TileLang/CUDA 闭包还需要兼容的 PyTorch、Triton、CUDA 工具链和 NVIDIA GPU。TileLang Source 需要可用的 TileLang 安装。RVV 目标执行需要对应 sysroot、LLVM 工具链和目标机或运行环境。运行多前端 Dataset demo 时，必须通过 `INTENTIR_DATASET_ROOT` 或 CLI 参数显式指定外部 Dataset，demo 不再假设默认路径。
 
 ## 2. Python 环境
 

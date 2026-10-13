@@ -193,6 +193,19 @@ def _walk(
     return tuple(walk_intent_op_paths(body, prefix))
 
 
+def _canonical_walk(
+    j: SemanticArchive,
+) -> tuple[tuple[str, IntentOp], ...]:
+    """Return the one typed operation view owned by canonical J records."""
+
+    rows = j_elaboration(j).typed_operation_rows
+    if rows is None:
+        raise DensePredicateMaterializationError(
+            "canonical operation records have no typed operation view"
+        )
+    return tuple(rows)
+
+
 def _results(operation: IntentOp) -> tuple[str, ...]:
     if isinstance(operation.result, str):
         return (operation.result,)
@@ -310,7 +323,7 @@ def _guard_dominates_output(
     if len(produced) != 1:
         return False
     value = produced[0]
-    operations = [item for _path, item in _walk(j.intent.body)]
+    operations = [item for _path, item in _canonical_walk(j)]
     uses = [
         (candidate, index)
         for candidate in operations
@@ -365,7 +378,9 @@ def materialize_dense_load_predicates(
     """
 
     j = elaborate_j(j)
-    if any(operation.op == "loop" for _path, operation in _walk(j.intent.body)):
+    if any(
+        operation.op == "loop" for _path, operation in _canonical_walk(j)
+    ):
         return None
 
     scalar_inputs = {
@@ -386,7 +401,8 @@ def materialize_dense_load_predicates(
         item.value_ref: item.dimension_ref
         for item in j.value_dimension_relations
     }
-    parsed_accesses = j_elaboration(j).access_by_id
+    elaboration = j_elaboration(j)
+    parsed_accesses = elaboration.access_by_id
     tensors = {
         item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
     }
@@ -439,13 +455,31 @@ def materialize_dense_load_predicates(
     transformed = copy.deepcopy(function)
     transformed_nodes: dict[str, IntentOp] = {}
     path_nodes = dict(_walk(transformed.body))
-    for node_id, path in j.node_ids.items():
-        if path in path_nodes:
-            transformed_nodes[node_id] = path_nodes[path]
+    record_by_path = {
+        record["path"]: record for record in elaboration.operation_records
+    }
+    if set(record_by_path) != set(path_nodes):
+        raise DensePredicateMaterializationError(
+            "dense predicate nodes disagree with canonical J operation records"
+        )
+    authored_by_path = elaboration.authored_node_by_path(j.node_ids)
     for path, operation in path_nodes.items():
+        record = record_by_path[path]
+        record_id = record.get("id")
+        if not isinstance(record_id, str):
+            raise DensePredicateMaterializationError(
+                f"dense predicate operation {path!r} has no canonical node id"
+            )
+        if authored_by_path.get(path, record_id) != record_id:
+            raise DensePredicateMaterializationError(
+                f"dense predicate node id disagrees at {path!r}"
+            )
+        if operation.node_id is not None and operation.node_id != record_id:
+            raise DensePredicateMaterializationError(
+                f"dense predicate typed node id disagrees at {path!r}"
+            )
         transformed_nodes[path] = operation
-        if operation.node_id is not None:
-            transformed_nodes[operation.node_id] = operation
+        transformed_nodes[record_id] = operation
 
     prefix: list[IntentOp] = []
     broadcasts: dict[str, dict[str, tuple[int, ...]]] = {}
@@ -489,7 +523,7 @@ def materialize_dense_load_predicates(
         original_consumer = next(
             (
                 operation
-                for path, operation in _walk(j.intent.body)
+                for path, operation in _canonical_walk(j)
                 if path == j.node_ids.get(access.node_ref)
                 or operation.node_id == access.node_ref
             ),

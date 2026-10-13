@@ -14,6 +14,11 @@ import json
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from intentir.ir.canonical_construction import (
+    CanonicalHandleAllocator,
+    canonical_operation_records,
+    canonical_output_records,
+)
 from intentir.ir.canonical_j import elaborate_j, j_elaboration
 
 from .model import (
@@ -86,8 +91,65 @@ def _intent_function(j: Mapping[str, Any]) -> Mapping[str, Any]:
     )
 
 
-def _node_stream(j: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Flatten J lexical structure while retaining every authored node field."""
+def _node_stream(
+    j: Mapping[str, Any],
+    *,
+    operation_records: Sequence[Mapping[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Flatten J from the shared operation record stream.
+
+    The raw walk remains a diagnostic fallback for masked/malformed input only.
+    Normal J and all typed Replay views pass the record stream built by
+    canonical J elaboration, so result/type/region fields cannot be re-guessed
+    by this consumer.
+    """
+
+    if operation_records is not None:
+        records: list[dict[str, Any]] = []
+        for record in operation_records:
+            wire = record.get("wire")
+            if not isinstance(wire, Mapping):
+                raise ValueError("operation record is missing its complete wire")
+            header = {
+                str(key): copy.deepcopy(value)
+                for key, value in wire.items()
+                if key not in {"body", "positive", "negative", "id"}
+            }
+            arms: dict[str, Any] = {}
+            for arm_name in ("positive", "negative"):
+                arm = wire.get(arm_name)
+                if arm is None:
+                    continue
+                arm_object = _object(
+                    arm,
+                    f"J.intent.{record['path']}.{arm_name}",
+                )
+                arms[arm_name] = {
+                    str(key): copy.deepcopy(value)
+                    for key, value in arm_object.items()
+                    if key != "body"
+                }
+            if arms:
+                header["arms"] = arms
+            records.append(
+                {
+                    "id": str(record["id"]),
+                    "path": str(record["path"]),
+                    "parent_node": record.get("parent_id"),
+                    "lexical_role": record.get("lexical_role", "function"),
+                    "depth": record.get("depth", 0),
+                    "region_scope_id": record.get("region_scope_id"),
+                    "is_final": record.get("is_final", False),
+                    "operand_types": copy.deepcopy(
+                        record.get("operand_types", {})
+                    ),
+                    "result_types": copy.deepcopy(
+                        record.get("result_types", {})
+                    ),
+                    **header,
+                }
+            )
+        return records
 
     function = _intent_function(j)
     node_ids = _object(j.get("node_ids", {}), "J.node_ids")
@@ -473,6 +535,11 @@ def _render_node_ir(
     location = (
         f" @J.{node.get('path')} role={node.get('lexical_role')}"
         + (f" parent={node.get('parent_node')}" if node.get("parent_node") is not None else "")
+        + (
+            f" region={node.get('region_scope_id')}"
+            if node.get("region_scope_id") is not None
+            else ""
+        )
     )
     special = {"carry", "scan", "trip", "yield", "scope_id"}
     ordinary = {
@@ -481,6 +548,8 @@ def _render_node_ir(
         "parent_node",
         "lexical_role",
         "depth",
+        "region_scope_id",
+        "is_final",
         "op",
         "operands",
         "result",
@@ -521,6 +590,10 @@ def _render_text(value: Mapping[str, Any]) -> str:
     lines = [
         f"semantic_program {value['protocol']}",
         f"status {value['status']}",
+        "output_binding_authority "
+        + str(value.get("output_binding_authority", "<unspecified>")),
+        "scope_binding_authority "
+        + str(value.get("scope_binding_authority", "<unspecified>")),
         "authority read_only_J_semantics; not_target_source; no_C; no_pi; no_Harness_valuation",
         "",
         "signature:",
@@ -654,9 +727,11 @@ class ReplayCompilerIndex:
     """Compact cross-reference over the already-authorized Replay inputs.
 
     This contains no fact beyond ``S_J`` and the already accepted
-    Source/Harness-bound ``C``. It places existing domain dependencies, C
-    bindings, and their attachments next to each other so a coding agent need
-    not reconstruct those joins repeatedly; it never creates a target C.
+    Source/Harness-bound ``C``. It places existing domain dependencies and
+    the physical C value ledger next to each other so a coding agent need not
+    reconstruct those joins repeatedly; it never creates a target C.  C slots
+    intentionally have no logical J attachment: π is the sole owner of a
+    tile-slot to logical-axis association.
     """
 
     value: dict[str, Any]
@@ -689,27 +764,23 @@ def materialize_replay_compiler_index(
         config = ImplementationConfig.from_json(copy.deepcopy(dict(c)))
         if not config.slots:
             raise ValueError("empty C must be omitted from Replay")
-        expected_names = [f"c{index}" for index in range(len(config.slots))]
+        expected_names = list(
+            CanonicalHandleAllocator.canonical_names("c", len(config.slots))
+        )
         if [slot.name for slot in config.slots] != expected_names:
             raise ValueError("Replay C slots must use c0, c1, ... declaration order")
         config.validate_complete_values(path="Replay C")
         slots = [slot.to_json() for slot in config.slots]
         values = config.values
-    attachments: list[dict[str, Any]] = []
+    c_slots: list[dict[str, Any]] = []
     for raw in slots:
         slot = _object(raw, "C.slots[]")
-        subject = slot.get("subject_ref")
         name = slot.get("name")
         assert isinstance(name, str)
-        attachments.append(
+        c_slots.append(
             {
                 "slot": copy.deepcopy(dict(slot)),
                 "value": copy.deepcopy(values[name]),
-                "subject_domain_refs": copy.deepcopy(
-                    domain_axis_refs.get(subject)
-                    if isinstance(subject, str)
-                    else None
-                ),
             }
         )
     value = {
@@ -727,7 +798,7 @@ def materialize_replay_compiler_index(
         "shared_write_domain_axis_refs": copy.deepcopy(
             ownership.get("shared_write_domain_axis_refs", [])
         ),
-        "anonymous_c_attachments": attachments,
+        "anonymous_c_slots": c_slots,
         "authority": (
             "deterministic cross-reference of exact S_J and optional complete C "
             "only; dependency subsets are syntactic and no program mapping, loop, "
@@ -751,8 +822,8 @@ def materialize_replay_compiler_index(
         "shared_write_domain_axis_refs "
         + _compact(value["shared_write_domain_axis_refs"])
     )
-    for attachment in attachments:
-        lines.append("anonymous_c_attachment " + _compact(attachment))
+    for slot in c_slots:
+        lines.append("anonymous_c_slot " + _compact(slot))
     return ReplayCompilerIndex(value, "\n".join(lines) + "\n")
 
 
@@ -762,12 +833,15 @@ def materialize_replay_semantics(j_value: Mapping[str, Any]) -> ReplaySemanticPr
     masked = _contains_mask(j_value)
     canonical_types: dict[str, Any] | None = None
     structured_boundary: dict[str, Any] | None = None
+    operation_records: Sequence[Mapping[str, Any]] | None = None
     if masked:
         j = copy.deepcopy(dict(j_value))
+        operation_records = canonical_operation_records(_intent_function(j))
     else:
         canonical = elaborate_j(SemanticArchive.from_json(copy.deepcopy(dict(j_value))))
         j = canonical.to_json()
         elaboration = j_elaboration(canonical)
+        operation_records = elaboration.operation_records
         canonical_types = {
             name: value_type.to_json()
             for name, value_type in elaboration.value_types
@@ -775,18 +849,74 @@ def materialize_replay_semantics(j_value: Mapping[str, Any]) -> ReplaySemanticPr
         structured_boundary = elaboration.structured_boundary_json()
 
     function = _intent_function(j)
-    nodes = _node_stream(j)
-    boundary = copy.deepcopy(dict(_object(j.get("boundary", {}), "J.boundary")))
+    nodes = _node_stream(j, operation_records=operation_records)
+    if structured_boundary is not None:
+        # Normal Replay consumes the same boundary construction projection as
+        # Gate1.  Only the explicitly masked diagnostic path below may read a
+        # raw boundary fallback.
+        boundary = copy.deepcopy(dict(structured_boundary["boundary"]))
+    else:
+        boundary = copy.deepcopy(dict(_object(j.get("boundary", {}), "J.boundary")))
     node_ids = {str(node["id"]) for node in nodes}
+    output_binding_authority = "canonical_construction"
     if structured_boundary is not None:
         output_bindings = copy.deepcopy(structured_boundary["output_bindings"])
     else:
-        raw_returns = function.get("returns")
-        if not isinstance(raw_returns, list):
-            raise ValueError(
-                "masked J.intent.intent_function.returns must be a complete array"
-            )
-        output_bindings = copy.deepcopy(raw_returns)
+        # A masked episode may still retain a complete output/return/mapping
+        # surface.  In that case use the same raw-wire construction record as
+        # Lift ingress and Gate1; do not rebuild ABI order from returns alone.
+        raw_output_records = canonical_output_records(
+            function,
+            boundary,
+            operation_records,
+            signature=_object(j.get("signature", {}), "J.signature"),
+        )
+        if raw_output_records is not None:
+            output_bindings = [
+                {
+                    "output": record["output"],
+                    "output_type": copy.deepcopy(record["output_type"]),
+                    "value": record["return_value"],
+                    "node_ref": record["node_ref"],
+                    "abi_index": record["abi_index"],
+                    "abi_parameter_index": record["abi_parameter_index"],
+                    "return_index": record["return_index"],
+                    "mapping_index": record["mapping_index"],
+                }
+                for record in raw_output_records
+            ]
+        else:
+            # The opaque MaskJ view intentionally masks fields such as return
+            # values/types.  It remains useful for diagnostics, but its raw
+            # fallback is not an acceptance authority and must never be used
+            # to prove a normal Replay/Gate1 output contract.
+            output_binding_authority = "masked_raw_diagnostic_fallback"
+            raw_returns = function.get("returns")
+            if not isinstance(raw_returns, list):
+                raise ValueError(
+                    "masked J.intent.intent_function.returns must be a complete array"
+                )
+            output_indexes = {
+                item.get("name"): index
+                for index, item in enumerate(
+                    _array(function.get("outputs", []), "J.intent.outputs")
+                )
+                if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+            }
+            output_bindings = []
+            for return_index, raw_return in enumerate(raw_returns):
+                item = _object(
+                    raw_return,
+                    f"J.intent.intent_function.returns[{return_index}]",
+                )
+                output_bindings.append(
+                    {
+                        **copy.deepcopy(dict(item)),
+                        "abi_index": output_indexes.get(item.get("output")),
+                        "return_index": return_index,
+                        "mapping_index": None,
+                    }
+                )
     boundary_ownership = _boundary_ownership_view(
         boundary,
         structured_boundary=structured_boundary,
@@ -797,6 +927,19 @@ def materialize_replay_semantics(j_value: Mapping[str, Any]) -> ReplaySemanticPr
             else None
         ),
     )
+    if structured_boundary is not None:
+        # Normal Replay must consume the scope table emitted by the same
+        # canonical construction transaction as operations, value types, and
+        # outputs.  Reading J.scopes here would create a second scope
+        # authority and let the semantic view drift from Gate1's typed view.
+        scopes = copy.deepcopy(structured_boundary["scopes"])
+        scope_binding_authority = "canonical_construction"
+    else:
+        # A masked episode has no complete typed elaboration.  Preserve its
+        # raw scopes only as a diagnostic projection; it cannot establish
+        # acceptance or repair a missing scope record.
+        scopes = copy.deepcopy(j.get("scopes", []))
+        scope_binding_authority = "masked_raw_diagnostic_projection"
     value: dict[str, Any] = {
         "protocol": REPLAY_SEMANTIC_PROGRAM_PROTOCOL,
         "status": "masked" if masked else "normal",
@@ -815,8 +958,10 @@ def materialize_replay_semantics(j_value: Mapping[str, Any]) -> ReplaySemanticPr
         "boundary_ownership": boundary_ownership,
         "boundary_refs_by_node": _boundary_node_refs(boundary, node_ids),
         "output_bindings": output_bindings,
+        "output_binding_authority": output_binding_authority,
+        "scope_binding_authority": scope_binding_authority,
         "node_ids": copy.deepcopy(j.get("node_ids", {})),
-        "scopes": copy.deepcopy(j.get("scopes", [])),
+        "scopes": scopes,
         "storage": copy.deepcopy(j.get("storage", [])),
         "dimension_constraints": copy.deepcopy(j.get("dimension_constraints", [])),
         "value_dimension_relations": copy.deepcopy(j.get("value_dimension_relations", [])),

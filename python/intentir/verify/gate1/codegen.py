@@ -86,7 +86,19 @@ TRITON_REPLAY_API_CONTRACT = (
     "the Replay ingress policy; `triton.jit` remains the required decorator. "
     "When its result supplies `tl.arange` or another constexpr-only argument, "
     "call it directly in that constexpr context or bind it as `name: tl.constexpr`; "
-    "an unannotated local assignment is not a constexpr carrier in Triton.\n"
+    "an unannotated local assignment is not a constexpr carrier in Triton. "
+    "On the active public Triton frontend, `tl.tanh` is not admitted: for "
+    "J `map_unary(fn=tanh)`, import `libdevice` from "
+    "`triton.language.extra.cuda` and call `libdevice.tanh(value.to(tl.float32))`.\n"
+    "The installed public Triton cat signature is tl.cat(input, other, "
+    "can_reorder=False): it concatenates exactly two tensors and has no dim "
+    "or axis keyword. The current implementation also requires "
+    "can_reorder=True, which permits element reordering. Use cat only when "
+    "the J dataflow is order-insensitive; for ordered components such as "
+    "weighted columns, compute each component directly instead of packing "
+    "them with cat. For three or more order-insensitive tensors, nest "
+    "two-input calls; do not use the PyTorch-style cat(inputs..., dim=...) "
+    "spelling.\n"
 )
 TRITON_REPLAY_ABI_CONTRACT = (
     "For Triton Replay ABI use, a J.signature scalar whose `logical_ref` is absent "
@@ -101,12 +113,23 @@ TRITON_REPLAY_ABI_CONTRACT = (
     "shared. The `axis` is the logical tensor axis whose coordinate is multiplied "
     "by the carrier; it is not the vector lane axis merely because the access is "
     "a vector transfer. For a rank-2 row access with logical index `[row, lane]` "
-    "and a row-stride carrier bound to axis 0, the address shape is "
-    "`row * carrier + lane` (or an equivalent complete vector index), never "
-    "`lane * carrier` and never `extent * carrier`. A contiguous lane contributes "
-    "its unit index directly unless another explicit J/representation binding "
-    "says otherwise. Do not infer ownership from parameter position or "
-    "contiguous-layout convention. Every listed carrier must reach the address slice, and every "
+    "and a row-stride carrier bound to axis 0, use the canonical two-stage "
+    "address realization: first materialize `row_ptr = base + row * carrier`, "
+    "then form the vector transfer from `row_ptr + lane`. Keep that row pointer "
+    "as an explicit local; do not collapse it into `base + row * carrier + lane`, "
+    "and never use `lane * carrier` or `extent * carrier`. A contiguous lane "
+    "contributes its unit index directly unless another explicit J/representation "
+    "binding says otherwise. Do not infer ownership from parameter position or "
+    "contiguous-layout convention. For every bound address axis, form the logical "
+    "coordinate in the exact integer dtype of that axis's bound carrier before "
+    "multiplication or pointer addition. In particular, when a program-id row "
+    "coordinate is multiplied by an i64 row-stride carrier, explicitly widen the "
+    "program id first (for example `tl.program_id(0).to(tl.int64)`); do not let "
+    "an i32 program id silently choose the pointer-add index type. Reuse that "
+    "typed row coordinate for every access bound to the same axis. Do not propagate "
+    "that row-carrier dtype to an unbound contiguous lane: a J/iota `tl.arange` "
+    "lane remains in its authored integer dtype (for example i32), and the final "
+    "row-pointer-plus-lane address uses that lane directly. Every listed carrier must reach the address slice, and every "
     "null-logical-ref scalar not listed there must remain unread. A carrier-derived "
     "local must remain address-only; do not reuse it as a semantic value or control "
     "input. Never use an unowned stride or address scalar as a J shape, extent, grid "
@@ -151,7 +174,11 @@ TRITON_REPLAY_STRUCTURE_CONTRACT = (
     "into a Python/Triton loop or one scalar transfer per lane. For every J "
     "reduce, emit one target local reduction with the authored combiner and "
     "reduction axis (for example, one `tl.sum` for a sum reduce), preserving the "
-    "collapsed-versus-kept result shape and the reduction's downstream use. Do "
+    "logical collapsed-versus-kept relation and the reduction's downstream use. "
+    "When the retained dimensions are scalar program coordinates, a logical "
+    "kept singleton is one scalar target carrier: do not reshape that scalar to "
+    "`(1,)`; retain it through scalar consumers and let a later vector consumer "
+    "broadcast it. Do "
     "not replace a J reduce with a serial accumulator, a loop over its dimension, "
     "or a duplicated sequence of scalar loads/stores. A `for range(...)` is "
     "allowed only for a J-authored loop or the explicitly closed C-tiled "
@@ -174,12 +201,33 @@ TRITON_REPLAY_STRUCTURE_CONTRACT = (
     "identity. If two access rows read the same tensor, create and use two "
     "separate loads at their respective rows; a local variable may not stand in "
     "for both access refs, even when their addresses are equal.\n"
+    "When an output mapping's producer is already available at its declared "
+    "effect position, emit that store at the earliest legal point in the J "
+    "effect order before constructing later independent consumers; do not defer "
+    "an earlier scalar/statistics store to a final epilogue merely to group "
+    "stores.\n"
     "When one J reduction axis is represented by one-dimensional target lanes "
     "and the J reduction has no separate target-axis requirement, use the public "
     "default reduction form (for example `tl.sum(value)` without an explicit "
     "`axis=`) so the target retains its flatten/reshape-to-local-reduce boundary. "
     "Do not replace that authored default reduction with `axis=0` when doing so "
     "removes the target's required reshape boundary.\n"
+    "A `consumer_extension` is a separate J-owned consumer edge, not an alias "
+    "for a load's `fill_value`. For every declared extension, preserve the "
+    "declared access predicate and make the extension's typed outside identity "
+    "reach that exact consumer operand along the closed provenance path. Apply "
+    "a predicate/select only when the closed extension ledger marks "
+    "`requires_post_consumer_identity=true` (for example, after a subtraction "
+    "that changes the fill). A closed producer mapping may discharge the "
+    "extension without a select: in particular, `exp(-inf)` is the typed zero "
+    "outside identity, so a masked `other=-inf` followed by `exp` must feed the "
+    "reduction directly. Do not add a redundant `where/select` merely because "
+    "the load fill literal differs from the consumer identity. The load's "
+    "`other=` handles the access-local fill, while the extension records the "
+    "proven consumer mapping. When one access has multiple "
+    "consumer_extensions, retain one independently observable consumer edge per "
+    "row; do not merge the consumers merely because they share one physical "
+    "load.\n"
     "For a vector transfer whose address has a scalar base offset plus a lane "
     "vector, form the complete vector index first (for example, "
     "`lane_offset = scalar_offset + lane`) and then perform one pointer-plus-"
@@ -187,6 +235,32 @@ TRITON_REPLAY_STRUCTURE_CONTRACT = (
     "transfer as `pointer + scalar_offset + lane`: Triton lowers that chained "
     "form to two pointer advances and it breaks the one-authored-transfer "
     "boundary.\n"
+    "Before returning a Triton module, perform a shape audit for every "
+    "intermediate: preserve the exact rank and extents of each typed J value "
+    "after its physical tile projection, introduce singleton dimensions only "
+    "when the consuming J broadcast/consumer requires them, and never create a "
+    "larger Cartesian product merely to make an axis number fit. A `tl.reshape` "
+    "is legal only when its input and output element counts are exactly equal. "
+    "A reduction axis must already exist on the value being reduced; do not "
+    "prepend artificial dimensions before `tl.max`/`tl.sum` or reduce a newly "
+    "invented axis. For a tiled contraction, keep the two operand tiles in their "
+    "declared contracted layout, form the product over the two visible output "
+    "axes and one contracted lane axis, and reduce only that contracted lane; "
+    "for a score tile, reduce the actual row/column tile axis and restore a "
+    "singleton only at the declared kept-dimension consumer. Tie each physical "
+    "tile range to the C slot attached to its own J domain (`tile_extent` versus "
+    "`reduction_tile_extent`), use every attached slot in that role, and never "
+    "substitute one domain's tile for another domain's extent. For a J "
+    "contraction with two or more visible tile axes, preserve the operand tile "
+    "layout and contraction-axis orientation instead of scalarizing it into "
+    "elementwise multiply plus a reduction. Use the public target matrix/tensor "
+    "contraction form (for Triton, `tl.dot`) when the operand tiles are "
+    "compatible, and use `tl.trans` only when the declared J subscripts require "
+    "the operand axis reversal. Keep all non-contracted output axes as tensor "
+    "dimensions; do not collapse a rank-4/rank-3 J value to a scalar or one-"
+    "dimensional lane merely because one program coordinate is scalar. The "
+    "reduction belongs only to the authored contraction/reduce axis, not to an "
+    "invented feature or query axis.\n"
 )
 
 # Public ``tl`` calls are generally dataflow-building operations.  The handful
@@ -459,6 +533,51 @@ def _validate_call(
                     f"`tl.{target.attr}` is unavailable in the public frontend; "
                     f"{TRITON_UNAVAILABLE_CALL_GUIDANCE[target.attr]}",
                 )
+            if target.attr == "cat":
+                if len(node.args) not in {2, 3}:
+                    _fail(
+                        node,
+                        "tl.cat requires two tensor operands and an optional "
+                        "positional can_reorder flag",
+                    )
+                keyword_names = [keyword.arg for keyword in node.keywords]
+                if any(name != "can_reorder" for name in keyword_names):
+                    _fail(
+                        node,
+                        "tl.cat accepts only the optional can_reorder keyword; "
+                        "dim/axis are not public Triton arguments",
+                    )
+                if len(keyword_names) != len(set(keyword_names)):
+                    _fail(node, "tl.cat has duplicate keyword arguments")
+                if len(node.args) == 3:
+                    reorder_node = node.args[2]
+                    if not isinstance(reorder_node, ast.Constant) or reorder_node.value is not True:
+                        _fail(
+                            node,
+                            "tl.cat requires literal can_reorder=True on this "
+                            "Triton frontend",
+                        )
+                elif not node.keywords:
+                    _fail(
+                        node,
+                        "tl.cat requires literal can_reorder=True on this "
+                        "Triton frontend",
+                    )
+                else:
+                    reorder_keyword = next(
+                        keyword
+                        for keyword in node.keywords
+                        if keyword.arg == "can_reorder"
+                    )
+                    if (
+                        not isinstance(reorder_keyword.value, ast.Constant)
+                        or reorder_keyword.value.value is not True
+                    ):
+                        _fail(
+                            node,
+                            "tl.cat requires literal can_reorder=True on this "
+                            "Triton frontend",
+                        )
             if target.attr.startswith("_") or target.attr in _FORBIDDEN_TL_CALLS:
                 _fail(node, f"call to `tl.{target.attr}` is forbidden")
             return

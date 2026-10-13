@@ -1,4 +1,4 @@
-"""Bounded same-case candidate concurrency before hidden Gate2 selection."""
+"""Bounded same-case candidate concurrency through full Gate2 selection."""
 
 from __future__ import annotations
 
@@ -13,12 +13,22 @@ from .workload_manifest import SCRCWorkloadEntry
 
 
 CANDIDATE_FANOUT_PROTOCOL = "intentir.scrc.candidate-fanout.v4"
-CANDIDATE_SELECTION_RULE = "first_observed_gate1_closure_cooperative_stop.v4"
+CANDIDATE_SELECTION_RULE = "first_observed_full_closure_cooperative_stop"
+# The public batch runner deliberately keeps this wave bounded.  The runner
+# itself used to accept a much larger implementation-only range, which made it
+# easy for the CLI and the actual executor to disagree about the intended
+# resource envelope.  Eight is the normal wave; twelve is the explicit upper
+# bound for a larger wave.
+DEFAULT_CANDIDATE_FANOUT = 8
+MAX_CANDIDATE_FANOUT = 12
 
 
 class CandidateBranchStatus(str, Enum):
     GATE1_CLOSED = "gate1_closed"
     GATE1_CLOSED_NOT_SELECTED = "gate1_closed_not_selected"
+    GATE2_CLOSED = "gate2_closed"
+    GATE2_CLOSED_NOT_SELECTED = "gate2_closed_not_selected"
+    GATE2_FAILED = "gate2_failed"
     NO_CLOSURE = "no_closure"
     SUPERSEDED = "superseded"
     INFRASTRUCTURE_FAILED = "infrastructure_failed"
@@ -49,6 +59,9 @@ class CandidateBranchOutcome:
         closed_statuses = {
             CandidateBranchStatus.GATE1_CLOSED,
             CandidateBranchStatus.GATE1_CLOSED_NOT_SELECTED,
+            CandidateBranchStatus.GATE2_CLOSED,
+            CandidateBranchStatus.GATE2_CLOSED_NOT_SELECTED,
+            CandidateBranchStatus.GATE2_FAILED,
         }
         if self.status in closed_statuses:
             if not isinstance(self.formal_round, int) or self.formal_round < 1:
@@ -105,7 +118,7 @@ class CandidateFanoutSearchReport:
         selected = [
             item.branch_id
             for item in self.branches
-            if item.status is CandidateBranchStatus.GATE1_CLOSED
+            if item.status is CandidateBranchStatus.GATE2_CLOSED
         ]
         closed = [
             item
@@ -117,14 +130,14 @@ class CandidateFanoutSearchReport:
             }
         ]
         if self.winner_branch_id is None:
-            if closed or self.winner_formal_round is not None:
+            if selected or self.winner_formal_round is not None:
                 raise ValueError("fan-out report omitted its selected winner")
         elif selected != [self.winner_branch_id]:
             raise ValueError("fan-out report winner differs from selected branch")
         elif self.winner.formal_round != self.winner_formal_round:
             raise ValueError("fan-out report winner formal round differs")
         elif any(
-            item.status is CandidateBranchStatus.GATE1_CLOSED_NOT_SELECTED
+            item.status is CandidateBranchStatus.GATE2_CLOSED_NOT_SELECTED
             and item.details.get("winner_branch_id")
             not in {None, self.winner_branch_id}
             for item in closed
@@ -174,7 +187,7 @@ CandidateBranchExecutor = Callable[
 
 
 class ConcurrentCandidateFanoutRunner:
-    """Select the first Gate1 closure and stop sibling searches cooperatively."""
+    """Select the first full closure and stop sibling searches cooperatively."""
 
     def run(
         self,
@@ -183,8 +196,14 @@ class ConcurrentCandidateFanoutRunner:
         *,
         candidates: int,
     ) -> CandidateFanoutSearchReport:
-        if not isinstance(candidates, int) or not 1 <= candidates <= 32:
-            raise ValueError("candidates must be an integer in [1, 32]")
+        if (
+            not isinstance(candidates, int)
+            or not 1 <= candidates <= MAX_CANDIDATE_FANOUT
+        ):
+            raise ValueError(
+                "candidates must be an integer in "
+                f"[1, {MAX_CANDIDATE_FANOUT}]"
+            )
         completed: dict[int, CandidateBranchOutcome] = {}
         winner_lock = Lock()
         winner_branch_id: int | None = None
@@ -195,7 +214,7 @@ class ConcurrentCandidateFanoutRunner:
 
         def observe_first_closure(outcome: CandidateBranchOutcome) -> None:
             nonlocal winner_branch_id
-            if outcome.status is not CandidateBranchStatus.GATE1_CLOSED:
+            if outcome.status is not CandidateBranchStatus.GATE2_CLOSED:
                 return
             with winner_lock:
                 if winner_branch_id is None:
@@ -245,8 +264,10 @@ class ConcurrentCandidateFanoutRunner:
 
         # Siblings observe ``winner_branch_id`` at the closed stage boundaries in
         # SCRCGateRunner and return SUPERSEDED instead of consuming later formal
-        # rounds. We still collect those stop receipts before publishing a
-        # complete fan-out report; receipt collection is not a search barrier.
+        # rounds. A Gate1-closed candidate is not a winner: its Gate2 result is
+        # still required before the Kernel can short-circuit. We still collect
+        # stop receipts before publishing a complete fan-out report; receipt
+        # collection is not a search barrier.
         winner = (
             completed[winner_branch_id]
             if winner_branch_id is not None
@@ -255,14 +276,14 @@ class ConcurrentCandidateFanoutRunner:
         if winner is not None:
             for branch_id, outcome in tuple(completed.items()):
                 if (
-                    outcome.status is CandidateBranchStatus.GATE1_CLOSED
+                    outcome.status is CandidateBranchStatus.GATE2_CLOSED
                     and branch_id != winner.branch_id
                 ):
                     completed[branch_id] = CandidateBranchOutcome(
                         outcome.branch_id,
                         outcome.case_id,
                         outcome.ordinal,
-                        CandidateBranchStatus.GATE1_CLOSED_NOT_SELECTED,
+                        CandidateBranchStatus.GATE2_CLOSED_NOT_SELECTED,
                         diagnostic=outcome.diagnostic,
                         evidence_path=outcome.evidence_path,
                         call_budget=outcome.call_budget,
@@ -291,6 +312,8 @@ class ConcurrentCandidateFanoutRunner:
 __all__ = [
     "CANDIDATE_FANOUT_PROTOCOL",
     "CANDIDATE_SELECTION_RULE",
+    "DEFAULT_CANDIDATE_FANOUT",
+    "MAX_CANDIDATE_FANOUT",
     "CandidateBranchOutcome",
     "CandidateBranchStatus",
     "CandidateFanoutSearchReport",

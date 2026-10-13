@@ -17,15 +17,28 @@ import math
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, Mapping, TypeVar
+from typing import Any, Callable, ClassVar, Mapping, Sequence, TypeVar
 
 from intentir.ir.intent_op_contract import (
     IntentOpContractError,
     canonicalize_dtype,
     is_non_boolean_integer_dtype,
     is_scalar_literal,
+    validate_const_literal,
     validate_intent_op_structure,
 )
+from intentir.ir.canonical_construction import (
+    CANONICAL_ARTIFACT_ROOT_FIELDS,
+    CANONICAL_BOUNDARY_ACCESS_REQUIRED_FIELDS,
+    CANONICAL_BOUNDARY_ACCESS_WIRE_FIELDS,
+    CANONICAL_BOUNDARY_WIRE_FIELDS,
+    CANONICAL_C_WIRE_FIELDS,
+    CANONICAL_J_WIRE_FIELDS,
+    CanonicalHandleAllocator,
+    canonical_archive_records,
+    canonical_operation_records,
+)
+from intentir.ir.canonical_j import j_elaboration
 from intentir.ir.dimension_relation import (
     DIMENSION_INT64_MAX,
     DIMENSION_RELATION_OPS,
@@ -35,11 +48,10 @@ from intentir.ir.dim_expr import dimension_expression_references
 from intentir.ir.model import (
     IntentFunction,
     ValueType,
-    walk_intent_op_paths,
-    walk_intent_ops,
 )
 from intentir.verify.gate1.pi import (
     NORMALIZATION_WITNESS_SCHEMA,
+    canonical_program_coordinate_projection,
     RealizationWitness,
     RealizationWitnessError,
 )
@@ -52,55 +64,22 @@ JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "Jso
 # harness coordinates and provider receipts live outside this object.  Keeping
 # the declaration here makes it difficult for a new caller to accidentally
 # smuggle a fourth proof object into Replay or a Gate verdict.
-GATE1_ARTIFACT_MODEL_FIELDS = (
-    "schema",
-    "j",
-    "c",
-    "pi",
-)
+# Compatibility names used by existing Gate1 callers.  The wire authority is
+# owned by canonical_construction; keep these aliases so old imports do not
+# become a second declaration.
+GATE1_ARTIFACT_MODEL_FIELDS = CANONICAL_ARTIFACT_ROOT_FIELDS
 GATE1_ARTIFACT_PRIVATE_FIELDS: tuple[str, ...] = ()
-SEMANTIC_ARCHIVE_WIRE_FIELDS = (
-    "kernel_id",
-    "intent",
-    "node_ids",
-    "boundary",
-    "signature",
-    "scopes",
-    "storage",
-    "dimension_constraints",
-    "value_dimension_relations",
-    "dimension_relations",
-)
-BOUNDARY_WIRE_FIELDS = (
-    "domains",
-    "accesses",
-    "broadcasts",
-    "aliases",
-    "effects",
-    "output_mappings",
-    "reductions",
-    "index_bounds",
-    "updates",
-    "result_relations",
-    "realization_authorizations",
-    "consumer_extensions",
-    "access_guard_relations",
-)
-BOUNDARY_ACCESS_WIRE_FIELDS = (
-    "access_id",
-    "kind",
-    "tensor",
-    "predicate",
-    "fill_value",
-    "node_ref",
-    "index_expression",
-)
-BOUNDARY_ACCESS_REQUIRED_FIELDS = (
-    "access_id",
-    "kind",
-    "tensor",
-    "index_expression",
-)
+SEMANTIC_ARCHIVE_WIRE_FIELDS = CANONICAL_J_WIRE_FIELDS
+# Fields that appeared in the retired nested-J wire shape.  ``intent_function``
+# remains valid under ``j.intent``; these siblings never do.  Keep this list
+# diagnostic-only: old payloads must not be auto-migrated into the canonical J.
+LEGACY_NESTED_J_FIELDS = frozenset(CANONICAL_J_WIRE_FIELDS) - {"intent"}
+# The canonical construction module owns the boundary collection set.  Gate1
+# exposes the same name for compatibility with its model/schema callers, but
+# it must not maintain a second list of boundary fields.
+BOUNDARY_WIRE_FIELDS = CANONICAL_BOUNDARY_WIRE_FIELDS
+BOUNDARY_ACCESS_WIRE_FIELDS = CANONICAL_BOUNDARY_ACCESS_WIRE_FIELDS
+BOUNDARY_ACCESS_REQUIRED_FIELDS = CANONICAL_BOUNDARY_ACCESS_REQUIRED_FIELDS
 
 
 def render_gate1_artifact_envelope_grammar() -> str:
@@ -114,7 +93,15 @@ def render_gate1_artifact_envelope_grammar() -> str:
         "declared only by j.signature. The root c object is the single "
         "implementation-selection object and pi is indexed by j/c. Do not emit "
         "interface, harness, location, source, provenance, binding-map or any "
-        "other root sibling."
+        "other root sibling. Every J archive field, including boundary, "
+        "signature, node_ids, scopes, storage, dimension_constraints, "
+        "value_dimension_relations, and dimension_relations, must be nested "
+        "directly under root.j. An object that contains root.j.intent together "
+        "with root.boundary or root.signature is a malformed flattened legacy "
+        "shape. Fields such as root.j.intent.boundary or root.j.intent.scopes "
+        "are also retired nested-J fields and are rejected without migration. "
+        "root.c and root.pi must be present as siblings of root.j; they "
+        "must never be nested under j or j.intent."
     )
 
 
@@ -176,6 +163,39 @@ class SchemaError(ValueError):
         if not issues:
             raise ValueError("SchemaError.from_issues requires at least one issue")
         return cls(issues[0].detail, issues=issues)
+
+
+class SemanticArchiveCrossContractError(SchemaError):
+    """Content-free classification for a strict J cross-contract failure.
+
+    ``SemanticArchive`` still executes every underlying validator unchanged.
+    This subtype only preserves which fixed constructor boundary rejected the
+    archive, so an ingress receipt can distinguish structural contracts without
+    serializing an authored row, handle, value, or validator message.
+    """
+
+    _CONTRACTS = frozenset(
+        {
+            "node_path",
+            "dimension",
+            "signature",
+            "typed_boundary",
+            "typed_boundary_operation",
+            "typed_boundary_index_bounds",
+            "typed_boundary_index_bounds_binding",
+            "typed_boundary_index_bounds_coverage",
+            "typed_boundary_updates",
+            "typed_boundary_result_relations",
+            "access_guard",
+            "scope_storage",
+        }
+    )
+
+    def __init__(self, contract: str) -> None:
+        if contract not in self._CONTRACTS:
+            raise ValueError("unknown SemanticArchive cross-contract")
+        self.contract = contract
+        super().__init__("SemanticArchive cross-contract rejected")
 
 
 @dataclass(frozen=True)
@@ -274,6 +294,136 @@ def _nested_root_owned_field_paths(
 
     visit(value, path)
     return tuple(found)
+
+
+def gate1_artifact_wire_diagnostics(
+    value: Any,
+    *,
+    path: str = "Gate1Artifact",
+) -> tuple[dict[str, Any], ...]:
+    """Return deterministic diagnostics for the root ``J/C/pi`` envelope.
+
+    The JSON Schema and the typed decoder both reject this shape, but they used
+    to report different secondary failures for the same malformed response. In
+    particular, a provider response with ``j.intent`` plus root-level J fields
+    was reported as a long list of missing/unknown fields, hiding the one
+    actionable error: the J archive was flattened and root ``c``/``pi`` were
+    absent. Keep this check structural only. It never moves fields or repairs a
+    candidate; it gives CandidateCheck and Decode one shared ownership diagnosis.
+    """
+
+    if not isinstance(value, dict):
+        return (
+            {
+                "code": "artifact_wire_root",
+                "path": path,
+                "message": "root must be one JSON object",
+                "expected_root": list(GATE1_ARTIFACT_MODEL_FIELDS),
+                "actual_root": type(value).__name__,
+            },
+        )
+
+    expected = set(GATE1_ARTIFACT_MODEL_FIELDS)
+    actual = set(value)
+    # ``json.loads`` always produces string keys, but this helper is also used
+    # directly by local callers before ``_object`` runs. Sort by a textual
+    # projection so malformed non-string Python keys are diagnosed as a wire
+    # error instead of leaking a Python ``TypeError`` from ``sorted``.
+    stable_actual_keys = sorted(actual, key=lambda item: str(item))
+    diagnostics: list[dict[str, Any]] = []
+
+    j_candidate = value.get("j")
+    if isinstance(j_candidate, dict):
+        nested_intent = j_candidate.get("intent")
+        if isinstance(nested_intent, dict):
+            legacy_fields = sorted(
+                set(nested_intent).intersection(LEGACY_NESTED_J_FIELDS)
+            )
+            if legacy_fields:
+                diagnostics.append(
+                    {
+                        "code": "artifact_wire_legacy_nested_j",
+                        "path": f"{path}.j.intent.{legacy_fields[0]}",
+                        "message": (
+                            "legacy nested J fields are not canonical; move no "
+                            "fields automatically and emit one root.j archive "
+                            "with c/pi as root siblings"
+                        ),
+                        "legacy_nested_fields": legacy_fields,
+                        "actual_root": stable_actual_keys,
+                    }
+                )
+                return tuple(diagnostics)
+        nested_root_owned = _nested_root_owned_field_paths(
+            j_candidate,
+            path=f"{path}.j",
+        )
+        if nested_root_owned:
+            diagnostics.append(
+                {
+                    "code": "artifact_wire_nested_owner",
+                    "path": nested_root_owned[0],
+                    "message": (
+                        "root-owned c/pi fields must be siblings of root.j; "
+                        "they must not be nested under J or j.intent"
+                    ),
+                    "actual_root": stable_actual_keys,
+                }
+            )
+            return tuple(diagnostics)
+
+    flattened_j_fields = sorted(
+        (actual - expected) & set(SEMANTIC_ARCHIVE_WIRE_FIELDS)
+    )
+    missing_root_fields = sorted(expected - actual)
+    if flattened_j_fields:
+        diagnostics.append(
+            {
+                "code": "artifact_wire_flattened_j",
+                "path": path,
+                "message": (
+                    "J archive fields are flattened at the artifact root; move "
+                    "them under root.j and provide root.c/root.pi as siblings"
+                ),
+                "flattened_j_fields": flattened_j_fields,
+                "missing_root_fields": missing_root_fields,
+                "expected_root": list(GATE1_ARTIFACT_MODEL_FIELDS),
+                "actual_root": stable_actual_keys,
+            }
+        )
+        return tuple(diagnostics)
+
+    if actual != expected:
+        diagnostics.append(
+            {
+                "code": "artifact_wire_root",
+                "path": path,
+                "message": (
+                    "artifact root must contain exactly schema, j, c, and pi; "
+                    "J archive fields belong under root.j"
+                ),
+                "missing_root_fields": missing_root_fields,
+                "extra_root_fields": sorted(
+                    actual - expected, key=lambda item: str(item)
+                ),
+                "expected_root": list(GATE1_ARTIFACT_MODEL_FIELDS),
+                "actual_root": stable_actual_keys,
+            }
+        )
+        return tuple(diagnostics)
+
+    for component in ("j", "c", "pi"):
+        if not isinstance(value.get(component), dict):
+            diagnostics.append(
+                {
+                    "code": "artifact_wire_component",
+                    "path": f"{path}.{component}",
+                    "message": f"root.{component} must be a JSON object",
+                    "expected_root": list(GATE1_ARTIFACT_MODEL_FIELDS),
+                    "actual_root": stable_actual_keys,
+                }
+            )
+    return tuple(diagnostics)
 
 
 def _string(value: Any, path: str, *, nonempty: bool = True) -> str:
@@ -961,7 +1111,25 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
                     f"{carry_path}.init_value must be an authored scalar literal "
                     "or a visible value reference"
                 )
-            if not is_literal_reference(init_value):
+            if is_literal_reference(init_value):
+                if carry_type.kind != "tensor" or carry_type.dtype is None:
+                    raise SchemaError(
+                        f"{carry_path}.init_value scalar literals require a "
+                        "tensor carry type"
+                    )
+                try:
+                    validate_const_literal(
+                        {
+                            "value": init_value,
+                            "dtype": carry_type.dtype,
+                            "shape": list(carry_type.shape),
+                        },
+                        result_type=carry_type.to_json(),
+                        context=f"{carry_path}.init_value",
+                    )
+                except IntentOpContractError as exc:
+                    raise SchemaError(str(exc)) from exc
+            else:
                 if not isinstance(init_value, str):
                     raise SchemaError(
                         f"{carry_path}.init_value must be a scalar literal "
@@ -1153,7 +1321,7 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
                 )
             return None
 
-        for state in states:
+        for state_index, state in enumerate(states):
             next_type = produced_type(state["next_value"])
             if next_type is None:
                 raise SchemaError(
@@ -1162,7 +1330,11 @@ def _strict_intent(value: Any, path: str = "SemanticArchive.intent") -> IntentFu
                 )
             if next_type != state["type"]:
                 raise SchemaError(
-                    f"{op_path}.carry state type must exactly match next/yield type"
+                    f"{op_path}.carry[{state_index}].next_value "
+                    f"{state['next_value']!r} direct producer type "
+                    f"{next_type.to_json()} differs from declared carry type "
+                    f"{state['type'].to_json()}; state type must exactly "
+                    "match next/yield type"
                 )
         for result_name, state in zip(produced, states, strict=True):
             state_type = state["type"]
@@ -1365,6 +1537,9 @@ class BoundaryAccess(StrictJSONMixin):
     fill_value: JsonValue = None
     node_ref: str | None = None
     index_expression: str | None = None
+    semantic_access_authorization: str | None = None
+    semantic_owner_authorization: str | None = None
+    semantic_guard_authorization: str | None = None
 
     _KEYS: ClassVar[set[str]] = set(BOUNDARY_ACCESS_WIRE_FIELDS)
 
@@ -1396,6 +1571,18 @@ class BoundaryAccess(StrictJSONMixin):
             self.index_expression = _string(
                 self.index_expression, "BoundaryAccess.index_expression"
             )
+        for value, field_name in (
+            (self.semantic_access_authorization, "semantic_access_authorization"),
+            (self.semantic_owner_authorization, "semantic_owner_authorization"),
+            (self.semantic_guard_authorization, "semantic_guard_authorization"),
+        ):
+            if value is not None and (
+                not isinstance(value, str)
+                or re.fullmatch(r"so_[0-9a-f]{32}", value) is None
+            ):
+                raise SchemaError(
+                    f"BoundaryAccess.{field_name} must be an opaque Source authorization token"
+                )
         if self.kind in {AccessKind.LOAD, AccessKind.STORE, AccessKind.UPDATE}:
             if self.index_expression is None:
                 raise SchemaError(
@@ -1418,6 +1605,9 @@ class BoundaryAccess(StrictJSONMixin):
             fill_value=data.get("fill_value"),
             node_ref=data.get("node_ref"),
             index_expression=data.get("index_expression"),
+            semantic_access_authorization=data.get("semantic_access_authorization"),
+            semantic_owner_authorization=data.get("semantic_owner_authorization"),
+            semantic_guard_authorization=data.get("semantic_guard_authorization"),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -1434,6 +1624,12 @@ class BoundaryAccess(StrictJSONMixin):
             result["node_ref"] = self.node_ref
         if self.index_expression is not None:
             result["index_expression"] = self.index_expression
+        if self.semantic_access_authorization is not None:
+            result["semantic_access_authorization"] = self.semantic_access_authorization
+        if self.semantic_owner_authorization is not None:
+            result["semantic_owner_authorization"] = self.semantic_owner_authorization
+        if self.semantic_guard_authorization is not None:
+            result["semantic_guard_authorization"] = self.semantic_guard_authorization
         return result
 
 
@@ -1583,7 +1779,7 @@ class EffectSpec(StrictJSONMixin):
     kind: EffectKind
     target: str
     node_ref: str | None = None
-    effect_id: str | None = None
+    effect_id: str = ""
     access_ref: str | None = None
 
     def __post_init__(self) -> None:
@@ -1601,13 +1797,12 @@ class EffectSpec(StrictJSONMixin):
                 r"n[0-9]+",
                 "an n* node handle",
             )
-        if self.effect_id is not None:
-            self.effect_id = _handle(
-                self.effect_id,
-                "EffectSpec.effect_id",
-                r"e[0-9]+",
-                "an e* effect handle",
-            )
+        self.effect_id = _handle(
+            self.effect_id,
+            "EffectSpec.effect_id",
+            r"e[0-9]+",
+            "an e* effect handle",
+        )
         if self.access_ref is not None:
             self.access_ref = _handle(
                 self.access_ref,
@@ -1624,17 +1819,19 @@ class EffectSpec(StrictJSONMixin):
             allowed={
                 "effect_id", "kind", "target", "node_ref", "access_ref",
             },
-            required={"kind", "target"},
+            required={"effect_id", "kind", "target"},
         )
         return cls(
             data["kind"], data["target"], data.get("node_ref"),
-            data.get("effect_id"), data.get("access_ref"),
+            data["effect_id"], data.get("access_ref"),
         )
 
     def to_json(self) -> dict[str, Any]:
-        result = {"kind": self.kind.value, "target": self.target}
-        if self.effect_id is not None:
-            result["effect_id"] = self.effect_id
+        result = {
+            "effect_id": self.effect_id,
+            "kind": self.kind.value,
+            "target": self.target,
+        }
         if self.node_ref is not None:
             result["node_ref"] = self.node_ref
         if self.access_ref is not None:
@@ -2240,19 +2437,9 @@ class Boundary(StrictJSONMixin):
             item if isinstance(item, EffectSpec) else EffectSpec.from_json(item)
             for item in self.effects
         ]
-        used_effect_ids = {
-            item.effect_id for item in self.effects if item.effect_id is not None
-        }
-        for index, item in enumerate(self.effects):
-            if item.effect_id is not None:
-                continue
-            candidate = f"e{index}"
-            suffix = 0
-            while candidate in used_effect_ids:
-                suffix += 1
-                candidate = f"e{index}_{suffix}"
-            item.effect_id = candidate
-            used_effect_ids.add(candidate)
+        # Effects participate in scopes, predicates, source-transfer order,
+        # and relift continuity.  ``EffectSpec`` therefore requires an
+        # explicit e* identity; it must never allocate one while parsing.
         self.output_mappings = [
             item if isinstance(item, OutputMapping) else OutputMapping.from_json(item)
             for item in self.output_mappings
@@ -2348,7 +2535,9 @@ class Boundary(StrictJSONMixin):
                 "access(es): " + ", ".join(unknown_guard_accesses)
             )
         if [item.auth_id for item in self.realization_authorizations] != [
-            f"u{index}" for index in range(len(self.realization_authorizations))
+            *CanonicalHandleAllocator.canonical_names(
+                "u", len(self.realization_authorizations)
+            )
         ]:
             raise SchemaError(
                 "realization authorization ids must be declaration ordered"
@@ -2642,31 +2831,73 @@ class StorageObject(StrictJSONMixin):
 
 
 def _validate_typed_boundary_relations(archive: "SemanticArchive") -> None:
+    """Classify one strict typed-Boundary validation entry without relaxing it."""
+
+    phase = ["typed_boundary_operation"]
+    try:
+        _validate_typed_boundary_relations_impl(archive, phase)
+    except SemanticArchiveCrossContractError:
+        raise
+    except SchemaError as exc:
+        raise SemanticArchiveCrossContractError(phase[0]) from exc
+
+
+def _validate_typed_boundary_relations_impl(
+    archive: "SemanticArchive",
+    phase: list[str],
+) -> None:
     """Bind every typed bounds/update/result relation to this exact J graph."""
 
-    by_path: dict[str, Any] = {}
-
-    def visit(ops: list[Any], prefix: str = "body") -> None:
-        for index, op in enumerate(ops):
-            path = f"{prefix}[{index}]"
-            by_path[path] = op
-            visit(op.body, f"{path}.body")
-            if op.op in {"effect_if", "value_if"}:
-                assert op.positive is not None and op.negative is not None
-                visit(op.positive.body, f"{path}.positive.body")
-                visit(op.negative.body, f"{path}.negative.body")
-
-    visit(archive.intent.body)
+    construction_records = canonical_archive_records(archive)
+    if construction_records is None:
+        raise SchemaError(
+            "typed boundary relations require canonical operation records"
+        )
+    # Build the typed operation tree exactly once for this cross-contract
+    # check.  ``typed_operation_rows`` deserializes the canonical operation
+    # records, so independently calling ``typed_operation_by_ref`` and
+    # ``typed_operation_by_path`` produces equal-but-distinct IntentOp
+    # instances.  Index-bound coverage is deliberately an identity relation:
+    # it must prove that a bound and a gather name the *same* operation in the
+    # one final graph.  Constructing the path and node-reference views from
+    # one row set preserves that strict relation instead of making every
+    # otherwise valid gather appear uncovered.
+    typed_rows = construction_records.typed_operation_rows
+    if typed_rows is None:
+        raise SchemaError(
+            "typed boundary relations require canonical typed operations"
+        )
+    by_path = dict(typed_rows)
+    operation_by_path = construction_records.operation_by_path
+    if len(by_path) != len(typed_rows) or set(by_path) != set(operation_by_path):
+        raise SchemaError(
+            "typed boundary relations require canonical operation paths"
+        )
     nodes = dict(by_path)
-    for node_id, path in archive.node_ids.items():
-        if path in by_path:
-            nodes[node_id] = by_path[path]
+    for node_ref, path in archive.node_ids.items():
+        if not isinstance(node_ref, str) or not isinstance(path, str):
+            raise SchemaError(
+                "typed boundary relations require canonical node references"
+            )
+        operation = by_path.get(path)
+        record = operation_by_path.get(path)
+        if (
+            operation is None
+            or not isinstance(record, Mapping)
+            or record.get("id") != node_ref
+            or node_ref in nodes
+        ):
+            raise SchemaError(
+                "typed boundary relations require canonical node references"
+            )
+        nodes[node_ref] = operation
 
     tensors = {
         item.name: item
         for item in [*archive.intent.inputs, *archive.intent.outputs]
     }
 
+    phase[0] = "typed_boundary_index_bounds_binding"
     bounds_by_node: dict[str, IndexBoundsSpec] = {}
     bounded_operations: set[int] = set()
     for item in archive.boundary.index_bounds:
@@ -2700,14 +2931,17 @@ def _validate_typed_boundary_relations(archive: "SemanticArchive") -> None:
         bounded_operations.add(id(op))
         bounds_by_node[item.node_ref] = item
 
+    phase[0] = "typed_boundary_index_bounds_coverage"
     gather_operations = {
         id(op) for op in by_path.values() if op.op == "gather"
     }
     if gather_operations - bounded_operations:
         raise SchemaError(
-            "canonical J gather requires a typed IndexBoundsSpec"
+            "canonical J gather requires exactly one typed IndexBoundsSpec "
+            "matching the gather node's data, indices, and axis"
         )
 
+    phase[0] = "typed_boundary_updates"
     updates_by_node: dict[str, LogicalUpdateSpec] = {}
     updated_operations: set[int] = set()
     scatter_refs: set[str] = set()
@@ -2805,43 +3039,22 @@ def _validate_typed_boundary_relations(archive: "SemanticArchive") -> None:
             "canonical J scatter requires a typed LogicalUpdateSpec"
         )
 
+    phase[0] = "typed_boundary_result_relations"
+    # Output ABI, sparse mapping, return value, and producer ownership are one
+    # canonical record.  Gate1 consumes that record instead of reconstructing
+    # return_values/mapping_values independently from the typed archive.
+    output_records = construction_records.output_records
+    if not output_records:
+        raise SchemaError("canonical J output construction record is unavailable")
     output_names = [item.name for item in archive.intent.outputs]
     outputs = set(output_names)
-    return_values = {item.output: item.value for item in archive.intent.returns}
-    if len(return_values) != len(archive.intent.returns):
-        raise SchemaError("IntentFunction returns contain duplicate outputs")
-    if [item.output for item in archive.intent.returns] != output_names:
+    if [record["output"] for record in output_records] != output_names:
         raise SchemaError(
-            "IntentFunction returns must cover outputs once and in ABI order"
-        )
-    unknown_return_outputs = sorted(set(return_values) - outputs)
-    if unknown_return_outputs:
-        raise SchemaError(
-            "IntentFunction returns reference unknown outputs: "
-            + ", ".join(unknown_return_outputs)
-        )
-    mapping_values = {
-        item.output: item.value for item in archive.boundary.output_mappings
-    }
-    unknown_mapping_outputs = sorted(set(mapping_values) - outputs)
-    if unknown_mapping_outputs:
-        raise SchemaError(
-            "Boundary.output_mappings reference unknown outputs: "
-            + ", ".join(unknown_mapping_outputs)
-        )
-    conflicting_mappings = sorted(
-        output
-        for output, value in mapping_values.items()
-        if value != return_values[output]
-    )
-    if conflicting_mappings:
-        raise SchemaError(
-            "Boundary.output_mappings must agree with IntentFunction.returns: "
-            + ", ".join(conflicting_mappings)
+            "canonical output records must preserve output ABI declaration order"
         )
     observable_values = {
-        output: return_values[output]
-        for output in output_names
+        record["output"]: record["return_value"]
+        for record in output_records
     }
     relation_by_output = {
         item.output: item for item in archive.boundary.result_relations
@@ -3003,16 +3216,48 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
             "SemanticArchive supports at most one top-level program_instance scope"
         )
     execution_scope = program_scopes[0] if program_scopes else root
+    construction_records = canonical_archive_records(archive)
+    if construction_records is None:
+        raise SchemaError(
+            "SemanticArchive has no complete canonical construction record"
+        )
+    operation_record_by_path = construction_records.operation_by_path
+    typed_rows = construction_records.typed_operation_rows
+    if typed_rows is None:
+        raise SchemaError(
+            "canonical operation records cannot materialize typed operations"
+        )
+    typed_operations = dict(typed_rows)
+    if set(operation_record_by_path) != set(typed_operations):
+        raise SchemaError(
+            "canonical operation record paths disagree with typed IntentOp paths"
+        )
+    for path, operation in typed_operations.items():
+        record = operation_record_by_path[path]
+        typed_wire = operation._structural_payload()
+        typed_results = (
+            (operation.result,)
+            if isinstance(operation.result, str)
+            else tuple(operation.result)
+            if isinstance(operation.result, list)
+            else ()
+        )
+        if (
+            record["id"] != typed_wire.get("id")
+            or record["op"] != operation.op
+            or tuple(record["operands"]) != tuple(operation.operands)
+            or tuple(record["results"]) != typed_results
+            or record["type"] != typed_wire.get("type")
+            or record["attrs"] != typed_wire.get("attrs")
+        ):
+            raise SchemaError(
+                f"canonical operation record disagrees with typed operation {path!r}"
+            )
+    shared_scope_records = construction_records.scope_records
+    shared_scope_by_id = {
+        record["scope_id"]: record for record in shared_scope_records
+    }
     reverse_node_ids = {path: node_id for node_id, path in archive.node_ids.items()}
-    required_definitions: dict[str, set[str]] = {
-        scope.scope_id: set() for scope in archive.scopes
-    }
-    required_captures: dict[str, set[str]] = {
-        scope.scope_id: set() for scope in archive.scopes
-    }
-    required_effects: dict[str, set[str]] = {
-        scope.scope_id: set() for scope in archive.scopes
-    }
     path_scope: dict[str, str] = {}
     event_order: dict[tuple[SemanticEventKind, str | None], int] = {
         (SemanticEventKind.SCOPE_ENTRY, root.scope_id): -1,
@@ -3028,238 +3273,176 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
     value_events: dict[str, set[tuple[SemanticEventKind, str | None]]] = {}
     valid_values = {tensor.name for tensor in archive.intent.inputs}
     valid_values.update(tensor.name for tensor in archive.intent.outputs)
-    required_definitions[root.scope_id].update(
-        tensor.name for tensor in archive.intent.inputs
-    )
     state_records: list[tuple[Any, str, str]] = []
     referenced_loop_scopes: set[str] = set()
     referenced_branch_scopes: set[str] = set()
     order = 0
 
-    def operation_results(op: Any) -> list[str]:
-        if op.result is None:
-            return []
-        if isinstance(op.result, str):
-            return [op.result]
-        return list(op.result)
-
-    def local_region_uses(
-        operations: list[Any], *, local_seed: set[str] | None = None
-    ) -> set[str]:
-        """Return outer values captured by one authored semantic region."""
-
-        local = set(local_seed or ())
-        used: set[str] = set()
-        for body_op in operations:
-            for nested in _walk_intent_ops(body_op):
-                local.update(operation_results(nested))
-                used.update(nested.operands)
-                if (
-                    nested.op in {"effect_if", "value_if"}
-                    and nested.predicate is not None
-                ):
-                    used.add(nested.predicate)
-                if nested.op == "value_if":
-                    assert nested.positive is not None and nested.negative is not None
-                    used.add(nested.positive.yield_value)
-                    used.add(nested.negative.yield_value)
-                if nested.op == "loop":
-                    local.update(scan.name for scan in nested.scan)
-                    local.update(
-                        state.body_argument for state in nested.carry
-                    )
-                    if nested.trip is not None and nested.trip.is_dynamic:
-                        local.add(nested.trip.index or "")
-                        used.add(nested.trip.upper_bound)
-                    used.update(scan.source for scan in nested.scan)
-                    used.update(
-                        state.init_value
-                        for state in nested.carry
-                        if isinstance(state.init_value, str)
-                    )
-        outer = {
-            value
-            for value in used - local
-            if not _looks_like_semantic_literal(value)
-        }
-        return outer
-
-    def local_loop_uses(loop: Any) -> set[str]:
-        seed = {scan.name for scan in loop.scan}
-        seed.update(state.body_argument for state in loop.carry)
-        if loop.trip is not None and loop.trip.is_dynamic:
-            seed.add(loop.trip.index or "")
-        outer = local_region_uses(loop.body, local_seed=seed)
-        if loop.trip is not None and loop.trip.is_dynamic:
-            outer.add(loop.trip.upper_bound)
-        outer.update(scan.source for scan in loop.scan)
-        outer.update(
-            state.init_value
-            for state in loop.carry
-            if isinstance(state.init_value, str)
-            and not _looks_like_semantic_literal(state.init_value)
-        )
-        return outer
-
-    def visit(ops: list[Any], owner_scope: str, prefix: str = "body") -> None:
-        nonlocal order
-        for index, op in enumerate(ops):
-            path = f"{prefix}[{index}]"
-            path_scope[path] = owner_scope
-            path_event = (SemanticEventKind.NODE, path)
-            event_order[path_event] = order
-            event_scope[path_event] = owner_scope
-            node_id = reverse_node_ids.get(path)
-            if node_id is not None:
-                node_event = (SemanticEventKind.NODE, node_id)
-                event_order[node_event] = order
-                event_scope[node_event] = owner_scope
-            order += 1
-            produced = operation_results(op)
-            valid_values.update(produced)
-            required_definitions[owner_scope].update(produced)
-            event_ref = (SemanticEventKind.NODE, node_id or path)
-            trip_values = (
-                [op.trip.upper_bound]
-                if op.op == "loop"
-                and op.trip is not None
-                and op.trip.is_dynamic
-                else []
+    # The construction table is already in canonical lexical preorder.  Use
+    # it for both operation events and region ownership; recursively walking
+    # archive.intent.body here would create a second path/SSA interpretation.
+    operation_orders: dict[str, int] = {}
+    region_entries: dict[str, int] = {}
+    for path, op in typed_rows:
+        record = operation_record_by_path.get(path)
+        if record is None:
+            raise SchemaError(
+                f"canonical operation record is missing for typed path {path!r}"
             )
-            for value in [*produced, *op.operands, *trip_values]:
-                value_events.setdefault(value, set()).add(event_ref)
-            if op.op in {"effect_if", "value_if"}:
-                assert op.predicate is not None
-                assert op.positive is not None and op.negative is not None
-                value_events.setdefault(op.predicate, set()).add(event_ref)
-                arm_scopes = [op.positive.scope_id, op.negative.scope_id]
-                if len(set(arm_scopes)) != 2:
-                    raise SchemaError(
-                        f"conditional {path!r} positive/negative scopes must be distinct"
-                    )
-                for polarity, arm in (
-                    ("positive", op.positive),
-                    ("negative", op.negative),
-                ):
-                    branch_scope_id = arm.scope_id
-                    if branch_scope_id not in scope_by_id:
-                        raise SchemaError(
-                            f"conditional {path!r} {polarity} arm references "
-                            "unknown portable scope"
-                        )
-                    branch_scope = scope_by_id[branch_scope_id]
-                    if branch_scope_id in referenced_branch_scopes:
-                        raise SchemaError(
-                            f"portable branch scope {branch_scope_id!r} is "
-                            "referenced more than once"
-                        )
-                    referenced_branch_scopes.add(branch_scope_id)
-                    if branch_scope.kind is not ScopeKind.BRANCH_REGION:
-                        raise SchemaError(
-                            f"conditional {path!r} {polarity} scope must have "
-                            "kind branch_region"
-                        )
-                    if branch_scope.parent_scope != owner_scope:
-                        raise SchemaError(
-                            f"conditional {path!r} arm scopes must share parent "
-                            f"{owner_scope!r}"
-                        )
-                    branch_entry = (
-                        SemanticEventKind.SCOPE_ENTRY,
-                        branch_scope_id,
-                    )
-                    event_order[branch_entry] = event_order[path_event]
-                    event_scope[branch_entry] = branch_scope_id
-                    arm_captures = local_region_uses(arm.body)
-                    if op.op == "value_if":
-                        arm_definitions = {
-                            value
-                            for arm_op in arm.body
-                            for nested in _walk_intent_ops(arm_op)
-                            for value in operation_results(nested)
-                        }
-                        if (
-                            arm.yield_value not in arm_definitions
-                            and not _looks_like_semantic_literal(arm.yield_value)
-                        ):
-                            arm_captures.add(arm.yield_value)
-                        value_events.setdefault(
-                            arm.yield_value, set()
-                        ).add(event_ref)
-                    required_captures[branch_scope_id].update(arm_captures)
-                    visit(
-                        arm.body,
-                        branch_scope_id,
-                        f"{path}.{polarity}.body",
-                    )
-                    branch_exit = (
-                        SemanticEventKind.SCOPE_EXIT,
-                        branch_scope_id,
-                    )
-                    event_order[branch_exit] = order
-                    event_scope[branch_exit] = branch_scope_id
-                continue
-            if op.op != "loop":
-                if op.scope_id is not None:
-                    raise SchemaError(
-                        f"non-loop operation {path!r} must not declare scope_id"
-                    )
-                continue
+        owner_scope = record.get("region_scope_id") or execution_scope.scope_id
+        if owner_scope not in scope_by_id:
+            raise SchemaError(
+                f"canonical operation {path!r} references unknown scope "
+                f"{owner_scope!r}"
+            )
+        path_scope[path] = owner_scope
+        path_event = (SemanticEventKind.NODE, path)
+        operation_orders[path] = order
+        event_order[path_event] = order
+        event_scope[path_event] = owner_scope
+        node_id = record.get("id")
+        authored_node_id = reverse_node_ids.get(path)
+        if authored_node_id != node_id:
+            raise SchemaError(
+                f"canonical operation node id disagrees at {path!r}"
+            )
+        node_event = (SemanticEventKind.NODE, node_id)
+        event_order[node_event] = order
+        event_scope[node_event] = owner_scope
+        order += 1
 
-            loop_scope_id = op.scope_id
-            if loop_scope_id is None or loop_scope_id not in scope_by_id:
-                raise SchemaError(
-                    f"semantic loop {path!r} references unknown portable scope"
-                )
-            loop_scope = scope_by_id[loop_scope_id]
-            if loop_scope_id in referenced_loop_scopes:
-                raise SchemaError(
-                    f"portable loop scope {loop_scope_id!r} is referenced more than once"
-                )
-            referenced_loop_scopes.add(loop_scope_id)
-            if loop_scope.kind is not ScopeKind.LOOP_REGION:
-                raise SchemaError(
-                    f"semantic loop {path!r} scope must have kind loop_region"
-                )
-            if loop_scope.parent_scope != owner_scope:
-                raise SchemaError(
-                    f"semantic loop {path!r} scope parent must be {owner_scope!r}"
-                )
-            loop_entry = (SemanticEventKind.SCOPE_ENTRY, loop_scope_id)
-            event_order[loop_entry] = event_order[path_event]
-            event_scope[loop_entry] = loop_scope_id
-            loop_definitions = {scan.name for scan in op.scan}
-            loop_definitions.update(state.body_argument for state in op.carry)
-            if op.trip is not None and op.trip.is_dynamic:
-                loop_definitions.add(op.trip.index or "")
-            valid_values.update(loop_definitions)
-            required_definitions[loop_scope_id].update(loop_definitions)
-            captures = local_loop_uses(op)
-            required_captures[loop_scope_id].update(captures)
-            for scan in op.scan:
-                value_events.setdefault(scan.source, set()).add(event_ref)
-            for state in op.carry:
-                valid_values.add(state.state_id)
-                state_records.append((state, loop_scope_id, node_id or path))
-                state_event = (SemanticEventKind.STATE, state.state_id)
-                event_order[state_event] = event_order[path_event]
-                event_scope[state_event] = loop_scope_id
-                for value in (
-                    state.state_id, state.body_argument, state.next_value,
-                    state.result_value,
-                ):
-                    value_events.setdefault(value, set()).add(state_event)
-                if (
-                    isinstance(state.init_value, str)
-                    and not _looks_like_semantic_literal(state.init_value)
-                ):
-                    value_events.setdefault(state.init_value, set()).add(state_event)
-            visit(op.body, loop_scope_id, f"{path}.body")
-            loop_exit = (SemanticEventKind.SCOPE_EXIT, loop_scope_id)
-            event_order[loop_exit] = order
-            event_scope[loop_exit] = loop_scope_id
+        produced = list(record["results"])
+        valid_values.update(produced)
+        event_ref = node_event
+        trip_values = (
+            [op.trip.upper_bound]
+            if op.op == "loop"
+            and op.trip is not None
+            and op.trip.is_dynamic
+            else []
+        )
+        for value in [*produced, *op.operands, *trip_values]:
+            value_events.setdefault(value, set()).add(event_ref)
 
-    visit(archive.intent.body, execution_scope.scope_id)
+        if op.op in {"effect_if", "value_if"}:
+            if op.predicate is None or op.positive is None or op.negative is None:
+                raise SchemaError(f"conditional {path!r} lacks complete arms")
+            value_events.setdefault(op.predicate, set()).add(event_ref)
+            arms = (("positive", op.positive), ("negative", op.negative))
+            arm_scopes = [arm.scope_id for _polarity, arm in arms]
+            if len(set(arm_scopes)) != 2:
+                raise SchemaError(
+                    f"conditional {path!r} positive/negative scopes must be distinct"
+                )
+            for polarity, arm in arms:
+                branch_scope_id = arm.scope_id
+                branch_scope = scope_by_id.get(branch_scope_id)
+                if branch_scope is None:
+                    raise SchemaError(
+                        f"conditional {path!r} {polarity} arm references "
+                        "unknown portable scope"
+                    )
+                if branch_scope_id in referenced_branch_scopes:
+                    raise SchemaError(
+                        f"portable branch scope {branch_scope_id!r} is "
+                        "referenced more than once"
+                    )
+                referenced_branch_scopes.add(branch_scope_id)
+                if branch_scope.kind is not ScopeKind.BRANCH_REGION:
+                    raise SchemaError(
+                        f"conditional {path!r} {polarity} scope must have "
+                        "kind branch_region"
+                    )
+                if branch_scope.parent_scope != owner_scope:
+                    raise SchemaError(
+                        f"conditional {path!r} arm scopes must share parent "
+                        f"{owner_scope!r}"
+                    )
+                region_entries[branch_scope_id] = operation_orders[path]
+                branch_entry = (SemanticEventKind.SCOPE_ENTRY, branch_scope_id)
+                event_order[branch_entry] = operation_orders[path]
+                event_scope[branch_entry] = branch_scope_id
+                if op.op == "value_if":
+                    value_events.setdefault(arm.yield_value, set()).add(event_ref)
+            continue
+
+        if op.op != "loop":
+            if op.scope_id is not None:
+                raise SchemaError(
+                    f"non-loop operation {path!r} must not declare scope_id"
+                )
+            continue
+
+        loop_scope_id = op.scope_id
+        loop_scope = scope_by_id.get(loop_scope_id)
+        if loop_scope is None:
+            raise SchemaError(
+                f"semantic loop {path!r} references unknown portable scope"
+            )
+        if loop_scope_id in referenced_loop_scopes:
+            raise SchemaError(
+                f"portable loop scope {loop_scope_id!r} is referenced more than once"
+            )
+        referenced_loop_scopes.add(loop_scope_id)
+        if loop_scope.kind is not ScopeKind.LOOP_REGION:
+            raise SchemaError(
+                f"semantic loop {path!r} scope must have kind loop_region"
+            )
+        if loop_scope.parent_scope != owner_scope:
+            raise SchemaError(
+                f"semantic loop {path!r} scope parent must be {owner_scope!r}"
+            )
+        region_entries[loop_scope_id] = operation_orders[path]
+        loop_entry = (SemanticEventKind.SCOPE_ENTRY, loop_scope_id)
+        event_order[loop_entry] = operation_orders[path]
+        event_scope[loop_entry] = loop_scope_id
+        loop_definitions = {scan.name for scan in op.scan}
+        loop_definitions.update(state.body_argument for state in op.carry)
+        if op.trip is not None and op.trip.is_dynamic:
+            loop_definitions.add(op.trip.index or "")
+        valid_values.update(loop_definitions)
+        for scan in op.scan:
+            value_events.setdefault(scan.source, set()).add(event_ref)
+        for state in op.carry:
+            valid_values.add(state.state_id)
+            state_records.append((state, loop_scope_id, node_id))
+            state_event = (SemanticEventKind.STATE, state.state_id)
+            event_order[state_event] = operation_orders[path]
+            event_scope[state_event] = loop_scope_id
+            for value in (
+                state.state_id, state.body_argument, state.next_value,
+                state.result_value,
+            ):
+                value_events.setdefault(value, set()).add(state_event)
+            if (
+                isinstance(state.init_value, str)
+                and not _looks_like_semantic_literal(state.init_value)
+            ):
+                value_events.setdefault(state.init_value, set()).add(state_event)
+
+    # Region exits occur after the last operation in that region or any of its
+    # descendants.  This preserves the old event ordering while deriving the
+    # boundaries from canonical region ownership rather than a second walk.
+    for scope_id, entry_order in region_entries.items():
+        scope_ids = {scope_id}
+        changed = True
+        while changed:
+            changed = False
+            for candidate in scope_by_id.values():
+                if candidate.parent_scope in scope_ids and candidate.scope_id not in scope_ids:
+                    scope_ids.add(candidate.scope_id)
+                    changed = True
+        operation_end = max(
+            (
+                operation_orders[path]
+                for path, owner in path_scope.items()
+                if owner in scope_ids
+            ),
+            default=entry_order,
+        )
+        exit_event = (SemanticEventKind.SCOPE_EXIT, scope_id)
+        event_order[exit_event] = operation_end + 1
+        event_scope[exit_event] = scope_id
     declared_loop_scopes = {
         scope.scope_id
         for scope in archive.scopes
@@ -3287,13 +3470,6 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
     if execution_scope is not root:
         event_order[(SemanticEventKind.SCOPE_EXIT, root.scope_id)] = order + 2
         event_scope[(SemanticEventKind.SCOPE_EXIT, root.scope_id)] = root.scope_id
-    if execution_scope is not root:
-        required_captures[execution_scope.scope_id].update(
-            tensor.name
-            for tensor in archive.intent.inputs
-            if value_events.get(tensor.name)
-        )
-
     valid_effect_refs: set[str] = set()
     declared_effect_owner: dict[str, str] = {}
     for scope in archive.scopes:
@@ -3323,17 +3499,6 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
                 (SemanticEventKind.NODE, effect.node_ref),
                 event_order.get((SemanticEventKind.NODE, effect_path), order),
             )
-        required_effects[owner].add(token)
-        if (
-            owner != execution_scope.scope_id
-            and effect.kind in {
-                EffectKind.READ,
-                EffectKind.READ_WRITE,
-                EffectKind.UPDATE,
-            }
-            and effect.target in valid_values
-        ):
-            required_captures[owner].add(effect.target)
         effect_event = (SemanticEventKind.EFFECT, token)
         event_order[effect_event] = effect_order
         event_scope[effect_event] = owner
@@ -3374,7 +3539,8 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
     defined_owner: dict[str, str] = {}
     all_declared_values = set(valid_values)
     for scope in archive.scopes:
-        expected_defs = required_definitions[scope.scope_id]
+        shared_scope = shared_scope_by_id[scope.scope_id]
+        expected_defs = set(shared_scope["definitions"])
         declared_defs = set(scope.definitions)
         missing_defs = sorted(expected_defs - declared_defs)
         extra_defs = sorted(declared_defs - expected_defs)
@@ -3399,7 +3565,7 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
                     f"value {definition!r} is defined in multiple portable scopes"
                 )
             defined_owner[definition] = scope.scope_id
-        expected_captures = required_captures[scope.scope_id]
+        expected_captures = set(shared_scope["captures"])
         declared_captures = set(scope.captures)
         missing_captures = sorted(expected_captures - declared_captures)
         extra_captures = sorted(declared_captures - expected_captures)
@@ -3415,7 +3581,7 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
                 f"portable scope {scope.scope_id!r} has unknown capture(s): "
                 + ", ".join(unknown_captures)
             )
-        expected_effects = required_effects[scope.scope_id]
+        expected_effects = set(shared_scope["effects"])
         declared_effects = set(scope.effects)
         missing_effects = sorted(expected_effects - declared_effects)
         extra_effects = sorted(declared_effects - expected_effects)
@@ -3424,6 +3590,10 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
                 f"portable scope {scope.scope_id!r} effects must exactly "
                 f"match Boundary effects; missing={missing_effects}, "
                 f"extra={extra_effects}"
+            )
+        if list(scope.effects) != list(shared_scope["effects"]):
+            raise SchemaError(
+                f"portable scope {scope.scope_id!r} effects must preserve the canonical Boundary effect order"
             )
         unknown_effects = sorted(declared_effects - valid_effect_refs)
         if unknown_effects:
@@ -3686,23 +3856,8 @@ def _validate_semantic_scopes_and_storage(archive: "SemanticArchive") -> None:
             )
 
 
-def _walk_intent_ops(op: Any):
-    """Compatibility wrapper around the canonical Layer-A operation walker."""
-
-    yield from walk_intent_ops((op,))
-
-
 def _looks_like_semantic_literal(value: str) -> bool:
-    if value in {
-        "NEG_INF", "POS_INF", "ZERO", "ONE", "zeros", "ones",
-        "false", "true",
-    }:
-        return True
-    try:
-        float(value)
-    except ValueError:
-        return False
-    return True
+    return is_scalar_literal(value)
 
 
 @dataclass(frozen=True)
@@ -3865,8 +4020,18 @@ def _validate_access_guard_reference_closure(
     backed by actual operation results.
     """
 
+    construction_records = canonical_archive_records(archive)
+    typed_rows = (
+        construction_records.typed_operation_rows
+        if construction_records is not None
+        else None
+    )
+    if typed_rows is None:
+        raise SchemaError(
+            "access-guard validation requires canonical operation records"
+        )
     declared_values = {item.name for item in archive.intent.inputs}
-    for operation in walk_intent_ops(archive.intent.body):
+    for _path, operation in typed_rows:
         if isinstance(operation.result, str):
             declared_values.add(operation.result)
         elif isinstance(operation.result, list):
@@ -3914,27 +4079,37 @@ class SemanticArchive(StrictJSONMixin):
             self.intent = _strict_intent(self.intent.to_json())
         if not isinstance(self.node_ids, dict):
             raise SchemaError("SemanticArchive.node_ids must be an object")
-        self.node_ids = {
-            _string(node_id, "SemanticArchive.node_ids key"): _string(path, f"SemanticArchive.node_ids.{node_id}")
-            for node_id, path in self.node_ids.items()
-        }
-        if len(set(self.node_ids.values())) != len(self.node_ids):
-            raise SchemaError("SemanticArchive.node_ids paths must be unique")
-        canonical_path = re.compile(
-            r"^body\[\d+\]"
-            r"(?:(?:\.body|\.positive\.body|\.negative\.body)\[\d+\])*$"
-        )
-        by_path = dict(walk_intent_op_paths(self.intent.body))
-        for node_id, node_path in self.node_ids.items():
-            if canonical_path.fullmatch(node_path) is None:
+        try:
+            self.node_ids = {
+                _string(node_id, "SemanticArchive.node_ids key"): _string(path, f"SemanticArchive.node_ids.{node_id}")
+                for node_id, path in self.node_ids.items()
+            }
+            if len(set(self.node_ids.values())) != len(self.node_ids):
+                raise SchemaError("SemanticArchive.node_ids paths must be unique")
+            canonical_path = re.compile(
+                r"^body\[\d+\]"
+                r"(?:(?:\.body|\.positive\.body|\.negative\.body)\[\d+\])*$"
+            )
+            operation_records = canonical_operation_records(self.intent.to_json())
+            if operation_records is None:
                 raise SchemaError(
-                    f"SemanticArchive.node_ids.{node_id} must be a canonical "
-                    "body/loop/conditional-arm JSON path"
+                    "SemanticArchive requires a complete canonical operation table"
                 )
-            if node_path not in by_path:
-                raise SchemaError(
-                    f"SemanticArchive.node_ids.{node_id} path is out of range"
-                )
+            by_path = {
+                record["path"]: record for record in operation_records
+            }
+            for node_id, node_path in self.node_ids.items():
+                if canonical_path.fullmatch(node_path) is None:
+                    raise SchemaError(
+                        f"SemanticArchive.node_ids.{node_id} must be a canonical "
+                        "body/loop/conditional-arm JSON path"
+                    )
+                if node_path not in by_path:
+                    raise SchemaError(
+                        f"SemanticArchive.node_ids.{node_id} path is out of range"
+                    )
+        except SchemaError as exc:
+            raise SemanticArchiveCrossContractError("node_path") from exc
         # JSON object member order is not semantic.  Canonicalize the node map
         # by the authored body-path traversal before any declaration-order
         # checks or opaque projections consume it.  This preserves every LLM-
@@ -4001,11 +4176,25 @@ class SemanticArchive(StrictJSONMixin):
             validate_dimension_relations(self)
             validate_value_dimension_relations(self)
         except (TypeError, ValueError) as exc:
-            raise SchemaError(str(exc)) from exc
-        _validate_logical_signature(self)
-        _validate_typed_boundary_relations(self)
-        _validate_access_guard_reference_closure(self)
-        _validate_semantic_scopes_and_storage(self)
+            raise SemanticArchiveCrossContractError("dimension") from exc
+        try:
+            _validate_logical_signature(self)
+        except SchemaError as exc:
+            raise SemanticArchiveCrossContractError("signature") from exc
+        try:
+            _validate_typed_boundary_relations(self)
+        except SemanticArchiveCrossContractError:
+            raise
+        except SchemaError as exc:
+            raise SemanticArchiveCrossContractError("typed_boundary") from exc
+        try:
+            _validate_access_guard_reference_closure(self)
+        except SchemaError as exc:
+            raise SemanticArchiveCrossContractError("access_guard") from exc
+        try:
+            _validate_semantic_scopes_and_storage(self)
+        except SchemaError as exc:
+            raise SemanticArchiveCrossContractError("scope_storage") from exc
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "SemanticArchive":
@@ -4249,7 +4438,9 @@ class LogicalSignature(StrictJSONMixin):
             for item in self.parameters
         ]
         _unique(self.parameters, "name", "LogicalSignature.parameters")
-        expected = [f"p{index}" for index in range(len(self.parameters))]
+        expected = list(
+            CanonicalHandleAllocator.canonical_names("p", len(self.parameters))
+        )
         names = {item.name for item in self.parameters}
         if [item.name for item in self.parameters] != expected:
             raise SchemaError(
@@ -4536,8 +4727,6 @@ class ScheduleSlot(StrictJSONMixin):
     role: str
     value_type: str = "int"
     required: bool = True
-    subject_ref: str | None = None
-    axis_ref: int | str | None = None
 
     def __post_init__(self) -> None:
         self.name = _handle(
@@ -4571,42 +4760,6 @@ class ScheduleSlot(StrictJSONMixin):
             raise SchemaError("ScheduleSlot.role must remain pure scheduling metadata")
         self.value_type = _string(self.value_type, "ScheduleSlot.value_type")
         self.required = _boolean(self.required, "ScheduleSlot.required")
-        if self.kind is ScheduleSlotKind.COMPILER and (
-            self.subject_ref is not None or self.axis_ref is not None
-        ):
-            raise SchemaError(
-                "compiler ScheduleSlot declarations are external compiler "
-                "options and must omit subject_ref and axis_ref"
-            )
-        if self.subject_ref is not None:
-            self.subject_ref = _string(
-                self.subject_ref, "ScheduleSlot.subject_ref"
-            )
-            if re.fullmatch(r"[tndaequb][0-9]+", self.subject_ref) is None:
-                raise SchemaError(
-                    "ScheduleSlot.subject_ref must be a closed J scheduling "
-                    "subject t*/n*/d*/a*/e*/q*/u*/b*"
-                )
-        if self.axis_ref is not None:
-            if self.subject_ref is None:
-                raise SchemaError(
-                    "ScheduleSlot.axis_ref requires subject_ref"
-                )
-            if isinstance(self.axis_ref, bool) or not isinstance(
-                self.axis_ref, (int, str)
-            ):
-                raise SchemaError(
-                    "ScheduleSlot.axis_ref must be a non-negative integer or x*"
-                )
-            if isinstance(self.axis_ref, int):
-                if self.axis_ref < 0:
-                    raise SchemaError(
-                        "ScheduleSlot.axis_ref must be non-negative"
-                    )
-            elif re.fullmatch(r"x[0-9]+", self.axis_ref) is None:
-                raise SchemaError(
-                    "ScheduleSlot.axis_ref symbolic dimensions must use x*"
-                )
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "ScheduleSlot":
@@ -4615,25 +4768,15 @@ class ScheduleSlot(StrictJSONMixin):
             path="ScheduleSlot",
             allowed={
                 "name", "kind", "role", "value_type", "required",
-                "subject_ref", "axis_ref",
             },
             required={"name", "kind", "role"},
         )
-        if data.get("kind") == ScheduleSlotKind.COMPILER.value and any(
-            key in data for key in ("subject_ref", "axis_ref")
-        ):
-            raise SchemaError(
-                "compiler ScheduleSlot declarations must omit subject_ref "
-                "and axis_ref"
-            )
         return cls(
             name=data["name"],
             kind=data["kind"],
             role=data["role"],
             value_type=data.get("value_type", "int"),
             required=data.get("required", True),
-            subject_ref=data.get("subject_ref"),
-            axis_ref=data.get("axis_ref"),
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -4644,10 +4787,6 @@ class ScheduleSlot(StrictJSONMixin):
             "value_type": self.value_type,
             "required": self.required,
         }
-        if self.subject_ref is not None:
-            result["subject_ref"] = self.subject_ref
-        if self.axis_ref is not None:
-            result["axis_ref"] = self.axis_ref
         return result
 
 
@@ -4706,8 +4845,8 @@ class ImplementationConfig(StrictJSONMixin):
         data = _strict_object(
             value,
             path="ImplementationConfig",
-            allowed={"slots", "values"},
-            required={"slots", "values"},
+            allowed=set(CANONICAL_C_WIRE_FIELDS),
+            required=set(CANONICAL_C_WIRE_FIELDS),
         )
         if not isinstance(data["slots"], list):
             raise SchemaError("ImplementationConfig.slots must be an array")
@@ -5071,6 +5210,43 @@ class Gate1Artifact(StrictJSONMixin):
                 "Layer B references unknown J nodes: "
                 + ", ".join(unknown_boundary_nodes)
             )
+        from intentir.ir.canonical_j import elaborate_j, j_elaboration
+
+        accepted_j = elaborate_j(self.j)
+        if accepted_j is not self.j:
+            self.j = accepted_j
+        construction_records = j_elaboration(self.j).construction_records
+        operation_records = construction_records.operation_records
+        typed_rows = construction_records.typed_operation_rows
+        if typed_rows is None:
+            raise SchemaError(
+                "Gate1 artifact requires canonical operation records for "
+                "consumer extensions"
+            )
+        operation_by_id = {
+            record.get("id"): operation
+            for (_path, operation), record in zip(
+                typed_rows,
+                operation_records,
+                strict=True,
+            )
+            if isinstance(record.get("id"), str)
+        }
+        for extension in self.j.boundary.consumer_extensions:
+            consumer = operation_by_id.get(extension.consumer_ref)
+            if consumer is None:
+                # The node-id closure above normally catches this; keep the
+                # local diagnostic explicit because this is the field that
+                # owns the operand ordinal contract.
+                raise SchemaError(
+                    "Boundary.consumer_extensions references an unknown "
+                    f"consumer node {extension.consumer_ref!r}"
+                )
+            if extension.operand_index >= len(consumer.operands):
+                raise SchemaError(
+                    "Boundary.consumer_extensions operand_index exceeds the "
+                    f"consumer operand list for {extension.consumer_ref!r}"
+                )
         missing_values = self.c.missing_required_values()
         if missing_values:
             raise SchemaError(
@@ -5080,19 +5256,14 @@ class Gate1Artifact(StrictJSONMixin):
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "Gate1Artifact":
         # Diagnose root ownership before the required-key check, so a draft
-        # nesting c/pi under J reports the actual structural violation.
-        if isinstance(value, dict):
-            j_candidate = value.get("j")
-            if isinstance(j_candidate, dict):
-                nested_root_owned = _nested_root_owned_field_paths(
-                    j_candidate,
-                    path="Gate1Artifact.j",
-                )
-                if nested_root_owned:
-                    raise SchemaError(
-                        f"{nested_root_owned[0]} is a root-owned field nested "
-                        "under J; root.c and root.pi must be siblings of root.j"
-                    )
+        # flattening J or nesting c/pi under J reports one actionable envelope
+        # violation rather than a list of dependent missing/unknown fields.
+        wire_diagnostics = gate1_artifact_wire_diagnostics(value)
+        if wire_diagnostics:
+            diagnostic = wire_diagnostics[0]
+            raise SchemaError(
+                f"{diagnostic['path']}: {diagnostic['message']}"
+            )
         data = _strict_object(
             value,
             path="Gate1Artifact",
@@ -5105,29 +5276,14 @@ class Gate1Artifact(StrictJSONMixin):
                 f"expected the current schema {cls.SCHEMA!r}"
             )
         pi_value = data["pi"] if isinstance(data["pi"], dict) else None
-        compact_pi = (
-            pi_value is not None
-            and pi_value.get("schema") == NORMALIZATION_WITNESS_SCHEMA
-        )
-        if pi_value is not None and not compact_pi:
-            required_pi_fields = (
-                "refinements",
-                "iterations",
-                "loop_carriers",
-                "physical_iterations",
-                "physical_loop_carriers",
-                "terminal_controls",
-                "route_extent_transforms",
-                "program_axes",
+        if (
+            pi_value is None
+            or pi_value.get("schema") != NORMALIZATION_WITNESS_SCHEMA
+        ):
+            raise SchemaError(
+                "Gate1Artifact.pi must use the canonical normalization witness "
+                "wire; legacy materialized pi graphs are not accepted"
             )
-            missing_pi_fields = [
-                name for name in required_pi_fields if name not in pi_value
-            ]
-            if missing_pi_fields:
-                raise SchemaError(
-                    "Gate1Artifact.pi is missing required field(s): "
-                    + ", ".join(missing_pi_fields)
-                )
         try:
             pi = RealizationWitness.from_json(data["pi"])
         except RealizationWitnessError as exc:
@@ -5182,30 +5338,6 @@ _OPAQUE_EXPRESSION_RESERVED = frozenset(
 )
 
 
-def _intent_ops_with_paths(
-    body: list[dict[str, Any]], prefix: str = "body"
-) -> list[tuple[dict[str, Any], str]]:
-    result: list[tuple[dict[str, Any], str]] = []
-    for index, op in enumerate(body):
-        path = f"{prefix}[{index}]"
-        result.append((op, path))
-        nested = op.get("body", [])
-        if isinstance(nested, list):
-            result.extend(_intent_ops_with_paths(nested, f"{path}.body"))
-        if op.get("op") in {"effect_if", "value_if"}:
-            for polarity in ("positive", "negative"):
-                arm = op.get(polarity)
-                arm_body = arm.get("body") if isinstance(arm, dict) else None
-                if isinstance(arm_body, list):
-                    result.extend(
-                        _intent_ops_with_paths(
-                            arm_body,
-                            f"{path}.{polarity}.body",
-                        )
-                    )
-    return result
-
-
 def _intent_result_names(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
@@ -5232,29 +5364,43 @@ def _is_expression_function_or_qualified(
 def _boundary_expression_fields(
     artifact: Gate1Artifact,
 ) -> list[tuple[str, str]]:
+    elaboration = j_elaboration(artifact.j)
+    boundary = elaboration.boundary_record
     fields: list[tuple[str, str]] = []
     for index, expression in enumerate(artifact.j.dimension_constraints):
         fields.append((expression, f"j.dimension_constraints[{index}]"))
-    for index, expression in enumerate(artifact.j.boundary.domains.values()):
+    domains = boundary.get("domains", {})
+    if not isinstance(domains, Mapping):
+        raise SchemaError("canonical boundary record has invalid domains")
+    for index, expression in enumerate(domains.values()):
         fields.append((expression, f"j.boundary.domains[{index}]"))
-    for index, access in enumerate(artifact.j.boundary.accesses):
-        if access.index_expression is not None:
+    accesses = boundary.get("accesses", [])
+    if not isinstance(accesses, list):
+        raise SchemaError("canonical boundary record has invalid accesses")
+    for index, access in enumerate(accesses):
+        if access.get("index_expression") is not None:
             fields.append(
                 (
-                    access.index_expression,
+                    access["index_expression"],
                     f"j.boundary.accesses[{index}].index_expression",
                 )
             )
-        if access.predicate is not None:
+        if access.get("predicate") is not None:
             fields.append(
-                (access.predicate, f"j.boundary.accesses[{index}].predicate")
+                (access["predicate"], f"j.boundary.accesses[{index}].predicate")
             )
-    for index, mapping in enumerate(artifact.j.boundary.output_mappings):
+    mappings = boundary.get("output_mappings", [])
+    if not isinstance(mappings, list):
+        raise SchemaError("canonical boundary record has invalid output mappings")
+    for index, mapping in enumerate(mappings):
         fields.append(
-            (mapping.value, f"j.boundary.output_mappings[{index}].value")
+            (mapping["value"], f"j.boundary.output_mappings[{index}].value")
         )
-    for index, broadcast in enumerate(artifact.j.boundary.broadcasts):
-        for axis_index, axis in enumerate(broadcast.axes):
+    broadcasts = boundary.get("broadcasts", [])
+    if not isinstance(broadcasts, list):
+        raise SchemaError("canonical boundary record has invalid broadcasts")
+    for index, broadcast in enumerate(broadcasts):
+        for axis_index, axis in enumerate(broadcast.get("axes", [])):
             if isinstance(axis, str):
                 fields.append(
                     (
@@ -5262,11 +5408,14 @@ def _boundary_expression_fields(
                         f"j.boundary.broadcasts[{index}].axes[{axis_index}]",
                     )
                 )
-    for index, reduction in enumerate(artifact.j.boundary.reductions):
-        if isinstance(reduction.tile_axis, str):
+    reductions = boundary.get("reductions", [])
+    if not isinstance(reductions, list):
+        raise SchemaError("canonical boundary record has invalid reductions")
+    for index, reduction in enumerate(reductions):
+        if isinstance(reduction.get("tile_axis"), str):
             fields.append(
                 (
-                    reduction.tile_axis,
+                    reduction["tile_axis"],
                     f"j.boundary.reductions[{index}].tile_axis",
                 )
             )
@@ -5278,73 +5427,56 @@ def _opaque_reference_data(
 ) -> tuple[dict[str, str], list[dict[str, Any]], list[str]]:
     """Build declaration-order aliases without exposing the original spelling."""
 
-    intent_json = artifact.j.intent.to_json()["intent_function"]
-    body = intent_json.get("body", [])
-    expression_fields = _boundary_expression_fields(artifact)
-    occupied: set[str] = {
-        artifact.j.kernel_id,
-        artifact.j.intent.name,
-        *(tensor.name for tensor in artifact.j.intent.inputs),
-        *(tensor.name for tensor in artifact.j.intent.outputs),
-        *artifact.j.node_ids,
-        *artifact.j.node_ids.values(),
-        *artifact.j.boundary.domains,
-        *(access.access_id for access in artifact.j.boundary.accesses),
-        *(
-            effect.effect_id
-            for effect in artifact.j.boundary.effects
-            if effect.effect_id is not None
-        ),
-        *(
-            item.auth_id
-            for item in artifact.j.boundary.realization_authorizations
-        ),
-        *(scope.scope_id for scope in artifact.j.scopes),
-        *(storage.storage_id for storage in artifact.j.storage),
-        *(member for storage in artifact.j.storage for member in storage.members),
-        *(parameter.name for parameter in artifact.j.signature.parameters),
-        *(slot.name for slot in artifact.c.slots),
-    }
-    for op, _ in _intent_ops_with_paths(body):
-        occupied.update(_intent_result_names(op.get("result")))
-        if isinstance(op.get("scope_id"), str):
-            occupied.add(op["scope_id"])
-        if op.get("op") in {"effect_if", "value_if"}:
-            for polarity in ("positive", "negative"):
-                arm = op.get(polarity)
-                if isinstance(arm, dict) and isinstance(
-                    arm.get("scope_id"), str
-                ):
-                    occupied.add(arm["scope_id"])
-        for state in op.get("carry", []):
-            for key in (
-                "state_id", "body_argument", "next_value", "result_value",
-            ):
-                if isinstance(state.get(key), str):
-                    occupied.add(state[key])
-        for scan in op.get("scan", []):
-            if isinstance(scan.get("name"), str):
-                occupied.add(scan["name"])
-    for expression, _ in expression_fields:
-        occupied.update(token for token, _, _ in _expression_identifiers(expression))
+    from intentir.ir.canonical_j import j_elaboration
 
+    elaboration = j_elaboration(artifact.j)
+    construction_records = elaboration.construction_records
+    output_bindings = elaboration.output_bindings
+    operation_records = construction_records.operation_records
+    scope_records = construction_records.scope_records
+    boundary_record = elaboration.boundary_record
+    boundary_domains = tuple(boundary_record["domains"])
+    boundary_accesses = tuple(boundary_record["accesses"])
+    boundary_effects = tuple(boundary_record["effects"])
+    boundary_authorizations = tuple(
+        boundary_record["realization_authorizations"]
+    )
+    canonical_node_rows = tuple(
+        record
+        for record in operation_records
+        if isinstance(record.get("id"), str)
+        and isinstance(record.get("path"), str)
+    )
+    operation_rows = tuple(
+        (record["wire"], record["path"]) for record in operation_records
+    )
+    expression_fields = _boundary_expression_fields(artifact)
     aliases: dict[str, str] = {}
     owners: dict[str, list[dict[str, str]]] = {}
     alias_order: list[str] = []
+
+    def canonical_handle(prefix: str, index: int) -> str:
+        return CanonicalHandleAllocator.canonical_names(prefix, index + 1)[-1]
 
     def allocate(original: str, stem: str, kind: str, path: str) -> str:
         if original in aliases:
             alias = aliases[original]
         else:
-            candidate = stem
-            suffix = 0
-            while (
-                candidate in owners
-                or (candidate in occupied and candidate != original)
-            ):
-                suffix += 1
-                candidate = f"{stem}_{suffix}"
-            alias = candidate
+            # This is an opaque *projection* of the accepted construction,
+            # not a place to allocate a second namespace.  The old fallback
+            # appended ``_1``/``_2`` when a source spelling happened to equal
+            # a generated handle.  That made Replay and the masked Gate1
+            # prompt observe non-canonical identifiers even though the
+            # semantic artifact had already crossed the shared allocator.
+            # Canonical handles are intentionally allowed to shadow the
+            # hidden spelling; collisions are only possible when the
+            # construction has two declarations for one canonical ordinal.
+            alias = stem
+            if alias in owners:
+                raise SchemaError(
+                    "canonical opaque projection has duplicate handle "
+                    f"{alias!r} at {path}"
+                )
             aliases[original] = alias
             owners[alias] = []
             alias_order.append(alias)
@@ -5355,13 +5487,16 @@ def _opaque_reference_data(
 
     tensor_index = 0
     for collection_name, tensors in (
-        ("inputs", artifact.j.intent.inputs),
-        ("outputs", artifact.j.intent.outputs),
+        ("inputs", ((tensor.name, tensor.shape) for tensor in artifact.j.intent.inputs)),
+        (
+            "outputs",
+            ((binding.output, binding.output_type.shape) for binding in output_bindings),
+        ),
     ):
-        for index, tensor in enumerate(tensors):
-            first_declaration = tensor.name not in aliases
+        for index, (tensor_name, _tensor_shape) in enumerate(tensors):
+            first_declaration = tensor_name not in aliases
             allocate(
-                tensor.name,
+                tensor_name,
                 f"t{tensor_index}",
                 "j_tensor",
                 f"j.intent.intent_function.{collection_name}[{index}]",
@@ -5369,51 +5504,60 @@ def _opaque_reference_data(
             if first_declaration:
                 tensor_index += 1
 
-    for index, (node_id, path) in enumerate(artifact.j.node_ids.items()):
-        alias = allocate(node_id, f"n{index}", "j_node", f"j.intent.{path}")
+    for index, record in enumerate(canonical_node_rows):
+        node_id = record["id"]
+        path = record["path"]
+        alias = allocate(
+            node_id,
+            canonical_handle("n", index),
+            "j_node",
+            f"j.intent.{path}",
+        )
         aliases[path] = alias
 
-    for index, name in enumerate(artifact.j.boundary.domains):
-        allocate(name, f"d{index}", "boundary_domain", f"j.boundary.domains[{index}]")
-    for index, access in enumerate(artifact.j.boundary.accesses):
+    for index, name in enumerate(boundary_domains):
         allocate(
-            access.access_id,
-            f"a{index}",
+            name,
+            canonical_handle("d", index),
+            "boundary_domain",
+            f"j.boundary.domains[{index}]",
+        )
+    for index, access in enumerate(boundary_accesses):
+        allocate(
+            access["access_id"],
+            canonical_handle("a", index),
             "boundary_access",
             f"j.boundary.accesses[{index}]",
         )
-    for index, effect in enumerate(artifact.j.boundary.effects):
-        assert effect.effect_id is not None
+    for index, effect in enumerate(boundary_effects):
         allocate(
-            effect.effect_id,
-            f"e{index}",
+            effect["effect_id"],
+            canonical_handle("e", index),
             "boundary_effect",
             f"j.boundary.effects[{index}]",
         )
-    for index, authorization in enumerate(
-        artifact.j.boundary.realization_authorizations
-    ):
+    for index, authorization in enumerate(boundary_authorizations):
         allocate(
-            authorization.auth_id,
-            f"u{index}",
+            authorization["auth_id"],
+            canonical_handle("u", index),
             "boundary_realization_authorization",
             f"j.boundary.realization_authorizations[{index}]",
         )
 
     value_index = 0
-    for op, path in _intent_ops_with_paths(body):
+    for op, path in operation_rows:
         if isinstance(op.get("scope_id"), str):
             scope_index = next(
                 (
                     index
-                    for index, scope in enumerate(artifact.j.scopes)
-                    if scope.scope_id == op["scope_id"]
+                    for index, scope in enumerate(scope_records)
+                    if scope["scope_id"] == op["scope_id"]
                 ),
                 0,
             )
             allocate(
                 op["scope_id"],
-                f"q{scope_index}",
+                canonical_handle("q", scope_index),
                 "j_scope",
                 f"j.intent.{path}.scope_id",
             )
@@ -5428,21 +5572,21 @@ def _opaque_reference_data(
                 scope_index = next(
                     (
                         index
-                        for index, scope in enumerate(artifact.j.scopes)
-                        if scope.scope_id == arm_scope
+                    for index, scope in enumerate(scope_records)
+                    if scope["scope_id"] == arm_scope
                     ),
                     0,
                 )
                 allocate(
                     arm_scope,
-                    f"q{scope_index}",
+                    canonical_handle("q", scope_index),
                     "j_scope",
                     f"j.intent.{path}.{polarity}.scope_id",
                 )
         for scan_index, scan in enumerate(op.get("scan", [])):
             allocate(
                 scan["name"],
-                f"v{value_index}",
+                canonical_handle("v", value_index),
                 "j_loop_scan_value",
                 f"j.intent.{path}.scan[{scan_index}].name",
             )
@@ -5450,13 +5594,13 @@ def _opaque_reference_data(
         for state_index, state in enumerate(op.get("carry", [])):
             allocate(
                 state["state_id"],
-                f"s{state_index}",
+                canonical_handle("s", state_index),
                 "j_loop_state",
                 f"j.intent.{path}.carry[{state_index}].state_id",
             )
             allocate(
                 state["body_argument"],
-                f"v{value_index}",
+                canonical_handle("v", value_index),
                 "j_loop_body_argument",
                 f"j.intent.{path}.carry[{state_index}].body_argument",
             )
@@ -5464,18 +5608,23 @@ def _opaque_reference_data(
         for result_index, name in enumerate(_intent_result_names(op.get("result"))):
             allocate(
                 name,
-                f"v{value_index}",
+                canonical_handle("v", value_index),
                 "j_value",
                 f"j.intent.{path}.result[{result_index}]",
             )
             value_index += 1
 
-    for index, scope in enumerate(artifact.j.scopes):
-        allocate(scope.scope_id, f"q{index}", "j_scope", f"j.scopes[{index}]")
+    for index, scope in enumerate(scope_records):
+        allocate(
+            scope["scope_id"],
+            canonical_handle("q", index),
+            "j_scope",
+            f"j.scopes[{index}]",
+        )
     for index, storage in enumerate(artifact.j.storage):
         allocate(
             storage.storage_id,
-            f"b{index}",
+            canonical_handle("b", index),
             "j_storage",
             f"j.storage[{index}]",
         )
@@ -5483,22 +5632,27 @@ def _opaque_reference_data(
     for index, parameter in enumerate(artifact.j.signature.parameters):
         allocate(
             parameter.name,
-            f"p{index}",
+            canonical_handle("p", index),
             "j_signature_parameter",
             f"j.signature.parameters[{index}]",
         )
 
     dimension_index = 0
-    for tensor_index, tensor in enumerate(
-        [*artifact.j.intent.inputs, *artifact.j.intent.outputs]
-    ):
-        for shape_index, dim in enumerate(tensor.shape):
+    boundary_tensors = (
+        *(
+            (tensor.name, tensor.shape)
+            for tensor in artifact.j.intent.inputs
+        ),
+        *((binding.output, binding.output_type.shape) for binding in output_bindings),
+    )
+    for tensor_index, (_tensor_name, tensor_shape) in enumerate(boundary_tensors):
+        for shape_index, dim in enumerate(tensor_shape):
             for reference in dimension_expression_references(dim):
                 if reference in aliases or reference == "?":
                     continue
                 allocate(
                     reference,
-                    f"x{dimension_index}",
+                    canonical_handle("x", dimension_index),
                     "j_dimension",
                     f"j.intent.tensor_shapes[{tensor_index}][{shape_index}]",
                 )
@@ -5513,7 +5667,7 @@ def _opaque_reference_data(
                 continue
             allocate(
                 dim,
-                f"x{dimension_index}",
+                canonical_handle("x", dimension_index),
                 "j_dimension",
                 f"j.dimension_relations[{relation_index}].{field}",
             )
@@ -5521,7 +5675,7 @@ def _opaque_reference_data(
     for index, slot in enumerate(artifact.c.slots):
         allocate(
             slot.name,
-            f"c{index}",
+            canonical_handle("c", index),
             "c_slot",
             f"c.slots[{index}]",
         )
@@ -5532,7 +5686,12 @@ def _opaque_reference_data(
                 continue
             if _is_expression_function_or_qualified(expression, start, end):
                 continue
-            allocate(token, f"v{value_index}", "boundary_symbol", path)
+            allocate(
+                token,
+                canonical_handle("v", value_index),
+                "boundary_symbol",
+                path,
+            )
             value_index += 1
 
     bindings = [
@@ -5540,6 +5699,53 @@ def _opaque_reference_data(
         for alias in alias_order
     ]
     return aliases, bindings, alias_order
+
+
+def _rewriter_output_views(
+    artifact: Gate1Artifact,
+    reference: Callable[[str], str],
+    *,
+    masked: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Project returns and sparse mappings from one canonical output record.
+
+    Rewriter views are transport projections, but they must not become a
+    second output constructor.  The accepted J elaboration owns output/return
+    value, ABI order, and mapping index; the raw mapping is consulted only for
+    its optional wire-preserving ``node_ref``.
+    """
+
+    from intentir.ir.canonical_j import j_elaboration
+
+    bindings = j_elaboration(artifact.j).output_bindings
+    returns = [
+        {
+            "output": reference(binding.output),
+            "value": "<masked>"
+            if masked
+            else reference(binding.value),
+        }
+        for binding in bindings
+    ]
+    mappings: list[dict[str, Any]] = []
+    for binding in bindings:
+        index = binding.mapping_index
+        if index is None:
+            continue
+        if not isinstance(index, int) or index < 0:
+            raise SchemaError(
+                "canonical output record has an invalid mapping index"
+            )
+        row: dict[str, Any] = {
+            "output": reference(binding.output),
+            "value": "<masked>"
+            if masked
+            else reference(binding.value),
+        }
+        if binding.authored_node_ref is not None:
+            row["node_ref"] = reference(binding.authored_node_ref)
+        mappings.append(row)
+    return returns, mappings
 
 
 def _opaque_reference(value: str, aliases: dict[str, str]) -> str:
@@ -5642,22 +5848,43 @@ def _opaque_intent_op(
 
 
 
-def _opaque_scope_json(
-    scope: PortableScope, aliases: dict[str, str]
-) -> dict[str, Any]:
-    return {
-        "scope_id": _opaque_reference(scope.scope_id, aliases),
-        "kind": scope.kind.value,
-        "parent_scope": (
-            _opaque_reference(scope.parent_scope, aliases)
-            if scope.parent_scope is not None else None
-        ),
-        "captures": [_opaque_reference(ref, aliases) for ref in scope.captures],
-        "definitions": [
-            _opaque_reference(ref, aliases) for ref in scope.definitions
-        ],
-        "effects": [_opaque_reference(ref, aliases) for ref in scope.effects],
-    }
+def _rewriter_scope_views(
+    artifact: Gate1Artifact,
+    reference: Callable[[str], str],
+    *,
+    masked: bool,
+) -> list[dict[str, Any]]:
+    """Project lexical scopes from the canonical allocator output."""
+
+    from intentir.ir.canonical_j import j_elaboration
+
+    result: list[dict[str, Any]] = []
+    for scope in j_elaboration(artifact.j).scope_records:
+        scope_id = scope.get("scope_id")
+        parent_scope = scope.get("parent_scope")
+        if not isinstance(scope_id, str) or not (
+            parent_scope is None or isinstance(parent_scope, str)
+        ):
+            raise SchemaError("canonical scope record has invalid ownership")
+        result.append(
+            {
+                "scope_id": reference(scope_id),
+                "kind": "<masked>" if masked else scope.get("kind"),
+                "parent_scope": (
+                    reference(parent_scope) if parent_scope is not None else None
+                ),
+                "captures": [
+                    reference(value) for value in scope.get("captures", [])
+                ],
+                "definitions": [
+                    reference(value) for value in scope.get("definitions", [])
+                ],
+                "effects": [
+                    reference(value) for value in scope.get("effects", [])
+                ],
+            }
+        )
+    return result
 
 
 def _opaque_storage_json(
@@ -5705,12 +5932,6 @@ def _opaque_signature_and_c_view(
     c_view = artifact.c.to_json()
     for slot in c_view["slots"]:
         slot["name"] = _opaque_reference(slot["name"], aliases)
-        if slot.get("subject_ref") is not None:
-            slot["subject_ref"] = _opaque_reference(
-                slot["subject_ref"], aliases
-            )
-        if isinstance(slot.get("axis_ref"), str):
-            slot["axis_ref"] = _opaque_reference(slot["axis_ref"], aliases)
     c_view["values"] = {
         _opaque_reference(name, aliases): copy.deepcopy(value)
         for name, value in artifact.c.ordered_value_items()
@@ -5725,41 +5946,37 @@ def opaque_replay_representation(artifact: Gate1Artifact) -> dict[str, Any]:
     projects only the typed, source-free facts needed by the target callable
     ABI:
 
-    * a null-logical-ref scalar routed to an address stage, or explicitly bound
-      by a compact access-representation row, becomes a stride binding for one
-      J access/tensor axis;
+    * an explicit compact access-representation row binds a null-logical-ref
+      scalar ABI carrier to one J access/tensor axis;
     * a direct ``program_axes`` row becomes a domain-to-launch-axis binding;
     * a compact ``program_bindings`` row projects each of its named J domains
       to that same explicitly witnessed physical launch axis.
 
-    Route slots 0--3 are the closed address inputs for logical domains
-    and the pointer handle.  Slots 4 onward are the tensor-axis stride inputs,
-    so slot ``4 + axis`` denotes that access's stride for ``axis``.  This
-    projection is deliberately fail-closed: an address carrier with an
-    ambiguous slot or conflicting owner is not guessed or silently omitted.
+    This projection is deliberately fail-closed: a missing or conflicting
+    explicit access binding is not guessed or silently omitted.
     The relation class itself remains a Gate1 normalization witness rather than
     a target recipe; Replay receives only the already-closed domain-to-axis
     projection required to select its callable launch coordinates.
     """
 
     aliases, _bindings, _order = _opaque_reference_data(artifact)
-    boundary = artifact.j.boundary
-    accesses = {item.access_id: item for item in boundary.accesses}
+    elaboration = j_elaboration(artifact.j)
+    accesses = elaboration.access_by_id
+    access_rows = {
+        str(row["access_id"]): row
+        for row in elaboration.boundary_rows("accesses")
+        if isinstance(row.get("access_id"), str)
+    }
+    access_order = tuple(item.access_id for item in elaboration.accesses)
     tensors = {
-        tensor.name: tensor
-        for tensor in [*artifact.j.intent.inputs, *artifact.j.intent.outputs]
+        **{tensor.name: tensor for tensor in artifact.j.intent.inputs},
+        **{
+            binding.output: binding.output_type
+            for binding in elaboration.output_bindings
+        },
     }
     parameters = {
         item.name: item for item in artifact.j.signature.parameters
-    }
-    instances = {
-        str(item["id"]): item for item in artifact.pi.instances
-    }
-    address_instance_ids = {
-        instance_id
-        for instance_id, item in instances.items()
-        if item.get("mechanism") in {"address_base", "address_lane"}
-        and item.get("semantic_ref") in accesses
     }
 
     address_rows: dict[tuple[str, str, int], dict[str, Any]] = {}
@@ -5774,11 +5991,17 @@ def opaque_replay_representation(artifact: Gate1Artifact) -> dict[str, Any]:
         carrier_name = binding.get("carrier_ref")
         axis = binding.get("axis_ref")
         access = accesses.get(access_name)
+        access_row = access_rows.get(access_name)
         parameter = parameters.get(carrier_name)
-        if access is None:
+        if access is None or access_row is None:
             raise SchemaError(
                 "pi.access_representation_bindings["
                 f"{binding_index}].access_ref has no J access"
+            )
+        tensor_name = access_row.get("tensor")
+        if not isinstance(tensor_name, str):
+            raise SchemaError(
+                "canonical J access record has no logical tensor owner"
             )
         if (
             parameter is None
@@ -5790,7 +6013,7 @@ def opaque_replay_representation(artifact: Gate1Artifact) -> dict[str, Any]:
                 f"{binding_index}].carrier_ref must be a null-logical-ref "
                 "scalar ABI carrier"
             )
-        tensor = tensors.get(access.tensor)
+        tensor = tensors.get(tensor_name)
         if (
             isinstance(axis, bool)
             or not isinstance(axis, int)
@@ -5814,66 +6037,13 @@ def opaque_replay_representation(artifact: Gate1Artifact) -> dict[str, Any]:
         address_rows[row_key] = {
             "carrier": _opaque_reference(str(carrier_name), aliases),
             "access_ref": _opaque_reference(str(access_name), aliases),
-            "tensor": _opaque_reference(access.tensor, aliases),
-            "axis": axis,
-            "role": "stride",
-        }
-    for route_index, route in enumerate(artifact.pi.routes):
-        source_id = route.get("source")
-        target_id = route.get("target")
-        source = instances.get(str(source_id))
-        target = instances.get(str(target_id))
-        if source is None or target is None or target_id not in address_instance_ids:
-            continue
-        carrier_name = source.get("semantic_ref")
-        parameter = parameters.get(carrier_name)
-        if (
-            parameter is None
-            or parameter.kind is not ParameterKind.SCALAR
-            or parameter.logical_ref is not None
-        ):
-            continue
-        access_name = target.get("semantic_ref")
-        access = accesses.get(access_name)
-        if access is None:
-            raise SchemaError(
-                f"pi.routes[{route_index}] address target has no J access"
-            )
-        slots = route.get("slots")
-        if not isinstance(slots, list) or len(slots) != 1:
-            raise SchemaError(
-                f"pi.routes[{route_index}] address carrier route must have one slot"
-            )
-        slot = slots[0]
-        if isinstance(slot, bool) or not isinstance(slot, int) or slot < 4:
-            raise SchemaError(
-                f"pi.routes[{route_index}] address carrier slot cannot be projected"
-            )
-        axis = slot - 4
-        tensor = tensors.get(access.tensor)
-        if tensor is None or axis >= len(tensor.shape):
-            raise SchemaError(
-                f"pi.routes[{route_index}] address carrier slot exceeds tensor rank"
-            )
-        owner_key = (access_name, axis)
-        previous = access_axes.get(owner_key)
-        if previous is not None and previous != carrier_name:
-            raise SchemaError(
-                "one J access axis has conflicting Replay stride carriers: "
-                f"{access_name}[{axis}]"
-            )
-        access_axes[owner_key] = str(carrier_name)
-        row_key = (str(carrier_name), str(access_name), axis)
-        address_rows[row_key] = {
-            "carrier": _opaque_reference(str(carrier_name), aliases),
-            "access_ref": _opaque_reference(str(access_name), aliases),
-            "tensor": _opaque_reference(access.tensor, aliases),
+            "tensor": _opaque_reference(str(tensor_name), aliases),
             "axis": axis,
             "role": "stride",
         }
 
     program_rows: dict[str, dict[str, Any]] = {}
-    domain_names = set(boundary.domains)
+    domain_names = set(elaboration.boundary_domains)
     def add_program_row(domain_name: Any, axis: Any, *, path: str) -> None:
         if domain_name not in domain_names:
             raise SchemaError(
@@ -5895,34 +6065,19 @@ def opaque_replay_representation(artifact: Gate1Artifact) -> dict[str, Any]:
             "axis": axis,
         }
 
-    if artifact.pi.program_axes and artifact.pi.program_bindings:
-        raise SchemaError(
-            "pi.program_axes and pi.program_bindings cannot both project a "
-            "program-coordinate mapping"
-        )
-    for index, binding in enumerate(artifact.pi.program_axes):
-        add_program_row(
-            binding.get("domain_ref"),
-            binding.get("axis"),
-            path=f"pi.program_axes[{index}]",
-        )
-    for binding_index, binding in enumerate(artifact.pi.program_bindings):
-        binding_path = f"pi.program_bindings[{binding_index}]"
-        axis = binding.get("axis")
-        logical_axes = binding.get("logical_axes")
-        if not isinstance(logical_axes, list) or not logical_axes:
-            raise SchemaError(f"{binding_path}.logical_axes must be non-empty")
-        for logical_axis_index, logical_axis in enumerate(logical_axes):
-            if not isinstance(logical_axis, Mapping):
-                raise SchemaError(
-                    f"{binding_path}.logical_axes[{logical_axis_index}] must be an object"
-                )
+    try:
+        program_projection = canonical_program_coordinate_projection(artifact.pi)
+    except ValueError as exc:
+        # The typed pi decoder normally makes this unreachable.  Keep the
+        # replay projection fail-closed if a future typed witness gains a new
+        # representation without updating this shared consumer.
+        raise SchemaError(str(exc)) from exc
+    for row in program_projection.rows:
+        for domain_ref, _axis_ref in row.logical_axes:
             add_program_row(
-                logical_axis.get("domain_ref"),
-                axis,
-                path=(
-                    f"{binding_path}.logical_axes[{logical_axis_index}].domain_ref"
-                ),
+                domain_ref,
+                row.physical_axis,
+                path=f"pi.{row.family}",
             )
 
     if not address_rows and not program_rows:
@@ -5934,7 +6089,7 @@ def opaque_replay_representation(artifact: Gate1Artifact) -> dict[str, Any]:
             for key in sorted(
                 address_rows,
                 key=lambda key: (
-                    list(accesses).index(key[1]),
+                    access_order.index(key[1]),
                     key[2],
                     (
                         int(key[0][1:])
@@ -5960,7 +6115,25 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
     """Preserve J/B semantics while removing source-derived identifier hints."""
 
     aliases, _bindings, _ = _opaque_reference_data(artifact)
-    intent = artifact.j.intent.to_json()["intent_function"]
+    elaboration = j_elaboration(artifact.j)
+    boundary = Boundary.from_json(copy.deepcopy(dict(elaboration.boundary_record)))
+    rewriter_returns, rewriter_mappings = _rewriter_output_views(
+        artifact,
+        lambda value: _opaque_reference(value, aliases),
+        masked=False,
+    )
+    rewriter_scopes = _rewriter_scope_views(
+        artifact,
+        lambda value: _opaque_reference(value, aliases),
+        masked=False,
+    )
+    construction_records = elaboration.construction_records
+    operation_records = construction_records.operation_records
+    top_level_operations = [
+        record["wire"]
+        for record in operation_records
+        if re.fullmatch(r"body\[\d+\]", record["path"])
+    ]
     opaque_intent = {
         "intent_function": {
             "name": "scrc_intent0",
@@ -5979,31 +6152,24 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             ],
             "outputs": [
                 {
-                    "name": _opaque_reference(tensor.name, aliases),
-                    "dtype": tensor.dtype,
+                    "name": _opaque_reference(binding.output, aliases),
+                    "dtype": binding.output_type.dtype,
                     "shape": [
                         _opaque_expression(dim, aliases)
                         if isinstance(dim, str) and dim != "?"
                         else dim
-                        for dim in tensor.shape
+                        for dim in binding.output_type.shape
                     ],
                 }
-                for tensor in artifact.j.intent.outputs
+                for binding in j_elaboration(artifact.j).output_bindings
             ],
-            "returns": [
-                {
-                    "output": _opaque_reference(item.output, aliases),
-                    "value": _opaque_reference(item.value, aliases),
-                }
-                for item in artifact.j.intent.returns
-            ],
+            "returns": rewriter_returns,
             "body": [
-                _opaque_intent_op(op, aliases) for op in intent.get("body", [])
+                _opaque_intent_op(op, aliases) for op in top_level_operations
             ],
         }
     }
 
-    boundary = artifact.j.boundary
     opaque_boundary = {
         "domains": {
             _opaque_reference(name, aliases): _opaque_expression(expression, aliases)
@@ -6075,18 +6241,7 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             }
             for item in boundary.effects
         ],
-        "output_mappings": [
-            {
-                "output": _opaque_reference(item.output, aliases),
-                "value": _opaque_expression(item.value, aliases),
-                **(
-                    {"node_ref": _opaque_reference(item.node_ref, aliases)}
-                    if item.node_ref is not None
-                    else {}
-                ),
-            }
-            for item in boundary.output_mappings
-        ],
+        "output_mappings": rewriter_mappings,
         "reductions": [
             {
                 "node_ref": _opaque_reference(item.node_ref, aliases),
@@ -6201,10 +6356,7 @@ def _opaque_normal_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             },
             "boundary": opaque_boundary,
             "signature": signature,
-            "scopes": [
-                _opaque_scope_json(scope, aliases)
-                for scope in artifact.j.scopes
-            ],
+            "scopes": rewriter_scopes,
             "storage": [
                 _opaque_storage_json(storage, aliases)
                 for storage in artifact.j.storage
@@ -6256,38 +6408,95 @@ def _rename_identifier_tokens(value: str, aliases: dict[str, str]) -> str:
 def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
     """Create a consistently opaque J/pi/interface view for leakage ablation."""
 
+    from intentir.ir.canonical_j import j_elaboration
+
+    elaboration = j_elaboration(artifact.j)
+    construction_records = elaboration.construction_records
+    scope_records = elaboration.scope_records
+    boundary = Boundary.from_json(copy.deepcopy(dict(elaboration.boundary_record)))
+    # The masked prompt is diagnostic input, but its aliases must still be a
+    # projection of the accepted canonical construction.  In particular,
+    # dict insertion order in ``j.node_ids`` is not an operation traversal
+    # contract and must not allocate a second n* namespace.
+    operation_records = elaboration.operation_records
+    canonical_node_ids = tuple(
+        record["id"]
+        for record in operation_records
+        if isinstance(record.get("id"), str)
+    )
+    access_rows = elaboration.boundary_rows("accesses")
+    effect_rows = elaboration.boundary_rows("effects")
+    authorization_rows = elaboration.boundary_rows("realization_authorizations")
+    if (
+        len(canonical_node_ids) != len(artifact.j.node_ids)
+        or len(access_rows) != len(boundary.accesses)
+        or len(effect_rows) != len(boundary.effects)
+        or len(authorization_rows) != len(boundary.realization_authorizations)
+    ):
+        raise SchemaError(
+            "canonical construction and decoded J declarations disagree"
+        )
+
+    def canonical_handles(prefix: str, count: int) -> tuple[str, ...]:
+        return CanonicalHandleAllocator.canonical_names(prefix, count)
+
     tensor_names = [tensor.name for tensor in artifact.j.intent.inputs]
     tensor_names.extend(tensor.name for tensor in artifact.j.intent.outputs)
     tensor_map = {
-        name: f"t{index}"
+        name: canonical_handles("t", len(dict.fromkeys(tensor_names)))[index]
         for index, name in enumerate(dict.fromkeys(tensor_names))
     }
-    node_map = {name: f"n{index}" for index, name in enumerate(artifact.j.node_ids)}
+    node_aliases = canonical_handles("n", len(canonical_node_ids))
+    node_map = {
+        name: node_aliases[index]
+        for index, name in enumerate(canonical_node_ids)
+    }
+    access_ids = tuple(
+        row["access_id"]
+        for row in access_rows
+        if isinstance(row.get("access_id"), str)
+    )
+    access_aliases = canonical_handles("a", len(access_ids))
     access_map = {
-        access.access_id: f"a{index}"
-        for index, access in enumerate(artifact.j.boundary.accesses)
+        access_id: access_aliases[index]
+        for index, access_id in enumerate(access_ids)
     }
+    domain_names = tuple(boundary.domains)
+    domain_aliases = canonical_handles("d", len(domain_names))
     domain_map = {
-        name: f"d{index}"
-        for index, name in enumerate(artifact.j.boundary.domains)
+        name: domain_aliases[index]
+        for index, name in enumerate(domain_names)
     }
+    effect_ids = tuple(
+        row["effect_id"]
+        for row in effect_rows
+        if isinstance(row.get("effect_id"), str)
+    )
+    effect_aliases = canonical_handles("e", len(effect_ids))
     effect_map = {
-        effect.effect_id: f"e{index}"
-        for index, effect in enumerate(artifact.j.boundary.effects)
-        if effect.effect_id is not None
+        effect_id: effect_aliases[index]
+        for index, effect_id in enumerate(effect_ids)
     }
+    authorization_ids = tuple(
+        row["auth_id"]
+        for row in authorization_rows
+        if isinstance(row.get("auth_id"), str)
+    )
+    authorization_aliases = canonical_handles(
+        "u", len(authorization_ids)
+    )
     authorization_map = {
-        item.auth_id: f"u{index}"
-        for index, item in enumerate(
-            artifact.j.boundary.realization_authorizations
-        )
+        auth_id: authorization_aliases[index]
+        for index, auth_id in enumerate(authorization_ids)
     }
+    scope_aliases = canonical_handles("q", len(scope_records))
     scope_map = {
-        scope.scope_id: f"q{index}"
-        for index, scope in enumerate(artifact.j.scopes)
+        scope["scope_id"]: scope_aliases[index]
+        for index, scope in enumerate(scope_records)
     }
+    storage_aliases = canonical_handles("b", len(artifact.j.storage))
     storage_map = {
-        storage.storage_id: f"b{index}"
+        storage.storage_id: storage_aliases[index]
         for index, storage in enumerate(artifact.j.storage)
     }
     dimension_names = list(
@@ -6299,7 +6508,8 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
         )
     )
     dimension_map = {
-        name: f"x{index}" for index, name in enumerate(dimension_names)
+        name: canonical_handles("x", len(dimension_names))[index]
+        for index, name in enumerate(dimension_names)
     }
 
     opaque_function, parameter_map, schedule_map = opaque_replay_abi(artifact)
@@ -6331,12 +6541,20 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
         return fallback_reference_map[value]
 
     path_to_node = {
-        path: node_map[node_id] for node_id, path in artifact.j.node_ids.items()
+        record["path"]: node_map[record["id"]]
+        for record in operation_records
+        if isinstance(record.get("path"), str)
+        and isinstance(record.get("id"), str)
     }
-    anonymous_node_count = 0
+    top_level_operations = [
+        record["wire"]
+        for record in operation_records
+        if re.fullmatch(r"body\[\d+\]", record["path"])
+    ]
 
-    def mask_ops(ops: list[Any], prefix: str) -> list[dict[str, Any]]:
-        nonlocal anonymous_node_count
+    def mask_ops(
+        ops: Sequence[Mapping[str, Any]], prefix: str
+    ) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         for index, op in enumerate(ops):
             path = f"{prefix}[{index}]"
@@ -6344,42 +6562,73 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             if node_id is None:
                 node_id = path_to_node.get(f"intent_function.{path}")
             if node_id is None:
-                node_id = f"n_anon_{anonymous_node_count}"
-                anonymous_node_count += 1
+                # A complete accepted construction has one n* row for every
+                # lexical operation.  Do not invent an ``n_anon_*`` diagnostic
+                # namespace when the path table disagrees: that would make a
+                # masked Gate1 projection appear structurally complete while
+                # silently using a second node identity authority.
+                raise SchemaError(
+                    "canonical masked projection has no node identity for "
+                    f"operation path {path!r}"
+                )
             masked_op: dict[str, Any] = {"op": "<masked>", "result": node_id}
-            if getattr(op, "body", None):
-                masked_op["body"] = mask_ops(op.body, f"{path}.body")
-            if op.op in {"effect_if", "value_if"}:
-                assert op.positive is not None and op.negative is not None
+            body = op.get("body")
+            if isinstance(body, list) and body:
+                masked_op["body"] = mask_ops(body, f"{path}.body")
+            if op.get("op") in {"effect_if", "value_if"}:
+                positive = op.get("positive")
+                negative = op.get("negative")
+                if not isinstance(positive, Mapping) or not isinstance(
+                    negative, Mapping
+                ):
+                    raise SchemaError(
+                        "canonical conditional operation lacks both Replay arms"
+                    )
                 masked_op["predicate"] = "<masked>"
                 masked_op["positive"] = {
-                    "scope_id": scope_map[op.positive.scope_id],
+                    "scope_id": scope_map[positive["scope_id"]],
                     "body": mask_ops(
-                        op.positive.body,
+                        positive.get("body", []),
                         f"{path}.positive.body",
                     ),
                 }
                 masked_op["negative"] = {
-                    "scope_id": scope_map[op.negative.scope_id],
+                    "scope_id": scope_map[negative["scope_id"]],
                     "body": mask_ops(
-                        op.negative.body,
+                        negative.get("body", []),
                         f"{path}.negative.body",
                     ),
                 }
-                if op.op == "value_if":
+                if op.get("op") == "value_if":
+                    operation_type = op.get("type")
+                    if not isinstance(operation_type, Mapping):
+                        raise SchemaError(
+                            "masked value_if lacks a canonical result type"
+                        )
                     masked_op["type"] = {
                         "dtype": "<masked>",
-                        "shape": ["<masked>"] * len(op.type["shape"]),
+                        "shape": ["<masked>"]
+                        * len(operation_type.get("shape", [])),
                     }
                     masked_op["positive"]["yield_value"] = opaque_reference(
-                        op.positive.yield_value
+                        positive["yield_value"]
                     )
                     masked_op["negative"]["yield_value"] = opaque_reference(
-                        op.negative.yield_value
+                        negative["yield_value"]
                     )
             result.append(masked_op)
         return result
 
+    rewriter_returns, rewriter_mappings = _rewriter_output_views(
+        artifact,
+        opaque_reference,
+        masked=True,
+    )
+    rewriter_scopes = _rewriter_scope_views(
+        artifact,
+        opaque_reference,
+        masked=True,
+    )
     masked_intent = {
         "intent_function": {
             "name": opaque_function,
@@ -6399,19 +6648,13 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 }
                 for tensor in artifact.j.intent.outputs
             ],
-            "returns": [
-                {
-                    "output": opaque_reference(item.output),
-                    "value": "<masked>",
-                }
-                for item in artifact.j.intent.returns
-            ],
-            "body": mask_ops(artifact.j.intent.body, "body"),
+            "returns": rewriter_returns,
+            "body": mask_ops(top_level_operations, "body"),
         }
     }
 
     masked_boundary = {
-        "domains": {domain_map[name]: "<masked>" for name in artifact.j.boundary.domains},
+        "domains": {domain_map[name]: "<masked>" for name in boundary.domains},
         "accesses": [
             {
                 "access_id": access_map[access.access_id],
@@ -6426,7 +6669,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                     else {}
                 ),
             }
-            for access in artifact.j.boundary.accesses
+            for access in boundary.accesses
         ],
         "broadcasts": [
             {
@@ -6434,7 +6677,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 "operand": opaque_reference(item.operand),
                 "axes": ["<masked>"],
             }
-            for item in artifact.j.boundary.broadcasts
+            for item in boundary.broadcasts
         ],
         "aliases": [
             {
@@ -6442,7 +6685,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 "right": opaque_reference(item.right),
                 "kind": "<masked>",
             }
-            for item in artifact.j.boundary.aliases
+            for item in boundary.aliases
         ],
         "effects": [
             {
@@ -6459,27 +6702,16 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                     if item.access_ref is not None else None
                 ),
             }
-            for item in artifact.j.boundary.effects
+            for item in boundary.effects
         ],
-        "output_mappings": [
-            {
-                "output": opaque_reference(item.output),
-                "value": "<masked>",
-                **(
-                    {"node_ref": opaque_reference(item.node_ref)}
-                    if item.node_ref is not None
-                    else {}
-                ),
-            }
-            for item in artifact.j.boundary.output_mappings
-        ],
+        "output_mappings": rewriter_mappings,
         "reductions": [
             {
                 "node_ref": opaque_reference(item.node_ref),
                 "tile_axis": "<masked>",
                 **({"identity": "<masked>"} if item.identity is not None else {}),
             }
-            for item in artifact.j.boundary.reductions
+            for item in boundary.reductions
         ],
         "index_bounds": [
             {
@@ -6488,7 +6720,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 "indices": opaque_reference(item.indices),
                 "axis": "<masked>",
             }
-            for item in artifact.j.boundary.index_bounds
+            for item in boundary.index_bounds
         ],
         "updates": [
             {
@@ -6511,7 +6743,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 "duplicate_policy": "<masked>",
                 "order": "<masked>",
             }
-            for item in artifact.j.boundary.updates
+            for item in boundary.updates
         ],
         "result_relations": [
             {
@@ -6527,7 +6759,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                     else {}
                 ),
             }
-            for item in artifact.j.boundary.result_relations
+            for item in boundary.result_relations
         ],
         "realization_authorizations": [
             {
@@ -6543,7 +6775,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                     else {}
                 ),
             }
-            for item in artifact.j.boundary.realization_authorizations
+            for item in boundary.realization_authorizations
         ],
         "consumer_extensions": [
             {
@@ -6554,7 +6786,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 "outside": {"dtype": "<masked>", "value": "<masked>"},
                 "identity_law": "<masked>",
             }
-            for item in artifact.j.boundary.consumer_extensions
+            for item in boundary.consumer_extensions
         ],
         "access_guard_relations": [
             {
@@ -6563,7 +6795,7 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
                 "axes": ["<masked>"],
                 "polarity": "<masked>",
             }
-            for item in artifact.j.boundary.access_guard_relations
+            for item in boundary.access_guard_relations
         ],
     }
 
@@ -6579,27 +6811,11 @@ def _masked_rewriter_view(artifact: Gate1Artifact) -> dict[str, Any]:
             "intent": masked_intent,
             "node_ids": {
                 node_map[node_id]: f"node[{index}]"
-                for index, node_id in enumerate(artifact.j.node_ids)
+                for index, node_id in enumerate(canonical_node_ids)
             },
             "boundary": masked_boundary,
             "signature": opaque_signature,
-            "scopes": [
-                {
-                    "scope_id": scope_map[scope.scope_id],
-                    "kind": "<masked>",
-                    "parent_scope": (
-                        scope_map[scope.parent_scope]
-                        if scope.parent_scope is not None
-                        else None
-                    ),
-                    "captures": [opaque_reference(ref) for ref in scope.captures],
-                    "definitions": [
-                        opaque_reference(ref) for ref in scope.definitions
-                    ],
-                    "effects": [opaque_reference(ref) for ref in scope.effects],
-                }
-                for scope in artifact.j.scopes
-            ],
+            "scopes": rewriter_scopes,
             "storage": [
                 {
                     "storage_id": storage_map[item.storage_id],
@@ -6664,7 +6880,9 @@ __all__ = [
     "DuplicatePolicy", "EffectKind",
     "EffectSpec", "Frontend",
     "GATE1_ARTIFACT_MODEL_FIELDS", "GATE1_ARTIFACT_PRIVATE_FIELDS",
+    "LEGACY_NESTED_J_FIELDS",
     "Gate1Artifact", "Gate1Status", "ImplementationConfig",
+    "gate1_artifact_wire_diagnostics",
     "implementation_value_matches",
     "JNecessityStatus", "JsonValue",
     "IndexBoundsSpec", "LocationEntry", "LocationMap", "LogicalSignature",
@@ -6677,6 +6895,7 @@ __all__ = [
     "render_boundary_access_wire_grammar",
     "render_gate1_artifact_envelope_grammar", "RuntimeArgument",
     "ScheduleSlot", "ScheduleSlotKind", "SchemaError", "SignatureParameter",
+    "SemanticArchiveCrossContractError",
     "ScopeKind",
     "opaque_replay_representation",
     "SEMANTIC_ARCHIVE_WIRE_FIELDS", "SemanticArchive", "ValueDimensionRelation",

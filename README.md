@@ -55,10 +55,10 @@ PYTHONPATH=python python tools/frontend_dataset.py --validate
 
 ```bash
 bash rundemo/01_validate_scrc_catalog.sh
-bash rundemo/02_validate_multifrontend_dataset.sh
-bash rundemo/03_run_liger_softmax_scrc.sh
-bash rundemo/04_probe_cuda_dataset.sh
-bash rundemo/05_probe_tilelang_dataset.sh
+INTENTIR_DATASET_ROOT=/path/to/Dataset bash rundemo/02_validate_multifrontend_dataset.sh
+INTENTIR_DATASET_ROOT=/path/to/Dataset bash rundemo/03_run_liger_softmax_scrc.sh
+INTENTIR_DATASET_ROOT=/path/to/Dataset bash rundemo/04_probe_cuda_dataset.sh
+INTENTIR_DATASET_ROOT=/path/to/Dataset bash rundemo/05_probe_tilelang_dataset.sh
 ```
 
 各 demo 的职责不同：
@@ -68,6 +68,10 @@ bash rundemo/05_probe_tilelang_dataset.sh
 - `03` 运行真实 `high_performance:liger_softmax` 的 SCRC、Replay、Gate1 和 Gate2；
 - `04` 使用 CUDA Dataset、真实 ABI 和 `CudaCompiler` 做 native CUDA 编译探针；
 - `05` 使用 Dataset 中固定的 TileLang Python 环境做 native TileLang 编译探针。
+
+`02`–`05` 不再假设 Dataset 的默认位置，运行前必须通过
+`INTENTIR_DATASET_ROOT` 指定已有 Dataset；`02` 也支持将 Dataset 根目录作为第一个
+位置参数传入。
 
 `03` 需要当前被 Git 忽略的 `llm_providers.local.json`，默认读取仓库根目录；也可
 通过 `INTENTIR_PROVIDER_CONFIG` 指定已有配置，或仅对当前进程注入
@@ -84,11 +88,11 @@ CUDA/TileLang demo 在相应工具链不可用时会返回非零并报告真实�
 - [唯一最终任务](docs/final-task.md)
 
 本 README 是项目说明、核心合同、真实 Kernel 示例和当前结论的主入口。更细的
-示例拆解、结构改进说明以及可复核的运行计时集中放在
-[项目指南目录](docs/project-guide/)：
+示例拆解放在[项目指南目录](docs/project-guide/)；当前闭包事实和唯一权威运行
+记录以最终任务为准：
 
 - [真实 Kernel 示例](docs/project-guide/examples.md)
-- [真实运行结果与 evidence](docs/project-guide/run-results.md)
+- [唯一最终任务](docs/final-task.md)
 
 ## 一个真实 Kernel 例子：Liger softmax
 
@@ -146,15 +150,14 @@ Replay/Gate1/Gate2 验证中，Replay 使用 Source/Harness 已经绑定的同�
 - Replay continuation 的默认后端固定为 `responses`，避免未显式传参时误走
   MiniSWE/Codex transport 路径。
 
-## 最近一次真实运行结果
+## 当前保留的真实闭包证据
 
-`high_performance:liger_softmax` 已完成正式真实闭环：
+`high_performance:liger_swiglu` 是 `docs/project-guide/real-evidence` 中唯一保留证据的真实 Kernel：
 
 ```text
 main_status: SCRC_CERTIFIED
 Gate1: replay_closed
 Gate2: gate2_pass
-Lift calls: 3 (accepted on call 3)
 Source–Replay: pass
 Source–J: pass
 Replay–J: pass
@@ -162,11 +165,11 @@ Replay–J: pass
 
 完整 evidence 位于：
 
-`docs/project-guide/real-evidence/retry-02/liger_softmax/run-001/`
+`docs/project-guide/real-evidence/liger_swiglu/closure/`
 
-阶段耗时为 Lift `211.920 s`、TypeCheck `53.46 ms`、semantic probe `2.352 s`、
-Replay/Gate1 `65.164 s`、Gate2 `168.577 ms`。这些结果来自真实 GPU Source、精确 Replay 和
-J reference；它们不代表所有活动 Kernel 已完成闭包。
+该证据记录 CandidateCheck 通过、TypeCheck 实际调用一次、masked-J necessity 已证明，
+且 Gate2 三条比较边全部通过。它不代表其他活动 Kernel 已完成闭包；当前全局
+闭包数和 campaign 停止位置仅以 `docs/final-task.md` 为准。
 
 ## 验证原则
 

@@ -12,12 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from numbers import Integral
 import re
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping
 
 import numpy as np
 
 from .canonical_j import elaborate_j, j_elaboration
-from .model import IntentOp, walk_intent_ops
+from .model import IntentOp
 
 
 @dataclass(frozen=True)
@@ -62,10 +62,6 @@ def _dtype_bounds(dtype: str) -> tuple[int, int] | None:
     if unsigned:
         return 0, (1 << width) - 1
     return -(1 << (width - 1)), (1 << (width - 1)) - 1
-
-
-def _walk_ops(body: Sequence[IntentOp]) -> Iterable[IntentOp]:
-    yield from walk_intent_ops(body)
 
 
 def _result_names(operation: IntentOp) -> tuple[str, ...]:
@@ -180,7 +176,10 @@ def infer_integer_value_intervals(
     preserving_ops = {
         "broadcast", "concat", "flip", "reshape", "tile", "transpose",
     }
-    operations = tuple(_walk_ops(canonical.intent.body))
+    operation_rows = j_elaboration(canonical).typed_operation_rows
+    if operation_rows is None:
+        raise ValueError("integer range analysis requires canonical operations")
+    operations = tuple(operation for _path, operation in operation_rows)
     ragged_offsets_by_name: dict[str, str] = {}
     ragged_indices_by_name: dict[str, str] = {}
     for operation in operations:

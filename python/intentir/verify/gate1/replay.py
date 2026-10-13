@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import ast
+import copy
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
-from intentir.ir.canonical_j import canonicalize_gate1_artifact
-from intentir.extraction.providers.client import (
-    DEFAULT_RESPONSES_TIMEOUT_SECONDS,
-    XHIGH_RESPONSES_TIMEOUT_SECONDS,
+from intentir.ir.canonical_j import (
+    canonicalize_gate1_artifact,
+    elaborate_j,
+    j_elaboration,
 )
 from intentir.extraction.providers.client import call_responses
 from intentir.extraction.providers.provider import ProviderConfig, get_provider
@@ -34,8 +35,18 @@ from .compiler import (
 )
 from .cuda_codegen import extract_cuda_module
 from .cute_codegen import extract_cute_module
-from .model import Frontend, Gate1Artifact, opaque_replay_representation
-from .pi import NORMALIZATION_WITNESS_SCHEMA
+from .model import (
+    Frontend,
+    Gate1Artifact,
+    SemanticArchive,
+    opaque_replay_representation,
+)
+from .pi import (
+    NORMALIZATION_WITNESS_SCHEMA,
+    ProgramCoordinateProjectionError,
+    canonical_program_coordinate_projection,
+    per_program_scalar_keepdims_reductions,
+)
 from .prompt import (
     assert_source_isolated_payload,
     build_rewriter_prompt,
@@ -49,20 +60,35 @@ from .tilelang_codegen import extract_tilelang_module
 from .ttir import (
     TTIRFingerprint,
     TTIRParseError,
+    compiled_program_id_axes,
     parse_ttir,
-    runtime_argument_names,
 )
 
 
 MINISWE_REPLAY_BACKEND = "minisweagent.intentir-replay.v34"
-# Keep a stalled CPA Replay turn bounded; the outer Replay lifecycle records
-# the failure and never duplicates a provider transport retry.
-MINISWE_REPLAY_TURN_TIMEOUT_SECONDS = 60.0
-MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS = 180.0
 RESPONSES_REPLAY_BACKEND = "openai.responses.intentir-replay.v1"
 STATIC_REPLAY_BACKEND = "intentir.static-replay-test.v1"
 REPLAY_CHECK_PROTOCOL = "intentir.scrc.replay-check.v15"
 _ANONYMOUS_HANDLE = re.compile(r"^[pc][0-9]+$")
+
+
+def _canonical_packet_j(
+    packet: Mapping[str, Any],
+) -> tuple[dict[str, Any], Any]:
+    """Return the accepted J wire and its one typed construction view.
+
+    Replay preflight used to read individual J tables directly.  That made a
+    stale scope/type row appear valid when the canonical elaborator would have
+    rejected or rewritten the same artifact.  Packet consumers now enter
+    through the same J authority as Gate1; a malformed packet fails at this
+    boundary instead of receiving a second interpretation.
+    """
+
+    raw = packet.get("j")
+    if not isinstance(raw, Mapping):
+        raise ValueError("Replay packet J must be an object")
+    accepted = elaborate_j(SemanticArchive.from_json(copy.deepcopy(dict(raw))))
+    return accepted.to_json(), j_elaboration(accepted)
 
 
 @dataclass(frozen=True)
@@ -100,6 +126,7 @@ class ReplayAttempt:
     backend_protocol: str = RESPONSES_REPLAY_BACKEND
     physical_provider_calls: int = 0
     transport_retries: int = 0
+    ingress_diagnostics: tuple[Mapping[str, Any], ...] = ()
 
 
 class ReplayGenerationError(RuntimeError):
@@ -110,7 +137,11 @@ class ReplayGenerationError(RuntimeError):
 
 class ReplayWriter(Protocol):
     def generate(
-        self, artifact: Gate1Artifact, *, masked: bool = False
+        self,
+        artifact: Gate1Artifact,
+        *,
+        masked: bool = False,
+        callable_abi_order: Sequence[str] | None = None,
     ) -> ReplayGeneration: ...
 
 
@@ -146,6 +177,49 @@ class ReplayIngressResult:
             "status": self.status,
             "diagnostics": wire_diagnostics,
         }
+
+
+def _closed_attempt_diagnostics(
+    diagnostics: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    """Retain only bounded source-free Replay ingress metadata."""
+
+    result: list[dict[str, Any]] = []
+    for item in diagnostics[:20]:
+        if not isinstance(item, Mapping):
+            continue
+        rule_code = item.get("rule_code")
+        path = item.get("path")
+        line = item.get("line")
+        handles = item.get("anonymous_handles")
+        if not isinstance(rule_code, str) or not isinstance(path, str):
+            continue
+        projected: dict[str, Any] = {
+            "rule_code": rule_code[:128],
+            "path": path[:256],
+            "anonymous_handles": (
+                [
+                    value[:64]
+                    for value in handles[:32]
+                    if isinstance(value, str)
+                    and _ANONYMOUS_HANDLE.fullmatch(value) is not None
+                ]
+                if isinstance(handles, (list, tuple))
+                else []
+            ),
+            "line": (
+                line
+                if isinstance(line, int)
+                and not isinstance(line, bool)
+                and line > 0
+                else None
+            ),
+        }
+        detail = item.get("detail")
+        if isinstance(detail, str) and detail:
+            projected["detail"] = detail[:512]
+        result.append(projected)
+    return tuple(result)
 
 
 class _ReplayABIViolation(ValueError):
@@ -217,428 +291,6 @@ def _constant_truth(
                 return True
             return False if all(item is False for item in values) else None
     return None
-
-
-def _meaningfully_consumed_names(
-    function: ast.FunctionDef,
-    *,
-    constants: Mapping[str, bool | int | float | str] | None = None,
-) -> set[str]:
-    """Return callable handles that reach effective construction or control.
-
-    This is a small forward dependency interpreter, not a general Python
-    evaluator.  It preserves sequential assignment kills, merges control-flow
-    alternatives, and propagates control dependence through values that survive
-    a branch or loop.  That is sufficient for the reject-only C-handle check and
-    avoids both treating a dead overwritten use as effective and losing a use
-    that occurs in only one reachable branch.
-    """
-
-    @dataclass(frozen=True)
-    class SymbolicValue:
-        dependencies: frozenset[str]
-        identity: tuple[Any, ...]
-
-    parameter_names = {item.arg for item in function.args.args}
-    initial_state: dict[str, SymbolicValue] = {
-        name: SymbolicValue(frozenset({name}), ("parameter", name))
-        for name in parameter_names
-    }
-    closed_constants = dict(constants or {})
-
-    def symbolic(
-        node: ast.AST | None,
-        state: Mapping[str, SymbolicValue],
-    ) -> SymbolicValue:
-        if node is None:
-            return SymbolicValue(frozenset(), ("none",))
-        if isinstance(node, ast.Name):
-            if isinstance(node.ctx, ast.Load):
-                return state.get(
-                    node.id,
-                    SymbolicValue(
-                        frozenset({node.id}),
-                        ("free_name", node.id),
-                    ),
-                )
-            return SymbolicValue(
-                frozenset(),
-                ("stored_name", node.id),
-            )
-        if isinstance(node, ast.Constant):
-            return SymbolicValue(
-                frozenset(),
-                ("constant", type(node.value).__name__, repr(node.value)),
-            )
-
-        dependencies: set[str] = set()
-        fields: list[tuple[str, Any]] = []
-        for field_name, value in ast.iter_fields(node):
-            if isinstance(value, ast.AST):
-                child = symbolic(value, state)
-                dependencies.update(child.dependencies)
-                fields.append((field_name, child.identity))
-                continue
-            if isinstance(value, list):
-                identities: list[Any] = []
-                for item in value:
-                    if isinstance(item, ast.AST):
-                        child = symbolic(item, state)
-                        dependencies.update(child.dependencies)
-                        identities.append(child.identity)
-                    else:
-                        identities.append(repr(item))
-                fields.append((field_name, tuple(identities)))
-                continue
-            fields.append((field_name, repr(value)))
-        return SymbolicValue(
-            frozenset(dependencies),
-            (type(node).__name__, tuple(fields)),
-        )
-
-    def call_name(node: ast.Call) -> str:
-        target = node.func
-        return (
-            target.attr
-            if isinstance(target, ast.Attribute)
-            else target.id
-            if isinstance(target, ast.Name)
-            else ""
-        )
-
-    def nested_effects(
-        node: ast.AST | None,
-        state: Mapping[str, SymbolicValue],
-    ) -> tuple[SymbolicValue, ...]:
-        if node is None:
-            return ()
-        result: list[SymbolicValue] = []
-        for item in ast.walk(node):
-            if not isinstance(item, ast.Call):
-                continue
-            name = call_name(item)
-            if name == "store" or name.startswith("atomic_"):
-                result.append(symbolic(item, state))
-        return tuple(result)
-
-    def standalone_call_may_have_effect(node: ast.Call) -> bool:
-        """Keep helper calls conservative without accepting discarded tl values.
-
-        A bare public value constructor does not consume an attached C handle
-        merely because Python evaluated it; its result must flow to an actual
-        effect or effective control decision. Stores and atomics are collected
-        by ``nested_effects``. Unknown named calls remain conservative because a
-        sibling JIT helper can own effects internally.
-        """
-
-        target = node.func
-        if isinstance(target, ast.Name):
-            return target.id not in {"bool", "float", "int", "range"}
-        if not isinstance(target, ast.Attribute):
-            return True
-        root: ast.AST = target.value
-        while isinstance(root, ast.Attribute):
-            root = root.value
-        if isinstance(root, ast.Name) and root.id in {"tl", "libdevice"}:
-            return False
-        # The safe Replay subset admits only Triton tensor conversion through
-        # arbitrary receiver attributes; conversion is a pure value operation.
-        return target.attr != "to"
-
-    def assigned_in(statements: list[ast.stmt]) -> set[str]:
-        result: set[str] = set()
-        for statement in statements:
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                result.add(statement.name)
-                continue
-            for item in ast.walk(statement):
-                if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store):
-                    result.add(item.id)
-        return result
-
-    def merge_states(
-        base: Mapping[str, SymbolicValue],
-        left: Mapping[str, SymbolicValue],
-        right: Mapping[str, SymbolicValue],
-        *,
-        controlled: set[str],
-        control: SymbolicValue,
-        selected: bool | None = None,
-    ) -> dict[str, SymbolicValue]:
-        result: dict[str, SymbolicValue] = {}
-        for name in set(base) | set(left) | set(right):
-            default = base.get(
-                name,
-                SymbolicValue(frozenset(), ("undefined", name)),
-            )
-            left_value = left.get(name, default)
-            right_value = right.get(name, default)
-            if selected is None:
-                merged_dependencies = set(left_value.dependencies)
-                merged_dependencies.update(right_value.dependencies)
-            else:
-                chosen = left_value if selected else right_value
-                merged_dependencies = set(chosen.dependencies)
-            if left_value.identity == right_value.identity:
-                result[name] = SymbolicValue(
-                    frozenset(merged_dependencies),
-                    left_value.identity,
-                )
-                continue
-            if name in controlled:
-                merged_dependencies.update(control.dependencies)
-            if selected is None:
-                identity = (
-                    "branch_value",
-                    control.identity,
-                    left_value.identity,
-                    right_value.identity,
-                )
-            else:
-                chosen = left_value if selected else right_value
-                other = right_value if selected else left_value
-                identity = (
-                    "specialized_branch_value",
-                    control.identity,
-                    selected,
-                    chosen.identity,
-                    other.identity,
-                )
-            result[name] = SymbolicValue(
-                frozenset(merged_dependencies),
-                identity,
-            )
-        return result
-
-    def process_block(
-        statements: list[ast.stmt],
-        incoming: Mapping[str, SymbolicValue],
-    ) -> tuple[dict[str, SymbolicValue], set[str], tuple[Any, ...]]:
-        state = dict(incoming)
-        meaningful: set[str] = set()
-        effects: list[Any] = []
-
-        for statement in statements:
-            if isinstance(statement, ast.Assign):
-                value = symbolic(statement.value, state)
-                statement_effects = nested_effects(statement.value, state)
-                for effect in statement_effects:
-                    meaningful.update(effect.dependencies)
-                    effects.append(effect.identity)
-                targets = [_assigned_names(item) for item in statement.targets]
-                if all(targets):
-                    for names in targets:
-                        for name in names:
-                            state[name] = value
-                else:
-                    meaningful.update(value.dependencies)
-                    for target in statement.targets:
-                        meaningful.update(symbolic(target, state).dependencies)
-                    effects.append(symbolic(statement, state).identity)
-                continue
-
-            if isinstance(statement, ast.AnnAssign):
-                value = symbolic(statement.value, state)
-                statement_effects = nested_effects(statement.value, state)
-                for effect in statement_effects:
-                    meaningful.update(effect.dependencies)
-                    effects.append(effect.identity)
-                targets = _assigned_names(statement.target)
-                if targets:
-                    for name in targets:
-                        state[name] = value
-                else:
-                    meaningful.update(value.dependencies)
-                    meaningful.update(
-                        symbolic(statement.target, state).dependencies
-                    )
-                    effects.append(symbolic(statement, state).identity)
-                continue
-
-            if isinstance(statement, ast.AugAssign):
-                value = symbolic(statement.value, state)
-                targets = _assigned_names(statement.target)
-                if targets:
-                    for name in targets:
-                        previous = state.get(
-                            name,
-                            SymbolicValue(
-                                frozenset({name}),
-                                ("free_name", name),
-                            ),
-                        )
-                        state[name] = SymbolicValue(
-                            previous.dependencies | value.dependencies,
-                            (
-                                "augmented",
-                                type(statement.op).__name__,
-                                previous.identity,
-                                value.identity,
-                            ),
-                        )
-                else:
-                    meaningful.update(value.dependencies)
-                    meaningful.update(
-                        symbolic(statement.target, state).dependencies
-                    )
-                    effects.append(symbolic(statement, state).identity)
-                for effect in nested_effects(statement.value, state):
-                    meaningful.update(effect.dependencies)
-                    effects.append(effect.identity)
-                continue
-
-            if isinstance(statement, ast.Expr):
-                if isinstance(statement.value, ast.Call):
-                    statement_effects = nested_effects(statement.value, state)
-                    for effect in statement_effects:
-                        meaningful.update(effect.dependencies)
-                        effects.append(effect.identity)
-                    if (
-                        not statement_effects
-                        and standalone_call_may_have_effect(statement.value)
-                    ):
-                        effect = symbolic(statement.value, state)
-                        meaningful.update(effect.dependencies)
-                        effects.append(effect.identity)
-                continue
-
-            if isinstance(statement, ast.If):
-                test = symbolic(statement.test, state)
-                truth = _constant_truth(statement.test, closed_constants)
-                left_state, left_meaningful, left_effectful = process_block(
-                    statement.body, state
-                )
-                right_state, right_meaningful, right_effectful = process_block(
-                    statement.orelse, state
-                )
-                controlled = assigned_in(statement.body) | assigned_in(
-                    statement.orelse
-                )
-                state = merge_states(
-                    state,
-                    left_state,
-                    right_state,
-                    controlled=controlled,
-                    control=test,
-                    selected=truth,
-                )
-                if truth is None:
-                    meaningful.update(left_meaningful)
-                    meaningful.update(right_meaningful)
-                elif truth:
-                    meaningful.update(left_meaningful)
-                else:
-                    meaningful.update(right_meaningful)
-                if left_effectful == right_effectful:
-                    effects.extend(left_effectful)
-                else:
-                    meaningful.update(test.dependencies)
-                    effects.append(
-                        (
-                            "conditional_effects",
-                            test.identity,
-                            truth,
-                            left_effectful,
-                            right_effectful,
-                        )
-                    )
-                continue
-
-            if isinstance(statement, (ast.For, ast.AsyncFor)):
-                iterator = symbolic(statement.iter, state)
-                loop_state = dict(state)
-                for name in _assigned_names(statement.target):
-                    loop_state[name] = SymbolicValue(
-                        iterator.dependencies,
-                        ("loop_target", iterator.identity),
-                    )
-                body_state, body_meaningful, body_effectful = process_block(
-                    statement.body, loop_state
-                )
-                controlled = assigned_in(statement.body) | _assigned_names(
-                    statement.target
-                )
-                state = merge_states(
-                    state,
-                    state,
-                    body_state,
-                    controlled=controlled,
-                    control=iterator,
-                )
-                else_state, else_meaningful, else_effectful = process_block(
-                    statement.orelse, state
-                )
-                state = else_state
-                meaningful.update(body_meaningful)
-                meaningful.update(else_meaningful)
-                if body_effectful:
-                    meaningful.update(iterator.dependencies)
-                    effects.append(
-                        ("loop_effects", iterator.identity, body_effectful)
-                    )
-                effects.extend(else_effectful)
-                continue
-
-            if isinstance(statement, ast.While):
-                test = symbolic(statement.test, state)
-                truth = _constant_truth(statement.test, closed_constants)
-                if truth is False:
-                    state, nested_meaningful, nested_effectful = process_block(
-                        statement.orelse, state
-                    )
-                    meaningful.update(nested_meaningful)
-                    effects.extend(nested_effectful)
-                    continue
-                body_state, body_meaningful, body_effectful = process_block(
-                    statement.body, state
-                )
-                controlled = assigned_in(statement.body)
-                state = merge_states(
-                    state,
-                    state,
-                    body_state,
-                    controlled=controlled,
-                    control=test,
-                )
-                state, else_meaningful, else_effectful = process_block(
-                    statement.orelse, state
-                )
-                meaningful.update(body_meaningful)
-                meaningful.update(else_meaningful)
-                if body_effectful:
-                    meaningful.update(test.dependencies)
-                    effects.append(
-                        ("while_effects", test.identity, body_effectful)
-                    )
-                effects.extend(else_effectful)
-                continue
-
-            if isinstance(statement, (ast.Return, ast.Raise, ast.Assert)):
-                effect = symbolic(statement, state)
-                meaningful.update(effect.dependencies)
-                effects.append(effect.identity)
-                continue
-
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                state[statement.name] = SymbolicValue(
-                    frozenset(),
-                    ("definition", statement.name),
-                )
-                continue
-
-            # Imports, pass/break/continue, and uncommon compound statements do
-            # not define the accepted Triton kernel subset.  Preserve safety by
-            # treating any dependencies they carry as effective rather than
-            # silently approving an attached C handle through unknown syntax.
-            effect = symbolic(statement, state)
-            meaningful.update(effect.dependencies)
-            if any(isinstance(item, ast.Call) for item in ast.walk(statement)):
-                effects.append(effect.identity)
-
-        return state, meaningful, tuple(effects)
-
-    _state, meaningful, _effectful = process_block(function.body, initial_state)
-    return meaningful & parameter_names
 
 
 def _assert_packet_c_matches_artifact(
@@ -1013,10 +665,20 @@ def _check_triton_exact_abi(
         for item in _packet_c_slots(packet)
         if item.get("kind") == "constexpr"
     ]
-    expected_names = [
-        *(str(item["name"]) for item in j_parameters),
-        *(str(item["name"]) for item in c_slots),
-    ]
+    u_f = packet.get("u_f")
+    callable_abi_order = (
+        u_f.get("callable_abi_order")
+        if isinstance(u_f, Mapping)
+        else None
+    )
+    expected_names = (
+        list(callable_abi_order)
+        if isinstance(callable_abi_order, (list, tuple))
+        else [
+            *(str(item["name"]) for item in j_parameters),
+            *(str(item["name"]) for item in c_slots),
+        ]
+    )
     actual_names = [item.arg for item in function.args.args]
     if len(actual_names) != len(expected_names):
         raise _ReplayABIViolation(
@@ -1114,12 +776,25 @@ def _check_triton_exact_abi(
                     line=argument.lineno,
                 )
             )
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        receiver = node.func.value
+        if node.func.attr != "to" or not isinstance(receiver, ast.Name):
+            continue
+        if receiver.id not in expected_constexpr:
+            continue
+        violations.append(
+            _ReplayABIViolation(
+                "constexpr_scalar_method",
+                path=f"<parameter:{receiver.id}>.to",
+                handles=(receiver.id,),
+                line=getattr(node, "lineno", None),
+                expected={"allowed": "typed arithmetic on the callable scalar"},
+                observed={"method": "to"},
+            )
+        )
     first_carrier_load: dict[str, ast.Name] = {}
-    attached_c_constexpr_names = {
-        str(item["name"])
-        for item in c_slots
-        if item.get("subject_ref") is not None
-    }
     for statement in function.body:
         for node in ast.walk(statement):
             if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
@@ -1145,274 +820,321 @@ def _check_triton_exact_abi(
             forbidden_carrier_names=unowned_address_carriers,
         )
     )
-    c_values = packet.get("c", {}).get("values", {})
-    consumed_names = _meaningfully_consumed_names(
-        function,
-        constants=(c_values if isinstance(c_values, Mapping) else None),
+    violations.extend(
+        _check_triton_rank0_scalar_materialization(function, packet)
     )
-    for name in sorted(attached_c_constexpr_names - consumed_names):
-        violations.append(
-            _ReplayABIViolation(
-                "c_constexpr_handle_unused",
-                path=f"<parameter:{name}>",
-                handles=(name,),
-                line=function.lineno,
-            )
-        )
     return tuple(violations[:20])
 
 
-@dataclass(frozen=True)
-class _TypedControlContract:
-    path: str
-    kind: str
-    positive_nonempty: bool
-    negative_nonempty: bool
-    terminal_polarity: str | None = None
-    positive_scope_id: str | None = None
-    negative_scope_id: str | None = None
-    positive_effect_kinds: tuple[str, ...] = ()
-    negative_effect_kinds: tuple[str, ...] = ()
-    required_loop_depth: int | None = None
+def _check_triton_rank0_scalar_materialization(
+    function: ast.FunctionDef,
+    packet: Mapping[str, Any],
+) -> tuple[_ReplayABIViolation, ...]:
+    """Reject the known-invalid scalar-to-vector materialization pattern.
 
+    A J rank-0 value is a scalar until a real vector consumer requires a
+    broadcast.  In Triton, materializing ``tl.broadcast_to(s, (1, n))`` and
+    then indexing it with ``[0, :]`` is not equivalent to a proved J
+    broadcast: the first index is a constexpr tensor index and the frontend
+    rejects it (and it also hides the actual consumer rank).  Replay must
+    construct the consumer-shaped broadcast directly.  This check is
+    source-isolated and uses no Source exception; it is a deterministic ingress
+    contract derived from the canonical J packet.
+    """
 
-def _packet_typed_controls(packet: Mapping[str, Any]) -> list[_TypedControlContract]:
-    """Return explicitly typed J controls in lexical preorder."""
+    def call_name(node: ast.Call) -> str:
+        if isinstance(node.func, ast.Attribute):
+            return node.func.attr
+        if isinstance(node.func, ast.Name):
+            return node.func.id
+        return ""
 
-    result: list[_TypedControlContract] = []
-    j = packet.get("j")
-    boundary = j.get("boundary") if isinstance(j, Mapping) else None
-    raw_scopes = (
-        j.get("scopes", [])
-        if isinstance(j, Mapping) and isinstance(j.get("scopes"), list)
-        else boundary.get("scopes", [])
-        if isinstance(boundary, Mapping)
-        else []
+    def assigned_names(node: ast.AST) -> tuple[str, ...]:
+        if isinstance(node, ast.Name):
+            return (node.id,)
+        if isinstance(node, (ast.Tuple, ast.List)):
+            names: list[str] = []
+            for item in node.elts:
+                names.extend(assigned_names(item))
+            return tuple(names)
+        return ()
+
+    def fixed_integer_index(node: ast.AST) -> bool:
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, int) and not isinstance(node.value, bool)
+        if isinstance(node, ast.Tuple):
+            return any(fixed_integer_index(item) for item in node.elts)
+        # Python 3.8's ast.Index is absent on current interpreters but keeping
+        # this branch makes the guard stable for the supported source range.
+        index_type = getattr(ast, "Index", ())
+        if index_type and isinstance(node, index_type):
+            return fixed_integer_index(node.value)
+        return False
+
+    def is_rank0_tensor_type(value: Any) -> bool:
+        return (
+            isinstance(value, Mapping)
+            and value.get("kind", "tensor") == "tensor"
+            and value.get("shape") == []
+        )
+
+    # The guard is source-blind, but it is not J-blind.  Only handles whose
+    # canonical packet type proves rank zero may seed scalar propagation.  In
+    # particular, an arbitrary p* spelling is not evidence that the provider
+    # received a scalar; p* remains an ABI carrier until J binds its rank.
+    rank0_handles: set[str] = set()
+    u_f = packet.get("u_f")
+    masked_j = (
+        isinstance(u_f, Mapping)
+        and u_f.get("semantic_view") == "masked_j"
     )
-    scopes = (
-        {
-            str(item.get("scope_id")): item
-            for item in raw_scopes
-            if isinstance(item, Mapping) and isinstance(item.get("scope_id"), str)
-        }
-    )
-    boundary_effect_kinds = (
-        {
-            str(item.get("effect_id")): str(item.get("kind"))
-            for item in boundary.get("effects", [])
-            if isinstance(item, Mapping)
-            and isinstance(item.get("effect_id"), str)
-            and isinstance(item.get("kind"), str)
-        }
-        if isinstance(boundary, Mapping)
-        else {}
-    )
-    pi = packet.get("pi")
-    regions = (
-        {
-            str(item.get("id")): item
-            for item in pi.get("regions", [])
-            if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-        }
-        if isinstance(pi, Mapping)
-        else {}
-    )
-    scope_regions: dict[str, set[str]] = {}
-    if isinstance(pi, Mapping):
-        for item in pi.get("instances", []):
-            if not isinstance(item, Mapping):
-                continue
-            semantic_ref = item.get("semantic_ref")
-            region = item.get("region")
-            if isinstance(semantic_ref, str) and isinstance(region, str):
-                scope_regions.setdefault(semantic_ref, set()).add(region)
-    instances = (
-        {
-            str(item.get("id")): str(item.get("semantic_ref"))
-            for item in pi.get("instances", [])
-            if isinstance(item, Mapping)
-        }
-        if isinstance(pi, Mapping)
-        else {}
-    )
-    terminal_scopes = (
-        {
-            instances.get(str(item.get("terminal_instance"))): instances.get(
-                str(item.get("continuation_instance"))
+    raw_j = packet.get("j")
+    if masked_j:
+        # A masked-J view intentionally replaces operation/type semantics with
+        # sentinels and therefore cannot pass normal J elaboration. Its tensor
+        # declarations still preserve rank exactly. Consume only that narrow
+        # host-authored structure here; all normal packets continue through the
+        # canonical elaborator below.
+        if not isinstance(raw_j, Mapping):
+            raise _ReplayABIViolation(
+                "masked_j_rank_projection_unavailable",
+                path="<j>",
             )
-            for item in pi.get("terminal_controls", [])
-            if isinstance(item, Mapping)
-            and instances.get(str(item.get("terminal_instance"))) is not None
-            and instances.get(str(item.get("continuation_instance"))) is not None
-        }
-        if isinstance(pi, Mapping)
-        else {}
-    )
-
-    def loop_ancestors(region_id: str) -> tuple[str, ...] | None:
-        ancestors: list[str] = []
-        seen: set[str] = set()
-        current: str | None = region_id
-        while current is not None:
-            if current in seen:
-                return None
-            seen.add(current)
-            region = regions.get(current)
-            if region is None:
-                return None
-            if region.get("placement") == "loop":
-                ancestors.append(current)
-            parent = region.get("parent")
-            current = str(parent) if isinstance(parent, str) else None
-        return tuple(reversed(ancestors))
-
-    def required_loop_depth(
-        positive_scope: object,
-        negative_scope: object,
-    ) -> int | None:
-        if not isinstance(positive_scope, str) or not isinstance(negative_scope, str):
-            return None
-        positive_regions = scope_regions.get(positive_scope, set())
-        negative_regions = scope_regions.get(negative_scope, set())
-        depths = {
-            ancestors
-            for region_id in positive_regions | negative_regions
-            if (ancestors := loop_ancestors(region_id)) is not None
-        }
-        if len(depths) != 1:
-            return None
-        return len(next(iter(depths)))
-
-    def arm_has_authored_activity(arm: Mapping[str, Any], body: object) -> bool:
-        """Include boundary-owned effects/definitions in an arm's activity.
-
-        An ``effect_if`` arm may own observable boundary effects through its typed
-        scope even when its Layer-A body is empty.  Those effects must still remain
-        lexically inside the Replay arm; captures alone do not require a statement.
-        """
-
-        if isinstance(body, list) and body:
-            return True
-        scope_id = arm.get("scope_id")
-        scope = scopes.get(str(scope_id)) if isinstance(scope_id, str) else None
-        return bool(
-            isinstance(scope, Mapping)
-            and (scope.get("definitions") or scope.get("effects"))
+        raw_intent = raw_j.get("intent")
+        raw_function = (
+            raw_intent.get("intent_function")
+            if isinstance(raw_intent, Mapping)
+            else None
         )
-
-    def arm_effect_kinds(arm: Mapping[str, Any]) -> tuple[str, ...]:
-        scope_id = arm.get("scope_id")
-        scope = scopes.get(str(scope_id)) if isinstance(scope_id, str) else None
-        if not isinstance(scope, Mapping):
-            return ()
-        return tuple(
-            boundary_effect_kinds[str(effect_ref)]
-            for effect_ref in scope.get("effects", [])
-            if str(effect_ref) in boundary_effect_kinds
-        )
-
-    def visit(body: Any, prefix: str) -> None:
-        if not isinstance(body, list):
-            return
-        for index, operation in enumerate(body):
-            if not isinstance(operation, Mapping):
-                continue
-            path = f"{prefix}[{index}]"
-            positive = operation.get("positive")
-            negative = operation.get("negative")
-            kind = operation.get("op")
-            if (
-                kind in {"effect_if", "value_if"}
-                and isinstance(positive, Mapping)
-                and isinstance(negative, Mapping)
-            ):
-                positive_body = positive.get("body", [])
-                negative_body = negative.get("body", [])
-                terminal_polarity = next(
-                    (
-                        polarity
-                        for polarity, arm in (
-                            ("positive", positive),
-                            ("negative", negative),
-                        )
-                        if arm.get("scope_id") in terminal_scopes
-                        and terminal_scopes[arm.get("scope_id")]
-                        == (
-                            negative.get("scope_id")
-                            if polarity == "positive"
-                            else positive.get("scope_id")
-                        )
-                    ),
-                    None,
+        if not isinstance(raw_function, Mapping):
+            raise _ReplayABIViolation(
+                "masked_j_rank_projection_unavailable",
+                path="<j.intent.intent_function>",
+            )
+        for collection in ("inputs", "outputs"):
+            values = raw_function.get(collection)
+            if not isinstance(values, list):
+                raise _ReplayABIViolation(
+                    "masked_j_rank_projection_unavailable",
+                    path=f"<j.intent.intent_function.{collection}>",
                 )
-                result.append(
-                    _TypedControlContract(
-                        path=path,
-                        kind=str(kind),
-                        positive_nonempty=arm_has_authored_activity(
-                            positive, positive_body
-                        ),
-                        negative_nonempty=arm_has_authored_activity(
-                            negative, negative_body
-                        ),
-                        terminal_polarity=terminal_polarity,
-                        positive_scope_id=(
-                            str(positive.get("scope_id"))
-                            if positive.get("scope_id") is not None
-                            else None
-                        ),
-                        negative_scope_id=(
-                            str(negative.get("scope_id"))
-                            if negative.get("scope_id") is not None
-                            else None
-                        ),
-                        positive_effect_kinds=arm_effect_kinds(positive),
-                        negative_effect_kinds=arm_effect_kinds(negative),
-                        required_loop_depth=required_loop_depth(
-                            positive.get("scope_id"),
-                            negative.get("scope_id"),
+            for index, value in enumerate(values):
+                if (
+                    not isinstance(value, Mapping)
+                    or not isinstance(value.get("name"), str)
+                    or value.get("dtype") != "<masked>"
+                    or not isinstance(value.get("shape"), list)
+                    or any(extent != "<masked>" for extent in value["shape"])
+                ):
+                    raise _ReplayABIViolation(
+                        "masked_j_rank_projection_unavailable",
+                        path=(
+                            f"<j.intent.intent_function.{collection}[{index}]>"
                         ),
                     )
-                )
-                if terminal_polarity == "negative":
-                    visit(negative_body, f"{path}.negative.body")
-                    visit(positive_body, f"{path}.positive.body")
-                else:
-                    visit(positive_body, f"{path}.positive.body")
-                    visit(negative_body, f"{path}.negative.body")
-            visit(operation.get("body"), f"{path}.body")
-
-    intent = packet.get("j", {}).get("intent", {})
-    function = intent.get("intent_function", {}) if isinstance(intent, Mapping) else {}
-    visit(
-        function.get("body") if isinstance(function, Mapping) else None,
-        "j.intent.intent_function.body",
-    )
-    return result
-
-
-def _expression_is_runtime(
-    expression: ast.AST,
-    dependencies: Mapping[str, bool],
-) -> bool:
-    if isinstance(expression, ast.Name):
-        return dependencies.get(expression.id, True)
-    if isinstance(expression, ast.Constant):
-        return False
-    if isinstance(expression, ast.Call):
-        function_name = (
-            expression.func.attr
-            if isinstance(expression.func, ast.Attribute)
-            else expression.func.id
-            if isinstance(expression.func, ast.Name)
-            else ""
+                if not value["shape"]:
+                    rank0_handles.add(str(value["name"]))
+        j = raw_j
+        _elaboration = None
+    else:
+        j, _elaboration = _canonical_packet_j(packet)
+    if isinstance(j, Mapping):
+        intent = j.get("intent")
+        intent_function = (
+            intent.get("intent_function")
+            if isinstance(intent, Mapping)
+            else None
         )
-        if function_name in {"load", "program_id", "atomic_add", "atomic_cas"}:
-            return True
-    return any(
-        _expression_is_runtime(child, dependencies)
-        for child in ast.iter_child_nodes(expression)
-    )
+        if isinstance(intent_function, Mapping):
+            for collection in ("inputs", "outputs"):
+                values = intent_function.get(collection)
+                if not isinstance(values, list):
+                    continue
+                for value in values:
+                    if (
+                        isinstance(value, Mapping)
+                        and isinstance(value.get("name"), str)
+                        and is_rank0_tensor_type(value)
+                    ):
+                        rank0_handles.add(value["name"])
+
+            # The elaborator's operation records are the only accepted path
+            # and region interpretation.  Do not recursively walk the raw
+            # body here: Replay must not create a second operation tree whose
+            # rank facts can diverge from Gate1's canonical J construction.
+            for record in (
+                _elaboration.operation_records
+                if _elaboration is not None
+                else ()
+            ):
+                operation = record.get("wire")
+                if not isinstance(operation, Mapping):
+                    continue
+                result = operation.get("result")
+                result_names = (
+                    [result]
+                    if isinstance(result, str)
+                    else result
+                    if isinstance(result, list)
+                    else []
+                )
+                for name in result_names:
+                    value_type = _elaboration.value_type_by_name.get(name)
+                    if value_type is not None and value_type.is_tensor and not value_type.shape:
+                        rank0_handles.add(name)
+                for state in operation.get("carry", []):
+                    if not isinstance(state, Mapping):
+                        continue
+                    state_names = (
+                        state.get("body_argument"),
+                        state.get("next_value"),
+                        state.get("result_value"),
+                    )
+                    if any(
+                        isinstance(name, str)
+                        and (
+                            value_type := _elaboration.value_type_by_name.get(name)
+                        ) is not None
+                        and value_type.is_tensor
+                        and not value_type.shape
+                        for name in state_names
+                    ):
+                        rank0_handles.update(
+                            name
+                            for name in state_names
+                            if isinstance(name, str)
+                            and (
+                                value_type := _elaboration.value_type_by_name.get(name)
+                            ) is not None
+                            and value_type.is_tensor
+                            and not value_type.shape
+                        )
+                for scan in operation.get("scan", []):
+                    if (
+                        isinstance(scan, Mapping)
+                        and scan.get("from") in rank0_handles
+                        and isinstance(scan.get("name"), str)
+                    ):
+                        rank0_handles.add(scan["name"])
+
+        signature = j.get("signature")
+        parameters = (
+            signature.get("parameters")
+            if isinstance(signature, Mapping)
+            else None
+        )
+        for parameter in parameters or []:
+            if not isinstance(parameter, Mapping):
+                continue
+            name = parameter.get("name")
+            kind = parameter.get("kind")
+            if (
+                isinstance(name, str)
+                and parameter.get("rank") == 0
+                and kind in {"scalar", "constexpr"}
+            ):
+                rank0_handles.add(name)
+            logical_ref = parameter.get("logical_ref")
+            if (
+                isinstance(name, str)
+                and isinstance(logical_ref, str)
+                and logical_ref in rank0_handles
+            ):
+                rank0_handles.add(name)
+
+    c = packet.get("c")
+    if isinstance(c, Mapping):
+        for slot in c.get("slots", []):
+            if isinstance(slot, Mapping) and slot.get("kind") == "constexpr":
+                if isinstance(slot.get("name"), str):
+                    rank0_handles.add(slot["name"])
+
+    broadcast_values: set[str] = set()
+    scalar_aliases: set[str] = set(rank0_handles)
+    violations: list[_ReplayABIViolation] = []
+    for statement in ast.walk(function):
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            value = statement.value
+            targets = (
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else (statement.target,)
+            )
+            names = tuple(
+                name
+                for target in targets
+                for name in assigned_names(target)
+            )
+            if (
+                isinstance(value, ast.Call)
+                and call_name(value) == "broadcast_to"
+                and value.args
+                and isinstance(value.args[0], ast.Name)
+                and value.args[0].id in scalar_aliases
+            ):
+                broadcast_values.update(names)
+            if isinstance(value, ast.Name) and value.id in scalar_aliases:
+                scalar_aliases.update(names)
+            scalar_aliases.update(name for name in names if name in rank0_handles)
+
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Subscript):
+            continue
+        value = node.value
+        is_broadcast_value = (
+            isinstance(value, ast.Name) and value.id in broadcast_values
+        ) or (
+            isinstance(value, ast.Call)
+            and call_name(value) == "broadcast_to"
+            and value.args
+            and isinstance(value.args[0], ast.Name)
+            and value.args[0].id in scalar_aliases
+        )
+        if not is_broadcast_value or not fixed_integer_index(node.slice):
+            continue
+        violations.append(
+            _ReplayABIViolation(
+                "rank0_scalar_broadcast_index_forbidden",
+                path="<replay-rank0-materialization>",
+                line=getattr(node, "lineno", None),
+                expected={
+                    "form": "direct broadcast to the real J consumer shape",
+                    "forbidden": "broadcast_to(...)[constant_index, ...]",
+                },
+                observed={"form": "indexed broadcast tensor"},
+            )
+        )
+
+    # The same scalar issue appears when the provider first reshapes a scalar
+    # to a singleton vector.  We reject only the unambiguous rank-0-to-[1]
+    # spelling; larger target shapes remain governed by J broadcast contracts.
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call) or call_name(node) != "reshape":
+            continue
+        if len(node.args) < 2:
+            continue
+        target = node.args[1]
+        singleton = (
+            isinstance(target, (ast.Tuple, ast.List))
+            and len(target.elts) == 1
+            and isinstance(target.elts[0], ast.Constant)
+            and target.elts[0].value == 1
+        )
+        source = node.args[0]
+        if not singleton or not isinstance(source, ast.Name):
+            continue
+        if source.id not in scalar_aliases:
+            continue
+        violations.append(
+            _ReplayABIViolation(
+                "rank0_scalar_singleton_reshape_forbidden",
+                path="<replay-rank0-materialization>",
+                line=getattr(node, "lineno", None),
+                expected={"form": "retain scalar until a real vector consumer"},
+                observed={"form": "reshape(scalar, (1,))"},
+            )
+        )
+    return tuple(violations[:20])
 
 
 def _check_triton_program_id_axes(code: str, function_name: str) -> None:
@@ -1456,1269 +1178,6 @@ def _check_triton_program_id_axes(code: str, function_name: str) -> None:
                 line=node.lineno,
             )
 
-
-@dataclass(frozen=True)
-class _RuntimeIfSite:
-    node: ast.If
-    following: tuple[ast.stmt, ...]
-    loop_depth: int
-    helper_local: bool = False
-
-
-def _runtime_if_nodes(
-    function: ast.FunctionDef,
-    *,
-    runtime_parameters: set[str],
-    constexpr_parameters: set[str],
-    base_loop_depth: int = 0,
-    helper_local: bool = False,
-) -> list[_RuntimeIfSite]:
-    """Collect runtime ``if`` nodes while excluding closed constexpr control."""
-
-    initial = {
-        **{name: True for name in runtime_parameters},
-        **{name: False for name in constexpr_parameters},
-    }
-    result: list[_RuntimeIfSite] = []
-
-    def compiler_visible_loop(statement: ast.For) -> bool:
-        iterator = statement.iter
-        if not isinstance(iterator, ast.Call):
-            return False
-        function_name = (
-            iterator.func.attr
-            if isinstance(iterator.func, ast.Attribute)
-            else iterator.func.id
-            if isinstance(iterator.func, ast.Name)
-            else ""
-        )
-        return function_name == "range"
-
-    def bind_target(target: ast.AST, value: bool, env: dict[str, bool]) -> None:
-        if isinstance(target, ast.Name):
-            env[target.id] = value
-        elif isinstance(target, (ast.Tuple, ast.List)):
-            for item in target.elts:
-                bind_target(item, value, env)
-
-    def literal_truth_value(expression: ast.AST) -> bool | None:
-        try:
-            value = ast.literal_eval(expression)
-        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
-            return None
-        if isinstance(value, (bool, int, float, complex, str, bytes)) or value is None:
-            return bool(value)
-        return None
-
-    def visit(
-        statements: list[ast.stmt],
-        env: dict[str, bool],
-        loop_depth: int,
-    ) -> None:
-        for index, statement in enumerate(statements):
-            if isinstance(statement, (ast.Assign, ast.AnnAssign)):
-                value = statement.value
-                dependency = (
-                    _expression_is_runtime(value, env)
-                    if value is not None
-                    else False
-                )
-                targets = (
-                    statement.targets
-                    if isinstance(statement, ast.Assign)
-                    else [statement.target]
-                )
-                for target in targets:
-                    bind_target(target, dependency, env)
-                continue
-            if isinstance(statement, ast.If):
-                literal_truth = literal_truth_value(statement.test)
-                if literal_truth is not None:
-                    visit(
-                        statement.body if literal_truth else statement.orelse,
-                        dict(env),
-                        loop_depth,
-                    )
-                    continue
-                if _expression_is_runtime(statement.test, env):
-                    result.append(
-                        _RuntimeIfSite(
-                            statement,
-                            tuple(statements[index + 1 :]),
-                            loop_depth,
-                            helper_local,
-                        )
-                    )
-                visit(statement.body, dict(env), loop_depth)
-                visit(statement.orelse, dict(env), loop_depth)
-                continue
-            if isinstance(statement, ast.For):
-                visit(
-                    statement.body,
-                    dict(env),
-                    loop_depth + int(compiler_visible_loop(statement)),
-                )
-                visit(statement.orelse, dict(env), loop_depth)
-                continue
-            if isinstance(statement, ast.While):
-                visit(statement.body, dict(env), loop_depth + 1)
-                visit(statement.orelse, dict(env), loop_depth)
-
-    visit(function.body, initial, base_loop_depth)
-    return result
-
-
-def _direct_helper_call_depths(
-    function: ast.FunctionDef,
-    *,
-    helper_names: set[str],
-    base_loop_depth: int,
-) -> list[tuple[str, int]]:
-    """Return direct sibling-JIT calls with their compiler-visible loop depth."""
-
-    result: list[tuple[str, int]] = []
-
-    def compiler_visible_loop(statement: ast.For) -> bool:
-        iterator = statement.iter
-        if not isinstance(iterator, ast.Call):
-            return False
-        called = (
-            iterator.func.attr
-            if isinstance(iterator.func, ast.Attribute)
-            else iterator.func.id
-            if isinstance(iterator.func, ast.Name)
-            else ""
-        )
-        return called == "range"
-
-    def calls_in(expression: ast.AST | None, depth: int) -> None:
-        if expression is None:
-            return
-        for node in ast.walk(expression):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id in helper_names
-            ):
-                result.append((node.func.id, depth))
-
-    def visit(statements: list[ast.stmt], depth: int) -> None:
-        for statement in statements:
-            if isinstance(statement, ast.If):
-                calls_in(statement.test, depth)
-                visit(statement.body, depth)
-                visit(statement.orelse, depth)
-            elif isinstance(statement, ast.For):
-                calls_in(statement.iter, depth)
-                nested_depth = depth + int(compiler_visible_loop(statement))
-                visit(statement.body, nested_depth)
-                visit(statement.orelse, depth)
-            elif isinstance(statement, ast.While):
-                calls_in(statement.test, depth)
-                visit(statement.body, depth + 1)
-                visit(statement.orelse, depth)
-            elif isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-                calls_in(statement.value, depth)
-            elif isinstance(statement, (ast.Expr, ast.Return)):
-                calls_in(statement.value, depth)
-
-    visit(function.body, base_loop_depth)
-    return result
-
-
-def _arm_is_explicitly_empty(statements: list[ast.stmt]) -> bool:
-    return bool(statements) and all(isinstance(item, ast.Pass) for item in statements)
-
-
-def _statements_are_nonempty(statements: list[ast.stmt] | tuple[ast.stmt, ...]) -> bool:
-    return any(not isinstance(item, ast.Pass) for item in statements)
-
-
-def _statement_effect_counts(
-    statements: list[ast.stmt] | tuple[ast.stmt, ...],
-) -> dict[str, int]:
-    counts = {"read": 0, "write": 0}
-    for statement in statements:
-        for node in ast.walk(statement):
-            if not isinstance(node, ast.Call):
-                continue
-            called = (
-                node.func.attr
-                if isinstance(node.func, ast.Attribute)
-                else node.func.id
-                if isinstance(node.func, ast.Name)
-                else ""
-            )
-            if called == "load":
-                counts["read"] += 1
-            elif called == "store":
-                counts["write"] += 1
-    return counts
-
-
-def _final_simple_assignment_target(statements: list[ast.stmt]) -> str | None:
-    if not statements:
-        return None
-    final = statements[-1]
-    if (
-        isinstance(final, ast.Assign)
-        and len(final.targets) == 1
-        and isinstance(final.targets[0], ast.Name)
-    ):
-        return final.targets[0].id
-    if isinstance(final, ast.AnnAssign) and isinstance(final.target, ast.Name):
-        return final.target.id
-    return None
-
-
-def _check_triton_typed_control_contract(
-    code: str,
-    packet: Mapping[str, Any],
-    function_name: str,
-) -> None:
-    """Check only packet-declared runtime typed-control shells.
-
-    Gate1 remains authoritative for operation/dataflow/effect identity and order;
-    this compiler-free preflight prevents Replay from erasing or conflating an
-    authored ``effect_if``/``value_if`` with select or another control kind.
-    """
-
-    expected = _packet_typed_controls(packet)
-    if not expected:
-        return
-    tree = ast.parse(code, mode="exec")
-    functions = {
-        node.name: node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-    }
-    function = functions[function_name]
-    j_parameters = packet["j"]["signature"]["parameters"]
-    runtime_parameters = {
-        str(item["name"])
-        for item in j_parameters
-        if item.get("kind") != "constexpr"
-    }
-    constexpr_parameters = {
-        str(item["name"])
-        for item in j_parameters
-        if item.get("kind") == "constexpr"
-    } | {
-        str(item["name"])
-        for item in _packet_c_slots(packet)
-        if item.get("kind") == "constexpr"
-    }
-    actual = _runtime_if_nodes(
-        function,
-        runtime_parameters=runtime_parameters,
-        constexpr_parameters=constexpr_parameters,
-    )
-    helper_names = set(functions) - {function_name}
-    pending = _direct_helper_call_depths(
-        function,
-        helper_names=helper_names,
-        base_loop_depth=0,
-    )
-    visited_calls: set[tuple[str, int]] = set()
-    while pending:
-        helper_name, call_depth = pending.pop(0)
-        call_key = (helper_name, call_depth)
-        if call_key in visited_calls:
-            continue
-        visited_calls.add(call_key)
-        helper = functions[helper_name]
-        helper_constexpr = {
-            argument.arg
-            for argument in helper.args.args
-            if isinstance(argument.annotation, ast.Attribute)
-            and isinstance(argument.annotation.value, ast.Name)
-            and argument.annotation.value.id == "tl"
-            and argument.annotation.attr == "constexpr"
-        }
-        helper_runtime = {
-            argument.arg for argument in helper.args.args
-        } - helper_constexpr
-        actual.extend(
-            _runtime_if_nodes(
-                helper,
-                runtime_parameters=helper_runtime,
-                constexpr_parameters=helper_constexpr,
-                base_loop_depth=call_depth,
-                helper_local=True,
-            )
-        )
-        pending.extend(
-            _direct_helper_call_depths(
-                helper,
-                helper_names=helper_names,
-                base_loop_depth=call_depth,
-            )
-        )
-    if len(actual) != len(expected):
-        kinds = {contract.kind for contract in expected}
-        rule_code = (
-            f"{next(iter(kinds))}_runtime_count"
-            if len(kinds) == 1
-            else "typed_control_runtime_count"
-        )
-        raise _ReplayABIViolation(
-            rule_code,
-            path="<typed-control>",
-            line=(actual[0].node.lineno if actual else function.lineno),
-            expected={"runtime_control_count": len(expected)},
-            observed={"runtime_control_count": len(actual)},
-        )
-    for index, (site, contract) in enumerate(
-        zip(actual, expected, strict=True)
-    ):
-        node = site.node
-        if (
-            contract.required_loop_depth is not None
-            and site.loop_depth != contract.required_loop_depth
-        ):
-            raise _ReplayABIViolation(
-                "typed_control_loop_depth",
-                path=f"{contract.path} -> <{contract.kind}:{index}>",
-                handles=tuple(
-                    item
-                    for item in (
-                        contract.positive_scope_id,
-                        contract.negative_scope_id,
-                    )
-                    if item is not None
-                ),
-                line=node.lineno,
-                expected={"authored_loop_depth": contract.required_loop_depth},
-                observed={"replay_loop_depth": site.loop_depth},
-            )
-        if contract.kind == "effect_if" and contract.terminal_polarity is not None:
-            terminal_nonempty = (
-                contract.positive_nonempty
-                if contract.terminal_polarity == "positive"
-                else contract.negative_nonempty
-            )
-            continuation_nonempty = (
-                contract.negative_nonempty
-                if contract.terminal_polarity == "positive"
-                else contract.positive_nonempty
-            )
-            terminal_effect_kinds = (
-                contract.positive_effect_kinds
-                if contract.terminal_polarity == "positive"
-                else contract.negative_effect_kinds
-            )
-            terminates_loop_iteration = bool(
-                contract.required_loop_depth is not None
-                and contract.required_loop_depth > 0
-            )
-            helper_return = bool(terminates_loop_iteration and site.helper_local)
-            terminal_statement_kind = (
-                ast.Return
-                if helper_return or not terminates_loop_iteration
-                else ast.Continue
-            )
-            has_terminal_statement = bool(
-                node.body
-                and isinstance(node.body[-1], terminal_statement_kind)
-                and (
-                    not isinstance(node.body[-1], ast.Return)
-                    or node.body[-1].value is None
-                )
-            )
-            terminal_prefix = (
-                node.body[:-1] if has_terminal_statement else node.body
-            )
-            predicate_negated = isinstance(node.test, ast.UnaryOp) and isinstance(
-                node.test.op, ast.Not
-            )
-            actual_terminal_nonempty = _statements_are_nonempty(terminal_prefix)
-            actual_continuation_nonempty = _statements_are_nonempty(site.following)
-            expected_terminal_effect_counts = {
-                kind: terminal_effect_kinds.count(kind)
-                for kind in ("read", "write")
-                if kind in terminal_effect_kinds
-            }
-            actual_terminal_effect_counts = _statement_effect_counts(terminal_prefix)
-            expected_shape = {
-                "j_control_path": contract.path,
-                "terminal_polarity": contract.terminal_polarity,
-                "forbids_else": True,
-                "terminal_arm_ends_in": (
-                    "helper_bare_return"
-                    if helper_return
-                    else "continue"
-                    if terminates_loop_iteration
-                    else "bare_return"
-                ),
-                "terminal_arm_nonempty_before_terminator": terminal_nonempty,
-                "terminal_arm_effect_counts": expected_terminal_effect_counts,
-                "continuation_nonempty_after_if": continuation_nonempty,
-                "continuation_contains_return": False,
-            }
-            observed_shape = {
-                "has_else": bool(node.orelse),
-                "terminal_arm_ends_in": (
-                    type(node.body[-1]).__name__ if node.body else None
-                ),
-                "predicate_negated": predicate_negated,
-                "terminal_arm_nonempty_before_terminator": actual_terminal_nonempty,
-                "terminal_arm_effect_counts": actual_terminal_effect_counts,
-                "continuation_nonempty_after_if": actual_continuation_nonempty,
-                "continuation_contains_return": any(
-                    isinstance(item, ast.Return) for item in site.following
-                ),
-                "continuation_statement_kinds": [
-                    type(item).__name__ for item in site.following[:16]
-                ],
-            }
-            diagnostic_path = f"{contract.path} -> <effect_if:{index}>"
-            scope_handles = tuple(
-                item
-                for item in (
-                    contract.positive_scope_id,
-                    contract.negative_scope_id,
-                )
-                if item is not None
-            )
-            if node.orelse:
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_forbids_else",
-                    path=diagnostic_path,
-                    handles=scope_handles,
-                    line=node.lineno,
-                    expected=expected_shape,
-                    observed=observed_shape,
-                )
-            if not has_terminal_statement:
-                raise _ReplayABIViolation(
-                    (
-                        "terminal_effect_if_helper_bare_return"
-                        if helper_return
-                        else "terminal_effect_if_continue"
-                        if terminates_loop_iteration
-                        else "terminal_effect_if_bare_return"
-                    ),
-                    path=diagnostic_path,
-                    handles=scope_handles,
-                    line=node.lineno,
-                    expected=expected_shape,
-                    observed=observed_shape,
-                )
-            if predicate_negated != (contract.terminal_polarity == "negative"):
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_polarity",
-                    path=diagnostic_path,
-                    handles=scope_handles,
-                    line=node.lineno,
-                    expected=expected_shape,
-                    observed=observed_shape,
-                )
-            if actual_terminal_nonempty != terminal_nonempty:
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_terminal_arm",
-                    path=diagnostic_path,
-                    handles=scope_handles,
-                    line=node.lineno,
-                    expected=expected_shape,
-                    observed=observed_shape,
-                )
-            if any(
-                actual_terminal_effect_counts.get(kind, 0) < count
-                for kind, count in expected_terminal_effect_counts.items()
-            ):
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_scope_effects",
-                    path=diagnostic_path,
-                    handles=scope_handles,
-                    line=node.lineno,
-                    expected=expected_shape,
-                    observed=observed_shape,
-                )
-            if actual_continuation_nonempty != continuation_nonempty:
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_continuation",
-                    path=diagnostic_path,
-                    handles=scope_handles,
-                    line=node.lineno,
-                    expected=expected_shape,
-                    observed=observed_shape,
-                )
-            if any(isinstance(item, ast.Return) for item in site.following):
-                raise _ReplayABIViolation(
-                    "terminal_effect_if_continuation_return",
-                    path=diagnostic_path,
-                    handles=scope_handles,
-                    line=node.lineno,
-                    expected=expected_shape,
-                    observed=observed_shape,
-                )
-            continue
-        if not node.orelse:
-            raise _ReplayABIViolation(
-                f"{contract.kind}_explicit_negative_arm",
-                path=f"<{contract.kind}:{index}>",
-                line=node.lineno,
-            )
-        if contract.kind == "effect_if":
-            positive_empty = _arm_is_explicitly_empty(node.body)
-            negative_empty = _arm_is_explicitly_empty(node.orelse)
-            if (
-                positive_empty == contract.positive_nonempty
-                or negative_empty == contract.negative_nonempty
-            ):
-                raise _ReplayABIViolation(
-                    "effect_if_arm_polarity",
-                    path=f"<effect_if:{index}>",
-                    line=node.lineno,
-                )
-            continue
-        positive_target = _final_simple_assignment_target(node.body)
-        negative_target = _final_simple_assignment_target(node.orelse)
-        if (
-            positive_target is None
-            or negative_target is None
-            or positive_target != negative_target
-        ):
-            raise _ReplayABIViolation(
-                "value_if_merge_target",
-                path=f"<value_if:{index}>",
-                line=node.lineno,
-            )
-
-
-def _packet_intent_ops_by_path(packet: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
-    result: dict[str, Mapping[str, Any]] = {}
-
-    def visit(body: Any, prefix: str) -> None:
-        if not isinstance(body, list):
-            return
-        for index, operation in enumerate(body):
-            if not isinstance(operation, Mapping):
-                continue
-            path = f"{prefix}[{index}]"
-            result[path] = operation
-            visit(operation.get("body"), f"{path}.body")
-            for polarity in ("positive", "negative"):
-                arm = operation.get(polarity)
-                if isinstance(arm, Mapping):
-                    visit(arm.get("body"), f"{path}.{polarity}.body")
-
-    intent = packet.get("j", {}).get("intent", {})
-    function = intent.get("intent_function", {}) if isinstance(intent, Mapping) else {}
-    visit(function.get("body") if isinstance(function, Mapping) else None, "body")
-    return result
-
-
-@dataclass(frozen=True)
-class _CompiledIterationContract:
-    block_arity: int
-    basis: str
-    extent: str
-    tile: str
-    tile_value: int
-    path: str
-
-
-def _packet_compiled_iteration_contracts(
-    packet: Mapping[str, Any],
-) -> tuple[_CompiledIterationContract, ...]:
-    """Resolve authored loop bases to anonymous ABI handles when unambiguous."""
-
-    j = packet.get("j")
-    c = packet.get("c")
-    pi = packet.get("pi")
-    if not all(isinstance(value, Mapping) for value in (j, c, pi)):
-        return ()
-    assert isinstance(j, Mapping) and isinstance(c, Mapping) and isinstance(pi, Mapping)
-    operations = _packet_intent_ops_by_path(packet)
-    node_paths = j.get("node_ids")
-    node_paths = node_paths if isinstance(node_paths, Mapping) else {}
-    operation_by_node: dict[str, Mapping[str, Any]] = {}
-    for node, raw_path in node_paths.items():
-        if not isinstance(raw_path, str):
-            continue
-        path = raw_path.removeprefix("intent_function.")
-        operation = operations.get(path)
-        if operation is not None:
-            operation_by_node[str(node)] = operation
-
-    intent = j.get("intent")
-    intent = intent if isinstance(intent, Mapping) else {}
-    intent_function = intent.get("intent_function")
-    intent_function = (
-        intent_function if isinstance(intent_function, Mapping) else {}
-    )
-    value_shapes: dict[str, tuple[int | str, ...]] = {}
-    for key in ("inputs", "outputs"):
-        for item in intent_function.get(key, []):
-            if not isinstance(item, Mapping):
-                continue
-            name = item.get("name")
-            shape = item.get("shape")
-            if isinstance(name, str) and isinstance(shape, list):
-                value_shapes[name] = tuple(
-                    value for value in shape if isinstance(value, (int, str))
-                )
-    for operation in operations.values():
-        result = operation.get("result")
-        result_type = operation.get("type")
-        shape = result_type.get("shape") if isinstance(result_type, Mapping) else None
-        if isinstance(result, str) and isinstance(shape, list):
-            value_shapes[result] = tuple(
-                value for value in shape if isinstance(value, (int, str))
-            )
-
-    boundary = j.get("boundary")
-    boundary = boundary if isinstance(boundary, Mapping) else {}
-    accesses = {
-        str(item.get("access_id")): item
-        for item in boundary.get("accesses", [])
-        if isinstance(item, Mapping) and isinstance(item.get("access_id"), str)
-    }
-    signature = j.get("signature")
-    parameters = (
-        signature.get("parameters", []) if isinstance(signature, Mapping) else []
-    )
-    value_dimension_relations = j.get("value_dimension_relations")
-    dimension_relations = j.get("dimension_relations")
-
-    def extent_parameter(dimension: str) -> str | None:
-        extent_refs = {dimension}
-        sources = {
-            str(item.get("result")): tuple(
-                str(ref)
-                for ref in (
-                    item.get("expr", {}).get("arg"),
-                    item.get("expr", {}).get("rhs"),
-                )
-                if isinstance(ref, str)
-            )
-            for item in (
-                dimension_relations if isinstance(dimension_relations, list) else []
-            )
-            if isinstance(item, Mapping)
-            and isinstance(item.get("result"), str)
-            and isinstance(item.get("expr"), Mapping)
-            and isinstance(item.get("expr", {}).get("arg"), str)
-        }
-        frontier = [dimension]
-        while frontier:
-            for source in sources.get(frontier.pop(), ()):
-                if source not in extent_refs:
-                    extent_refs.add(source)
-                    frontier.append(source)
-        value_refs = {
-            str(item.get("value_ref"))
-            for item in (
-                value_dimension_relations
-                if isinstance(value_dimension_relations, list)
-                else []
-            )
-            if isinstance(item, Mapping)
-            and item.get("relation") == "eq"
-            and item.get("dimension_ref") in extent_refs
-            and isinstance(item.get("value_ref"), str)
-        }
-        logical_refs = extent_refs | value_refs
-        matches = [
-            str(item.get("name"))
-            for item in parameters
-            if isinstance(item, Mapping)
-            and item.get("kind") in {"scalar", "constexpr"}
-            and item.get("logical_ref") in logical_refs
-            and isinstance(item.get("name"), str)
-        ]
-        return matches[0] if len(matches) == 1 else None
-
-    def subject_dimension(subject: str, axis: int | str | None) -> str | None:
-        if isinstance(axis, str) and re.fullmatch(r"x[0-9]+", axis):
-            return axis
-        if not isinstance(axis, int) or isinstance(axis, bool) or axis < 0:
-            return None
-        access = accesses.get(subject)
-        if access is not None:
-            tensor = access.get("tensor")
-            shape = value_shapes.get(str(tensor))
-            if (
-                shape is not None
-                and axis < len(shape)
-                and isinstance(shape[axis], str)
-                and shape[axis] != "?"
-            ):
-                return shape[axis]
-            return None
-        operation = operation_by_node.get(subject)
-        if operation is None:
-            return None
-        operands = operation.get("operands")
-        if not isinstance(operands, list) or not operands:
-            return None
-        if operation.get("op") == "reduce":
-            shape = value_shapes.get(str(operands[0]))
-            attrs = operation.get("attrs")
-            axes = attrs.get("axes") if isinstance(attrs, Mapping) else None
-            if (
-                shape is not None
-                and isinstance(axes, list)
-                and axis in axes
-                and axis < len(shape)
-                and isinstance(shape[axis], str)
-                and shape[axis] != "?"
-            ):
-                return shape[axis]
-            return None
-        if operation.get("op") != "contraction":
-            return None
-        attrs = operation.get("attrs")
-        subscripts = attrs.get("subscripts") if isinstance(attrs, Mapping) else None
-        if not isinstance(subscripts, str) or "->" not in subscripts:
-            return None
-        inputs_text, output_text = subscripts.split("->", 1)
-        input_terms = inputs_text.split(",")
-        if len(input_terms) != len(operands):
-            return None
-        contracted: list[str] = []
-        for term in input_terms:
-            for label in term:
-                if label not in output_text and label not in contracted:
-                    contracted.append(label)
-        if axis >= len(contracted):
-            return None
-        label = contracted[axis]
-        dimensions: set[str] = set()
-        for term, operand in zip(input_terms, operands, strict=True):
-            shape = value_shapes.get(str(operand))
-            if shape is None or len(shape) != len(term):
-                continue
-            for current, extent in zip(term, shape, strict=True):
-                if current == label and isinstance(extent, str) and extent != "?":
-                    dimensions.add(extent)
-        return next(iter(dimensions)) if len(dimensions) == 1 else None
-
-    instances = {
-        str(item.get("id")): item
-        for item in pi.get("instances", [])
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    slots = {
-        str(item.get("name")): item
-        for item in c.get("slots", [])
-        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
-    }
-    values = c.get("values")
-    values = values if isinstance(values, Mapping) else {}
-    logical_carriers = [
-        item for item in pi.get("loop_carriers", []) if isinstance(item, Mapping)
-    ]
-    physical_carriers = [
-        item
-        for item in pi.get("physical_loop_carriers", [])
-        if isinstance(item, Mapping)
-    ]
-    result: list[_CompiledIterationContract] = []
-
-    def append(
-        *,
-        basis: Any,
-        dimension: str | None,
-        tile_ref: str | None,
-        block_arity: int,
-        path: str,
-    ) -> None:
-        if basis not in {"extent_step", "rounded_extent_step", "tile_ordinal"}:
-            return
-        if dimension is None or tile_ref is None:
-            return
-        slot = slots.get(tile_ref)
-        tile_value = values.get(tile_ref)
-        if (
-            slot is None
-            or slot.get("kind") != "constexpr"
-            or not isinstance(tile_value, int)
-            or isinstance(tile_value, bool)
-            or tile_value <= 0
-        ):
-            return
-        extent = extent_parameter(dimension)
-        if extent is None:
-            return
-        result.append(
-            _CompiledIterationContract(
-                block_arity=block_arity,
-                basis=str(basis),
-                extent=extent,
-                tile=tile_ref,
-                tile_value=tile_value,
-                path=path,
-            )
-        )
-
-    for index, relation in enumerate(pi.get("iterations", [])):
-        if not isinstance(relation, Mapping):
-            continue
-        loop_instance = instances.get(str(relation.get("loop_instance")))
-        tile_instance = instances.get(str(relation.get("tile_instance")))
-        loop_ref = (
-            str(loop_instance.get("semantic_ref")) if loop_instance is not None else None
-        )
-        tile_ref = (
-            str(tile_instance.get("semantic_ref")) if tile_instance is not None else None
-        )
-        operation = operation_by_node.get(loop_ref or "")
-        trip = operation.get("trip") if isinstance(operation, Mapping) else None
-        dimension = trip.get("axis") if isinstance(trip, Mapping) else None
-        carrier_count = sum(
-            item.get("loop_instance") == relation.get("loop_instance")
-            for item in logical_carriers
-        )
-        append(
-            basis=relation.get("induction_basis"),
-            dimension=dimension if isinstance(dimension, str) else None,
-            tile_ref=tile_ref,
-            block_arity=1 + carrier_count,
-            path=f"pi.iterations[{index}]",
-        )
-
-    for index, relation in enumerate(pi.get("physical_iterations", [])):
-        if not isinstance(relation, Mapping) or relation.get("direction") != "forward":
-            continue
-        body_instance = instances.get(str(relation.get("body_instance")))
-        tile_instance = instances.get(str(relation.get("tile_instance")))
-        body_ref = (
-            str(body_instance.get("semantic_ref")) if body_instance is not None else None
-        )
-        tile_ref = (
-            str(tile_instance.get("semantic_ref")) if tile_instance is not None else None
-        )
-        slot = slots.get(tile_ref or "")
-        dimension = (
-            subject_dimension(body_ref, slot.get("axis_ref"))
-            if body_ref is not None and slot is not None
-            else None
-        )
-        region = relation.get("region")
-        carrier_count = sum(
-            item.get("region") == region for item in physical_carriers
-        )
-        append(
-            basis=relation.get("induction_basis"),
-            dimension=dimension,
-            tile_ref=tile_ref,
-            block_arity=1 + carrier_count,
-            path=f"pi.physical_iterations[{index}]",
-        )
-    return tuple(result)
-
-
-def _packet_rounded_iteration_contracts(
-    packet: Mapping[str, Any],
-) -> list[tuple[str, str, str]]:
-    """Resolve source-neutral rounded relations to packet ABI handles."""
-
-    pi = packet.get("pi")
-    if not isinstance(pi, Mapping):
-        return []
-    instances = {
-        str(item.get("id")): str(item.get("semantic_ref"))
-        for item in pi.get("instances", [])
-        if isinstance(item, Mapping)
-    }
-    node_paths = packet.get("j", {}).get("node_ids", {})
-    operations = _packet_intent_ops_by_path(packet)
-    signature = packet.get("j", {}).get("signature", {})
-    parameters = (
-        signature.get("parameters", [])
-        if isinstance(signature, Mapping)
-        else []
-    )
-    relations = packet.get("j", {}).get("value_dimension_relations", [])
-    dimension_relations = packet.get("j", {}).get("dimension_relations", [])
-    c_slots = {
-        str(item.get("name"))
-        for item in packet.get("c", {}).get("slots", [])
-        if isinstance(item, Mapping) and item.get("kind") == "constexpr"
-    }
-    result: list[tuple[str, str, str]] = []
-    for index, relation in enumerate(pi.get("iterations", [])):
-        if not isinstance(relation, Mapping) or relation.get(
-            "induction_basis"
-        ) != "rounded_extent_step":
-            continue
-        loop_ref = instances.get(str(relation.get("loop_instance")))
-        tile_ref = instances.get(str(relation.get("tile_instance")))
-        path = node_paths.get(loop_ref) if isinstance(node_paths, Mapping) else None
-        if isinstance(path, str) and path.startswith("intent_function."):
-            path = path.removeprefix("intent_function.")
-        operation = operations.get(path) if isinstance(path, str) else None
-        trip = operation.get("trip") if isinstance(operation, Mapping) else None
-        axis = trip.get("axis") if isinstance(trip, Mapping) else None
-        if not isinstance(axis, str) or tile_ref not in c_slots:
-            # Masked-J deliberately removes the trip semantics.  Do not guess
-            # them from shape, C, or pi; the ablation may then fail Gate1.
-            continue
-        extent_refs = {axis}
-        dimension_sources = {
-            str(item.get("result")): tuple(
-                str(ref)
-                for ref in (
-                    item.get("expr", {}).get("arg"),
-                    item.get("expr", {}).get("rhs"),
-                )
-                if isinstance(ref, str)
-            )
-            for item in dimension_relations
-            if isinstance(item, Mapping)
-            and isinstance(item.get("result"), str)
-            and isinstance(item.get("expr"), Mapping)
-            and isinstance(item.get("expr", {}).get("arg"), str)
-        } if isinstance(dimension_relations, list) else {}
-        frontier = [axis]
-        while frontier:
-            current = frontier.pop()
-            for source in dimension_sources.get(current, ()):
-                if source not in extent_refs:
-                    extent_refs.add(source)
-                    frontier.append(source)
-        for item in relations if isinstance(relations, list) else []:
-            if (
-                isinstance(item, Mapping)
-                and item.get("relation") == "eq"
-                and item.get("dimension_ref") == axis
-                and isinstance(item.get("value_ref"), str)
-            ):
-                extent_refs.add(str(item["value_ref"]))
-        extent_parameters = [
-            str(item["name"])
-            for item in parameters
-            if isinstance(item, Mapping)
-            and item.get("logical_ref") in extent_refs
-            and item.get("kind") in {"scalar", "constexpr"}
-        ]
-        if len(extent_parameters) != 1:
-            continue
-        result.append(
-            (extent_parameters[0], str(tile_ref), f"pi.iterations[{index}]")
-        )
-    return result
-
-
-def _for_nodes_with_assignments(
-    function: ast.FunctionDef,
-) -> list[tuple[ast.For, dict[str, ast.AST]]]:
-    result: list[tuple[ast.For, dict[str, ast.AST]]] = []
-
-    def bind(target: ast.AST, value: ast.AST, env: dict[str, ast.AST]) -> None:
-        if isinstance(target, ast.Name):
-            env[target.id] = value
-        elif isinstance(target, (ast.Tuple, ast.List)):
-            for item in target.elts:
-                bind(item, value, env)
-
-    def visit(statements: list[ast.stmt], env: dict[str, ast.AST]) -> None:
-        for statement in statements:
-            if isinstance(statement, ast.Assign):
-                for target in statement.targets:
-                    bind(target, statement.value, env)
-            elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
-                bind(statement.target, statement.value, env)
-            elif isinstance(statement, ast.For):
-                result.append((statement, dict(env)))
-                visit(statement.body, dict(env))
-                visit(statement.orelse, dict(env))
-            elif isinstance(statement, ast.If):
-                visit(statement.body, dict(env))
-                visit(statement.orelse, dict(env))
-
-    visit(function.body, {})
-    return result
-
-
-def _resolved_expression(
-    expression: ast.AST,
-    assignments: Mapping[str, ast.AST],
-    active: frozenset[str] = frozenset(),
-) -> ast.AST:
-    if (
-        isinstance(expression, ast.Name)
-        and expression.id in assignments
-        and expression.id not in active
-    ):
-        return _resolved_expression(
-            assignments[expression.id], assignments, active | {expression.id}
-        )
-    return expression
-
-
-def _is_named(
-    expression: ast.AST,
-    name: str,
-    assignments: Mapping[str, ast.AST],
-) -> bool:
-    expression = _resolved_expression(expression, assignments)
-    return isinstance(expression, ast.Name) and expression.id == name
-
-
-def _is_ceil_div(
-    expression: ast.AST,
-    extent: str,
-    tile: str,
-    assignments: Mapping[str, ast.AST],
-) -> bool:
-    expression = _resolved_expression(expression, assignments)
-    if isinstance(expression, ast.Call) and len(expression.args) == 2:
-        function = expression.func
-        name = (
-            function.attr
-            if isinstance(function, ast.Attribute)
-            else function.id
-            if isinstance(function, ast.Name)
-            else ""
-        )
-        return name in {"cdiv", "ceil_div"} and _is_named(
-            expression.args[0], extent, assignments
-        ) and _is_named(expression.args[1], tile, assignments)
-    if not isinstance(expression, ast.BinOp) or not isinstance(
-        expression.op, ast.FloorDiv
-    ):
-        return False
-    if not _is_named(expression.right, tile, assignments):
-        return False
-    numerator = _resolved_expression(expression.left, assignments)
-    if not isinstance(numerator, ast.BinOp) or not isinstance(
-        numerator.op, ast.Sub
-    ):
-        return False
-    if not isinstance(numerator.right, ast.Constant) or numerator.right.value != 1:
-        return False
-    summed = _resolved_expression(numerator.left, assignments)
-    return (
-        isinstance(summed, ast.BinOp)
-        and isinstance(summed.op, ast.Add)
-        and (
-            _is_named(summed.left, extent, assignments)
-            and _is_named(summed.right, tile, assignments)
-            or _is_named(summed.left, tile, assignments)
-            and _is_named(summed.right, extent, assignments)
-        )
-    )
-
-
-def _is_rounded_upper(
-    expression: ast.AST,
-    extent: str,
-    tile: str,
-    assignments: Mapping[str, ast.AST],
-) -> bool:
-    expression = _resolved_expression(expression, assignments)
-    if not isinstance(expression, ast.BinOp) or not isinstance(
-        expression.op, ast.Mult
-    ):
-        return False
-    return (
-        _is_ceil_div(expression.left, extent, tile, assignments)
-        and _is_named(expression.right, tile, assignments)
-        or _is_named(expression.left, tile, assignments)
-        and _is_ceil_div(expression.right, extent, tile, assignments)
-    )
-
-
-def _for_matches_rounded_contract(
-    node: ast.For,
-    assignments: Mapping[str, ast.AST],
-    *,
-    extent: str,
-    tile: str,
-) -> bool:
-    iterator = _resolved_expression(node.iter, assignments)
-    if not isinstance(iterator, ast.Call) or len(iterator.args) != 3:
-        return False
-    function = iterator.func
-    name = (
-        function.attr
-        if isinstance(function, ast.Attribute)
-        else function.id
-        if isinstance(function, ast.Name)
-        else ""
-    )
-    return (
-        name == "range"
-        and isinstance(iterator.args[0], ast.Constant)
-        and iterator.args[0].value == 0
-        and _is_rounded_upper(iterator.args[1], extent, tile, assignments)
-        and _is_named(iterator.args[2], tile, assignments)
-    )
-
-
-def _check_triton_rounded_iteration_contract(
-    code: str,
-    packet: Mapping[str, Any],
-    function_name: str,
-) -> None:
-    expected = _packet_rounded_iteration_contracts(packet)
-    if not expected:
-        return
-    tree = ast.parse(code, mode="exec")
-    function = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == function_name
-    )
-    available = _for_nodes_with_assignments(function)
-    consumed: set[int] = set()
-    for extent, tile, path in expected:
-        match = next(
-            (
-                index
-                for index, (node, assignments) in enumerate(available)
-                if index not in consumed
-                and _for_matches_rounded_contract(
-                    node, assignments, extent=extent, tile=tile
-                )
-            ),
-            None,
-        )
-        if match is None:
-            raise _ReplayABIViolation(
-                "rounded_extent_step_contract",
-                path=path,
-                handles=(extent, tile),
-                line=function.lineno,
-            )
-        consumed.add(match)
-
-
-def _packet_route_extent_contracts(
-    packet: Mapping[str, Any],
-) -> list[tuple[str, int, str, str]]:
-    """Resolve authored target-local extent partitions to anonymous C handles."""
-
-    pi = packet.get("pi")
-    if not isinstance(pi, Mapping):
-        return []
-    instances = {
-        str(item.get("id")): str(item.get("semantic_ref"))
-        for item in pi.get("instances", [])
-        if isinstance(item, Mapping)
-    }
-    result: list[tuple[str, int, str, str]] = []
-    for index, relation in enumerate(pi.get("route_extent_transforms", [])):
-        path = f"pi.route_extent_transforms[{index}]"
-        if not isinstance(relation, Mapping):
-            raise _ReplayABIViolation(
-                "route_extent_transform_contract",
-                path=path,
-            )
-        source = instances.get(str(relation.get("source")))
-        divisor = relation.get("divisor")
-        rounding = relation.get("rounding")
-        if not (
-            isinstance(source, str)
-            and isinstance(divisor, int)
-            and not isinstance(divisor, bool)
-            and divisor > 1
-            and rounding in {"floor", "ceil"}
-        ):
-            raise _ReplayABIViolation(
-                "route_extent_transform_contract",
-                path=path,
-            )
-        result.append((source, divisor, rounding, path))
-    return result
-
-
-def _is_literal_integer(expression: ast.AST, value: int) -> bool:
-    return (
-        isinstance(expression, ast.Constant)
-        and isinstance(expression.value, int)
-        and not isinstance(expression.value, bool)
-        and expression.value == value
-    )
-
-
-def _matches_route_extent_transform(
-    expression: ast.AST,
-    *,
-    source: str,
-    divisor: int,
-    rounding: str,
-) -> bool:
-    if rounding == "floor":
-        return (
-            isinstance(expression, ast.BinOp)
-            and isinstance(expression.op, ast.FloorDiv)
-            and isinstance(expression.left, ast.Name)
-            and expression.left.id == source
-            and _is_literal_integer(expression.right, divisor)
-        )
-    if rounding != "ceil":
-        return False
-    if isinstance(expression, ast.Call) and len(expression.args) == 2:
-        function = expression.func
-        name = (
-            function.attr
-            if isinstance(function, ast.Attribute)
-            else function.id
-            if isinstance(function, ast.Name)
-            else ""
-        )
-        if (
-            name in {"cdiv", "ceil_div"}
-            and isinstance(expression.args[0], ast.Name)
-            and expression.args[0].id == source
-            and _is_literal_integer(expression.args[1], divisor)
-        ):
-            return True
-    if not (
-        isinstance(expression, ast.BinOp)
-        and isinstance(expression.op, ast.FloorDiv)
-        and _is_literal_integer(expression.right, divisor)
-    ):
-        return False
-    numerator = expression.left
-    if isinstance(numerator, ast.BinOp) and isinstance(numerator.op, ast.Add):
-        return (
-            isinstance(numerator.left, ast.Name)
-            and numerator.left.id == source
-            and _is_literal_integer(numerator.right, divisor - 1)
-        ) or (
-            isinstance(numerator.right, ast.Name)
-            and numerator.right.id == source
-            and _is_literal_integer(numerator.left, divisor - 1)
-        )
-    return False
-
-
-def _check_triton_route_extent_contract(
-    code: str,
-    packet: Mapping[str, Any],
-    function_name: str,
-) -> None:
-    expected = _packet_route_extent_contracts(packet)
-    if not expected:
-        return
-    tree = ast.parse(code, mode="exec")
-    function = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == function_name
-    )
-    expressions = [node for node in ast.walk(function) if isinstance(node, ast.expr)]
-    for source, divisor, rounding, path in expected:
-        if not any(
-            _matches_route_extent_transform(
-                expression,
-                source=source,
-                divisor=divisor,
-                rounding=rounding,
-            )
-            for expression in expressions
-        ):
-            raise _ReplayABIViolation(
-                "route_extent_transform_contract",
-                path=path,
-                handles=(source,),
-                line=function.lineno,
-            )
 
 
 def _closed_ingress_diagnostic(exc: Exception) -> dict[str, Any]:
@@ -3009,999 +1468,64 @@ def _source_blind_compile_failure(result: CompileResult) -> ReplayIngressResult:
     )
 
 
-def _packet_transfer_direct_counts(
-    packet: Mapping[str, Any],
-) -> tuple[dict[str, int] | None, tuple[str, ...]]:
-    """Project J-owned boundary transfer multiplicity for a local Replay check.
-
-    A compact pi deliberately carries no per-transfer occurrence graph.  That
-    does not remove the J obligation: every J boundary load/store is still one
-    authored logical transfer, and a non-null J predicate still requires a
-    masked target transfer.  This source-blind, reject-only projection lets a
-    Replay agent repair an omitted mask before formal Gate1; it never infers a
-    target implementation, source realization, or pi relation.
-
-    Legacy pi instances, when present, may restrict the projection to their
-    direct-transfer subset.  Compact pi falls back to all J boundary accesses.
-    """
-
-    j = packet.get("j")
-    pi = packet.get("pi")
-    boundary = j.get("boundary") if isinstance(j, Mapping) else None
-    accesses = boundary.get("accesses") if isinstance(boundary, Mapping) else None
-    instances = pi.get("instances") if isinstance(pi, Mapping) else None
-    if not isinstance(accesses, list):
-        return None, ()
-    access_by_id = {
-        str(item.get("access_id")): item
-        for item in accesses
-        if isinstance(item, Mapping) and isinstance(item.get("access_id"), str)
-    }
-    counts: dict[str, int] = {}
-    refs: list[str] = []
-    direct_refs: list[str]
-    if isinstance(instances, list):
-        direct_refs = [
-            str(instance.get("semantic_ref"))
-            for instance in instances
-            if isinstance(instance, Mapping)
-            and instance.get("mechanism") == "transfer_direct"
-            and str(instance.get("semantic_ref")) in access_by_id
-        ]
-    else:
-        direct_refs = list(access_by_id)
-    for semantic_ref in direct_refs:
-        access = access_by_id[semantic_ref]
-        kind = access.get("kind")
-        if kind not in {"load", "store"}:
-            continue
-        operation = f"tt.{kind}"
-        if access.get("predicate") is not None:
-            operation += ".masked"
-        counts[operation] = counts.get(operation, 0) + 1
-        refs.append(semantic_ref)
-    return counts, tuple(dict.fromkeys(refs))
 
 
-def _packet_transfer_order_constraints(
-    packet: Mapping[str, Any],
-) -> tuple[
-    tuple[str, str, str, str, str, str, str, str],
-    ...,
-]:
-    """Project unambiguous, same-region transfer order already authored in pi.
-
-    Each row is ``(before_instance, after_instance, before_access,
-    after_access, before_operation, after_operation, before_pointer,
-    after_pointer)``.  Pointer
-    roots are discovered only by walking authored pi routes and carrier edges
-    back to pointer/tensor signature instances.  Ambiguous or incomplete
-    topology is ignored here and remains the responsibility of formal Gate1.
-    """
-
-    j = packet.get("j")
-    pi = packet.get("pi")
-    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
-        return ()
-    signature = j.get("signature")
-    boundary = j.get("boundary")
-    parameters = (
-        signature.get("parameters") if isinstance(signature, Mapping) else None
-    )
-    accesses_value = (
-        boundary.get("accesses") if isinstance(boundary, Mapping) else None
-    )
-    instances_value = pi.get("instances")
-    routes_value = pi.get("routes")
-    order_value = pi.get("order")
-    if not all(
-        isinstance(value, list)
-        for value in (
-            parameters,
-            accesses_value,
-            instances_value,
-            routes_value,
-            order_value,
-        )
-    ):
-        return ()
-
-    pointer_parameters = {
-        str(item.get("name"))
-        for item in parameters
-        if isinstance(item, Mapping)
-        and item.get("kind") in {"pointer", "tensor"}
-        and isinstance(item.get("name"), str)
-    }
-    accesses = {
-        str(item.get("access_id")): item
-        for item in accesses_value
-        if isinstance(item, Mapping)
-        and isinstance(item.get("access_id"), str)
-    }
-    instances = {
-        str(item.get("id")): item
-        for item in instances_value
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    if not pointer_parameters or not instances:
-        return ()
-
-    incoming: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
-    for route in routes_value:
-        if not isinstance(route, Mapping):
-            continue
-        source = route.get("source")
-        target = route.get("target")
-        if isinstance(source, str) and isinstance(target, str) and target in incoming:
-            incoming[target].add(source)
-    for key in ("loop_carriers", "physical_loop_carriers"):
-        relations = pi.get(key)
-        if not isinstance(relations, list):
-            continue
-        for relation in relations:
-            if not isinstance(relation, Mapping):
-                continue
-            init = relation.get("init")
-            state = relation.get("state")
-            next_value = relation.get("next")
-            result = relation.get("result")
-            if all(
-                isinstance(value, str) and value in instances
-                for value in (init, state, next_value, result)
-            ):
-                assert isinstance(init, str)
-                assert isinstance(state, str)
-                assert isinstance(next_value, str)
-                assert isinstance(result, str)
-                incoming[state].update((init, next_value))
-                incoming[result].add(state)
-
-    transfer_ids = {
-        instance_id
-        for instance_id, instance in instances.items()
-        if instance.get("mechanism") == "transfer_direct"
-        and str(instance.get("semantic_ref")) in accesses
-    }
-
-    def unique_pointer_root(instance_id: str) -> str | None:
-        pending = [instance_id]
-        visited: set[str] = set()
-        roots: set[str] = set()
-        while pending:
-            current = pending.pop()
-            if current in visited:
-                continue
-            visited.add(current)
-            instance = instances.get(current)
-            if instance is None:
-                continue
-            semantic_ref = instance.get("semantic_ref")
-            if semantic_ref in pointer_parameters:
-                roots.add(str(semantic_ref))
-            pending.extend(incoming.get(current, ()))
-        return next(iter(roots)) if len(roots) == 1 else None
-
-    order_outgoing: dict[str, set[str]] = {
-        instance_id: set() for instance_id in instances
-    }
-    for item in order_value:
-        if not isinstance(item, Mapping):
-            continue
-        before = item.get("before")
-        after = item.get("after")
-        if isinstance(before, str) and isinstance(after, str):
-            order_outgoing.setdefault(before, set()).add(after)
-
-    constraints: list[
-        tuple[str, str, str, str, str, str, str, str]
-    ] = []
-    for before in sorted(transfer_ids):
-        before_region = instances[before].get("region")
-        reachable: set[str] = set()
-        pending = list(order_outgoing.get(before, ()))
-        while pending:
-            current = pending.pop()
-            if current in reachable:
-                continue
-            current_instance = instances.get(current)
-            if current_instance is None or current_instance.get(
-                "region"
-            ) != before_region:
-                continue
-            reachable.add(current)
-            pending.extend(order_outgoing.get(current, ()))
-        for after in sorted(reachable & transfer_ids):
-            before_instance = instances[before]
-            after_instance = instances[after]
-            before_root = unique_pointer_root(before)
-            after_root = unique_pointer_root(after)
-            if before_root is None or after_root is None:
-                continue
-            before_access_id = str(before_instance.get("semantic_ref"))
-            after_access_id = str(after_instance.get("semantic_ref"))
-            before_access = accesses[before_access_id]
-            after_access = accesses[after_access_id]
-            before_kind = before_access.get("kind")
-            after_kind = after_access.get("kind")
-            if before_kind not in {"load", "store"} or after_kind not in {
-                "load",
-                "store",
-            }:
-                continue
-            before_operation = f"tt.{before_kind}"
-            after_operation = f"tt.{after_kind}"
-            if before_access.get("predicate") is not None:
-                before_operation += ".masked"
-            if after_access.get("predicate") is not None:
-                after_operation += ".masked"
-            constraints.append(
-                (
-                    before,
-                    after,
-                    before_access_id,
-                    after_access_id,
-                    before_operation,
-                    after_operation,
-                    before_root,
-                    after_root,
-                )
-            )
-    return tuple(constraints)
 
 
-def _packet_required_compiled_iteration_arities(
-    packet: Mapping[str, Any],
-) -> tuple[int, ...] | None:
-    """Return compiler-visible loop block arities authored by J and pi.
-
-    A structured J ``loop`` denotes one logical loop.  A
-    ``pi.physical_iterations`` row denotes one additional physical loop around
-    an otherwise ordinary reduce/contraction.  ``pi.iterations`` realizes its
-    existing J loop and therefore is not counted a second time.  The induction
-    variable contributes one block argument; only explicitly authored
-    ``pi.loop_carriers`` or ``pi.physical_loop_carriers`` add carrier arguments.
-    No missing loop, bound, carrier, or schedule is inferred here.
-    """
-
-    operations = _packet_intent_ops_by_path(packet)
-    node_ids = packet.get("j", {}).get("node_ids", {})
-    path_to_node = (
-        {
-            str(path).removeprefix("intent_function."): str(node)
-            for node, path in node_ids.items()
-        }
-        if isinstance(node_ids, Mapping)
-        else {}
-    )
-    pi = packet.get("pi")
-    if not isinstance(pi, Mapping) or pi.get("schema") == NORMALIZATION_WITNESS_SCHEMA:
-        # A compact normalization witness contains no physical carrier graph.
-        # Assuming one induction argument per J loop would turn absence of old
-        # metadata into a false exact arity claim about compiled TTIR.
-        return None
-    instances = {
-        str(item.get("id")): str(item.get("semantic_ref"))
-        for item in pi.get("instances", [])
-        if isinstance(item, Mapping)
-    }
-    loop_carriers = [
-        item for item in pi.get("loop_carriers", []) if isinstance(item, Mapping)
-    ]
-    physical_carriers = [
-        item
-        for item in pi.get("physical_loop_carriers", [])
-        if isinstance(item, Mapping)
-    ]
-
-    arities: list[int] = []
-    for path, operation in operations.items():
-        if operation.get("op") != "loop":
-            continue
-        node_ref = path_to_node.get(path)
-        carrier_count = sum(
-            instances.get(str(item.get("loop_instance"))) == node_ref
-            for item in loop_carriers
-        )
-        arities.append(1 + carrier_count)
-    for item in pi.get("physical_iterations", []):
-        if not isinstance(item, Mapping):
-            continue
-        region = item.get("region")
-        carrier_count = sum(
-            carrier.get("region") == region for carrier in physical_carriers
-        )
-        arities.append(1 + carrier_count)
-    return tuple(sorted(arities))
 
 
-def _packet_required_compiled_reduction_linearizations(
-    packet: Mapping[str, Any],
-) -> tuple[int, tuple[str, ...]]:
-    """Return authored full-axis materializations required before reductions.
-
-    This is an exact source-blind projection of pi refinements.  It neither
-    recognizes a Source API nor creates a missing representation stage.
-    """
-
-    pi = packet.get("pi")
-    if not isinstance(pi, Mapping):
-        return 0, ()
-    refs = tuple(
-        str(item.get("instance"))
-        for item in pi.get("refinements", [])
-        if isinstance(item, Mapping)
-        and item.get("kind") == "reduction_linearization"
-        and isinstance(item.get("instance"), str)
-    )
-    return len(refs), refs
 
 
-def _packet_required_compiled_transposes(
-    packet: Mapping[str, Any],
-) -> tuple[int, tuple[str, ...]]:
-    """Return explicit transpose stages authored by J and pi."""
-
-    j = packet.get("j")
-    pi = packet.get("pi")
-    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
-        return 0, ()
-    operations = _packet_intent_ops_by_path(packet)
-    node_ids = j.get("node_ids")
-    transpose_nodes = {
-        str(node)
-        for node, raw_path in node_ids.items()
-        if isinstance(node_ids, Mapping)
-        and isinstance(raw_path, str)
-        and (
-            operations.get(raw_path.removeprefix("intent_function."), {}).get("op")
-            == "transpose"
-        )
-    } if isinstance(node_ids, Mapping) else set()
-    refs = tuple(
-        str(item.get("id"))
-        for item in pi.get("instances", [])
-        if isinstance(item, Mapping)
-        and item.get("mechanism") == "realize"
-        and item.get("semantic_ref") in transpose_nodes
-        and isinstance(item.get("id"), str)
-    )
-    return len(refs), refs
 
 
-def _packet_required_compiled_address_operations(
-    packet: Mapping[str, Any],
-) -> tuple[int | None, tuple[str, ...]]:
-    """Return the pointer-address stage count closed by signature kinds and pi.
-
-    ``address_base`` and ``address_lane`` may denote either integer address
-    contributions or pointer-producing stages.  The pi grammar makes the latter
-    distinction closed: a stage is a pointer operation exactly when a routed
-    pointer/tensor signature carrier, or an earlier pointer-producing address
-    stage, enters it.  Loop-carrier ``state`` and ``result`` instances are
-    compiler block plumbing rather than address operations; their authored
-    ``init -> state``, ``next -> state`` and ``state -> result`` temporal edges
-    are nevertheless part of pointer reachability.  Packets whose resulting
-    address topology does not expose a pointer-producing stage for every
-    authored access are outside this narrow construction check; no missing
-    final address operation is inferred.
-    """
-
-    j = packet.get("j")
-    pi = packet.get("pi")
-    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
-        return None, ()
-    signature = j.get("signature")
-    parameters = (
-        signature.get("parameters") if isinstance(signature, Mapping) else None
-    )
-    instances_value = pi.get("instances")
-    routes_value = pi.get("routes")
-    if not isinstance(parameters, list) or not isinstance(instances_value, list):
-        return None, ()
-    if not isinstance(routes_value, list):
-        return None, ()
-
-    pointer_parameters = {
-        str(item.get("name"))
-        for item in parameters
-        if isinstance(item, Mapping)
-        and item.get("kind") in {"pointer", "tensor"}
-        and isinstance(item.get("name"), str)
-    }
-    instances = {
-        str(item.get("id")): item
-        for item in instances_value
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    address_ids = {
-        instance_id
-        for instance_id, item in instances.items()
-        if item.get("mechanism") in {"address_base", "address_lane"}
-    }
-    if not address_ids:
-        return None, ()
-
-    memory_mechanisms = {
-        "transfer_direct",
-        "transfer_async",
-        "update_atomic",
-        "update_privatized",
-    }
-    memory_instances = [
-        item
-        for item in instances.values()
-        if item.get("mechanism") in memory_mechanisms
-    ]
-    if not memory_instances or any(
-        item.get("mechanism") != "transfer_direct" for item in memory_instances
-    ):
-        return None, ()
-
-    incoming: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
-    for route in routes_value:
-        if not isinstance(route, Mapping):
-            continue
-        source = route.get("source")
-        target = route.get("target")
-        if isinstance(source, str) and isinstance(target, str) and target in incoming:
-            incoming[target].add(source)
-
-    carrier_relations = [
-        item
-        for key in ("loop_carriers", "physical_loop_carriers")
-        for item in pi.get(key, [])
-        if isinstance(item, Mapping)
-    ]
-    carrier_state_ids: set[str] = set()
-    carrier_result_ids: set[str] = set()
-    carrier_derived_ids: set[str] = set()
-    for relation in carrier_relations:
-        init = relation.get("init")
-        state = relation.get("state")
-        next_value = relation.get("next")
-        result = relation.get("result")
-        if not all(
-            isinstance(value, str) and value in instances
-            for value in (init, state, next_value, result)
-        ):
-            return None, ()
-        assert isinstance(init, str)
-        assert isinstance(state, str)
-        assert isinstance(next_value, str)
-        assert isinstance(result, str)
-        # These are the closed temporal edges of the authored carrier.  They do
-        # not invent a route or an update; they make the relation already present
-        # in pi visible to this source-blind occurrence projection.
-        incoming[state].update((init, next_value))
-        incoming[result].add(state)
-        carrier_state_ids.add(state)
-        carrier_result_ids.add(result)
-        carrier_derived_ids.update((state, next_value, result))
-
-    # A pointer/tensor signature instance is already rooted in its callable ABI
-    # carrier even when that same instance is an ``address_base`` receiving
-    # integer offset routes.  Requiring ``mechanism=realize`` (or no incoming
-    # routes) would incorrectly make such a closed pointer stage invisible and
-    # silently disable the address-occurrence check.
-    pointer_roots = {
-        instance_id
-        for instance_id, item in instances.items()
-        if item.get("semantic_ref") in pointer_parameters
-        and instance_id not in carrier_derived_ids
-    }
-    pointer_outputs = set(pointer_roots)
-    pointer_passthrough_ids = address_ids | carrier_state_ids | carrier_result_ids
-    changed = True
-    while changed:
-        changed = False
-        for instance_id in pointer_passthrough_ids - pointer_outputs:
-            if incoming[instance_id] & pointer_outputs:
-                pointer_outputs.add(instance_id)
-                changed = True
-
-    # A carrier state is a block argument and a carrier result is a block result;
-    # neither is a compiled pointer-add operation even if its typed instance uses
-    # an address mechanism.  Authored init/next address stages remain counted.
-    pointer_address_ids = (
-        address_ids & pointer_outputs
-    ) - carrier_state_ids - carrier_result_ids
-    transfer_refs = {
-        str(item.get("semantic_ref"))
-        for item in memory_instances
-        if isinstance(item.get("semantic_ref"), str)
-    }
-    transfer_ids = {
-        str(item.get("id"))
-        for item in memory_instances
-        if isinstance(item.get("id"), str)
-    }
-    outgoing: dict[str, set[str]] = {instance_id: set() for instance_id in instances}
-    for target, sources in incoming.items():
-        for source in sources:
-            outgoing.setdefault(source, set()).add(target)
-
-    def reaches_any(source: str, targets: set[str]) -> bool:
-        pending = [source]
-        visited: set[str] = set()
-        while pending:
-            current = pending.pop()
-            if current in targets:
-                return True
-            if current in visited:
-                continue
-            visited.add(current)
-            pending.extend(outgoing.get(current, ()))
-        return False
-
-    if not transfer_refs or not transfer_ids:
-        return None, ()
-    if any(not reaches_any(source, transfer_ids) for source in pointer_address_ids):
-        return None, ()
-    if any(
-        not any(reaches_any(source, {target}) for source in pointer_roots)
-        for target in transfer_ids
-    ):
-        return None, ()
-    return len(pointer_address_ids), tuple(sorted(transfer_refs))
 
 
 def _packet_required_compiled_program_ids(
     packet: Mapping[str, Any],
 ) -> tuple[int | None, tuple[str, ...], tuple[int, ...] | None]:
-    """Project the exact number of packet-authorized program coordinates.
+    """Project canonical J domain-to-launch-axis obligations."""
 
-    A program-region placement is only lexical scope.  Under the public Triton
-    contract, a ``tl.program_id`` exists only for a J boundary domain whose
-    program-region realization reaches an authored ``address_base`` stage or
-    controls a physical branch region. Repeated pi instances of the same domain,
-    and distinct domains bound to the same physical axis, share that coordinate;
-    signature ``p*`` instances always share their already-existing callable ABI
-    carrier.  This projection rejects extra compiled coordinates but never
-    invents a coordinate.  On the active normalization-witness path, one
-    ``program_bindings`` row is a closed physical-coordinate mapping: its
-    ``axis`` is the observed launch axis and its named logical axes state the
-    J-side direct/product/guarded relation.  This lets the source-blind
-    compiled-obligation check retain both coordinate count and physical-axis
-    identity without deriving a coordinate formula.
-    """
-
-    j = packet.get("j")
+    raw_j = packet.get("j")
     pi = packet.get("pi")
     u_f = packet.get("u_f")
+    if not isinstance(raw_j, Mapping) or not isinstance(pi, Mapping):
+        return None, (), None
+    _j, elaboration = _canonical_packet_j(packet)
+
     representation_contract = (
         u_f.get("representation_contract")
         if isinstance(u_f, Mapping)
         else None
     )
     if isinstance(representation_contract, Mapping):
-        program_bindings = representation_contract.get("program_bindings", [])
-        if isinstance(program_bindings, list) and program_bindings:
+        rows = representation_contract.get("program_bindings", [])
+        if isinstance(rows, list) and rows:
             axes_by_domain = {
                 str(item.get("domain_ref")): int(item["axis"])
-                for item in program_bindings
+                for item in rows
                 if isinstance(item, Mapping)
                 and isinstance(item.get("domain_ref"), str)
                 and isinstance(item.get("axis"), int)
                 and not isinstance(item.get("axis"), bool)
             }
-            if len(axes_by_domain) == len(program_bindings):
-                expected_axes = tuple(sorted(set(axes_by_domain.values())))
-                return (
-                    len(expected_axes),
-                    tuple(sorted(axes_by_domain)),
-                    expected_axes,
-                )
-    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
+            if len(axes_by_domain) == len(rows):
+                axes = tuple(sorted(set(axes_by_domain.values())))
+                return len(axes), tuple(sorted(axes_by_domain)), axes
+
+    if pi.get("schema") != NORMALIZATION_WITNESS_SCHEMA:
         return None, (), None
-    boundary = j.get("boundary")
-    domains_value = (
-        boundary.get("domains") if isinstance(boundary, Mapping) else None
-    )
-    regions_value = pi.get("regions")
-    instances_value = pi.get("instances")
-    routes_value = pi.get("routes")
-    if not isinstance(domains_value, Mapping):
+    try:
+        projection = canonical_program_coordinate_projection(pi)
+    except ProgramCoordinateProjectionError:
         return None, (), None
-    if pi.get("schema") == "intentir.pi.normalization-witness.v1":
-        program_axes_value = pi.get("program_axes")
-        program_bindings_value = pi.get("program_bindings", [])
-        if not isinstance(program_axes_value, list) or not isinstance(
-            program_bindings_value, list
-        ):
-            return None, (), None
-        domain_refs = {str(name) for name in domains_value}
-        if program_bindings_value:
-            if program_axes_value:
-                return None, (), None
-            claimed_domains: set[str] = set()
-            claimed_physical_axes: set[int] = set()
-            physical_axis_by_domain: dict[str, int] = {}
-            for binding in program_bindings_value:
-                if not isinstance(binding, Mapping):
-                    return None, (), None
-                physical_axis = binding.get("axis")
-                if (
-                    isinstance(physical_axis, bool)
-                    or not isinstance(physical_axis, int)
-                    or not 0 <= physical_axis <= 2
-                    or physical_axis in claimed_physical_axes
-                ):
-                    return None, (), None
-                claimed_physical_axes.add(physical_axis)
-                logical_axes = binding.get("logical_axes")
-                if not isinstance(logical_axes, list) or not logical_axes:
-                    return None, (), None
-                for logical_axis in logical_axes:
-                    if not isinstance(logical_axis, Mapping):
-                        return None, (), None
-                    domain_ref = logical_axis.get("domain_ref")
-                    if not isinstance(domain_ref, str) or domain_ref not in domain_refs:
-                        return None, (), None
-                    previous_axis = physical_axis_by_domain.setdefault(
-                        domain_ref, physical_axis
-                    )
-                    if previous_axis != physical_axis:
-                        return None, (), None
-                    claimed_domains.add(domain_ref)
-            return (
-                len(claimed_physical_axes),
-                tuple(sorted(claimed_domains)),
-                tuple(sorted(claimed_physical_axes)),
-            )
-        axes_by_domain = {
-            str(item.get("domain_ref")): int(item["axis"])
-            for item in program_axes_value
-            if isinstance(item, Mapping)
-            and isinstance(item.get("domain_ref"), str)
-            and item.get("domain_ref") in domain_refs
-            and isinstance(item.get("axis"), int)
-            and not isinstance(item.get("axis"), bool)
-            and 0 <= int(item["axis"]) <= 2
-        }
-        if len(axes_by_domain) != len(program_axes_value):
-            return None, (), None
-        ordered_domains = tuple(sorted(axes_by_domain))
-        expected_axes = tuple(sorted(set(axes_by_domain.values())))
-        return len(expected_axes), ordered_domains, expected_axes
-    if not all(
-        isinstance(value, list)
-        for value in (regions_value, instances_value, routes_value)
+    declared_domains = {str(name) for name in elaboration.boundary_domains}
+    if any(
+        domain_ref not in declared_domains
+        for domain_ref, _axis in projection.domain_to_axis
     ):
         return None, (), None
-
-    domain_refs = {str(name) for name in domains_value}
-    program_regions = {
-        str(item.get("id"))
-        for item in regions_value
-        if isinstance(item, Mapping)
-        and item.get("placement") == "program"
-        and isinstance(item.get("id"), str)
-    }
-    instances = {
-        str(item.get("id")): item
-        for item in instances_value
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    address_base_ids = {
-        instance_id
-        for instance_id, item in instances.items()
-        if item.get("mechanism") == "address_base"
-    }
-    regions = {
-        str(item.get("id")): item
-        for item in regions_value
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    branch_regions = {
-        region_id
-        for region_id, item in regions.items()
-        if item.get("placement") == "branch"
-    }
-
-    def region_is_within_branch(region_ref: str) -> bool:
-        current: str | None = region_ref
-        seen: set[str] = set()
-        while current is not None and current not in seen:
-            if current in branch_regions:
-                return True
-            seen.add(current)
-            parent = regions.get(current, {}).get("parent")
-            current = str(parent) if parent is not None else None
-        return False
-
-    outgoing: dict[str, set[str]] = {
-        instance_id: set() for instance_id in instances
-    }
-    program_domain_branch_sources: set[str] = set()
-    for route in routes_value:
-        if not isinstance(route, Mapping):
-            continue
-        source = route.get("source")
-        target = route.get("target")
-        if isinstance(source, str) and isinstance(target, str):
-            outgoing.setdefault(source, set()).add(target)
-            source_instance = instances.get(source)
-            target_instance = instances.get(target)
-            if (
-                route.get("slots") == []
-                and source_instance is not None
-                and target_instance is not None
-                and source_instance.get("mechanism") == "realize"
-                and source_instance.get("region") in program_regions
-                and source_instance.get("semantic_ref") in domain_refs
-                and region_is_within_branch(str(target_instance.get("region")))
-            ):
-                program_domain_branch_sources.add(source)
-
-    def reaches_address_base(source: str) -> bool:
-        pending = [source]
-        visited: set[str] = set()
-        while pending:
-            current = pending.pop()
-            if current in address_base_ids:
-                return True
-            if current in visited:
-                continue
-            visited.add(current)
-            pending.extend(outgoing.get(current, ()))
-        return False
-
-    authorized = {
-        str(item.get("semantic_ref"))
-        for instance_id, item in instances.items()
-        if item.get("mechanism") == "realize"
-        and item.get("region") in program_regions
-        and item.get("semantic_ref") in domain_refs
-        and (
-            reaches_address_base(instance_id)
-            or instance_id in program_domain_branch_sources
-        )
-    }
-    ordered_domains = tuple(sorted(authorized))
-    program_axes_value = pi.get("program_axes")
-    if program_axes_value is None:
-        return len(authorized), ordered_domains, None
-    if not isinstance(program_axes_value, list):
-        return None, (), None
-    axes_by_domain = {
-        str(item.get("domain_ref")): int(item["axis"])
-        for item in program_axes_value
-        if isinstance(item, Mapping)
-        and isinstance(item.get("domain_ref"), str)
-        and isinstance(item.get("axis"), int)
-        and not isinstance(item.get("axis"), bool)
-    }
-    if set(axes_by_domain) != authorized:
-        return len(authorized), ordered_domains, None
-    expected_axes = tuple(
-        sorted({axes_by_domain[domain] for domain in ordered_domains})
-    )
-    return len(expected_axes), ordered_domains, expected_axes
-
-
-def _compiled_program_id_axes(ttir: str) -> tuple[int, ...] | None:
-    """Read the literal Triton launch-axis multiset from pinned TTIR."""
-
-    axes: list[int] = []
-    axis_names = {"x": 0, "y": 1, "z": 2}
-    for line in ttir.splitlines():
-        if "tt.get_program_id" not in line:
-            continue
-        named = re.search(r"\btt\.get_program_id\s+([xyz])(?:\s|:)", line)
-        if named is not None:
-            axes.append(axis_names[named.group(1)])
-            continue
-        generic = re.search(r"\baxis\s*=\s*([0-2])(?:\s*:\s*i32)?", line)
-        if generic is not None:
-            axes.append(int(generic.group(1)))
-            continue
-        return None
-    return tuple(sorted(axes))
-
-
-def _packet_required_compiled_program_branches(
-    packet: Mapping[str, Any],
-) -> tuple[int, tuple[str, ...]]:
-    """Project branch regions controlled by exact empty-slot program-domain routes."""
-
-    j = packet.get("j")
-    pi = packet.get("pi")
-    if not isinstance(j, Mapping) or not isinstance(pi, Mapping):
-        return 0, ()
-    boundary = j.get("boundary")
-    domains = boundary.get("domains") if isinstance(boundary, Mapping) else None
-    regions_value = pi.get("regions")
-    instances_value = pi.get("instances")
-    routes_value = pi.get("routes")
-    terminal_controls_value = pi.get("terminal_controls")
-    if not isinstance(domains, Mapping) or not all(
-        isinstance(value, list)
-        for value in (
-            regions_value,
-            instances_value,
-            routes_value,
-            terminal_controls_value,
-        )
-    ):
-        return 0, ()
-    regions = {
-        str(item.get("id")): item
-        for item in regions_value
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    instances = {
-        str(item.get("id")): item
-        for item in instances_value
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    }
-    program_regions = {
-        region_ref
-        for region_ref, item in regions.items()
-        if item.get("placement") == "program"
-    }
-
-    def owning_branch(region_ref: str) -> str | None:
-        current: str | None = region_ref
-        seen: set[str] = set()
-        while current is not None and current not in seen:
-            seen.add(current)
-            region = regions.get(current)
-            if region is None:
-                return None
-            if region.get("placement") == "branch":
-                return current
-            parent = region.get("parent")
-            current = str(parent) if parent is not None else None
-        return None
-
-    branch_by_domain: set[tuple[str, str]] = set()
-    for route in routes_value:
-        if not isinstance(route, Mapping) or route.get("slots") != []:
-            continue
-        source_ref = route.get("source")
-        target_ref = route.get("target")
-        if not isinstance(source_ref, str) or not isinstance(target_ref, str):
-            continue
-        source = instances.get(source_ref)
-        target = instances.get(target_ref)
-        if source is None or target is None:
-            continue
-        domain_ref = source.get("semantic_ref")
-        branch_ref = owning_branch(str(target.get("region")))
-        if (
-            source.get("mechanism") == "realize"
-            and source.get("region") in program_regions
-            and isinstance(domain_ref, str)
-            and domain_ref in domains
-            and branch_ref is not None
-        ):
-            branch_by_domain.add((domain_ref, branch_ref))
-    domain_terminals = {
-        (str(item.get("domain_ref")), str(item.get("continuation_region")))
-        for item in terminal_controls_value
-        if isinstance(item, Mapping)
-        and isinstance(item.get("domain_ref"), str)
-        and isinstance(item.get("continuation_region"), str)
-    }
-    ordinary_branches = branch_by_domain - domain_terminals
-    handles = tuple(
-        f"{domain_ref}:{branch_ref}"
-        for domain_ref, branch_ref in sorted(ordinary_branches)
-    )
-    return len(ordinary_branches), handles
-
-
-def _packet_required_terminal_controls(
-    packet: Mapping[str, Any],
-) -> tuple[int, tuple[str, ...]]:
-    """Project exact pi terminal/continuation relations without choosing syntax."""
-
-    pi = packet.get("pi")
-    if not isinstance(pi, Mapping):
-        return 0, ()
-    relations = pi.get("terminal_controls")
-    if not isinstance(relations, list):
-        return 0, ()
-    handles: list[str] = []
-    for item in relations:
-        if not isinstance(item, Mapping):
-            continue
-        if isinstance(item.get("terminal_instance"), str) and isinstance(
-            item.get("continuation_instance"), str
-        ):
-            handles.append(
-                f"{item['terminal_instance']}:{item['continuation_instance']}"
-            )
-        elif isinstance(item.get("domain_ref"), str) and isinstance(
-            item.get("continuation_region"), str
-        ):
-            handles.append(f"{item['domain_ref']}:{item['continuation_region']}")
-    return len(handles), tuple(handles)
-
-
-def _compiled_transfer_order_diagnostic(
-    packet: Mapping[str, Any],
-    ttir: str,
-    fingerprint: TTIRFingerprint,
-    *,
-    path_prefix: str = "<synthetic-frontend-compile>",
-) -> Mapping[str, Any] | None:
-    """Reject a Replay whose own TTIR reverses an unambiguous pi order edge."""
-
-    constraints = _packet_transfer_order_constraints(packet)
-    if not constraints:
-        return None
-    argument_names = runtime_argument_names(ttir)
-    pointer_parameters = {
-        pointer
-        for constraint in constraints
-        for pointer in constraint[-2:]
-    }
-    events: list[tuple[int, str, str, tuple[str, ...]]] = []
-    for index, (operation, origins, context) in enumerate(
-        fingerprint.diagnostic_memory_effect_origins
-    ):
-        roots = {
-            argument_names[position]
-            for position in origins
-            if position < len(argument_names)
-            and argument_names[position] in pointer_parameters
-        }
-        if len(roots) != 1:
-            continue
-        events.append((index, operation, next(iter(roots)), context))
-
-    for (
-        before_instance,
-        after_instance,
-        before_access,
-        after_access,
-        before_operation,
-        after_operation,
-        before_pointer,
-        after_pointer,
-    ) in constraints:
-        before_matches = [
-            event
-            for event in events
-            if event[1] == before_operation and event[2] == before_pointer
-        ]
-        after_matches = [
-            event
-            for event in events
-            if event[1] == after_operation and event[2] == after_pointer
-        ]
-        # Repeated accesses through one carrier cannot be assigned to individual
-        # pi occurrences without inventing identity.  Leave those cases to the
-        # formal observer instead of guessing.
-        if len(before_matches) != 1 or len(after_matches) != 1:
-            continue
-        before_event = before_matches[0]
-        after_event = after_matches[0]
-        if before_event[3] != after_event[3]:
-            continue
-        if before_event[0] < after_event[0]:
-            continue
-        return {
-            "rule_code": "compiled_transfer_order",
-            "path": (
-                f"{path_prefix} pi.order: "
-                f"{before_access}({before_pointer}) before "
-                f"{after_access}({after_pointer}); compiled lexical positions="
-                f"{before_event[0]},{after_event[0]}"
-            ),
-            "anonymous_handles": [
-                before_instance,
-                after_instance,
-                before_access,
-                after_access,
-                before_pointer,
-                after_pointer,
-            ],
-            "line": None,
-        }
-    return None
+    domains = tuple(sorted(domain_ref for domain_ref, _axis in projection.domain_to_axis))
+    return len(projection.physical_axes), domains, projection.physical_axes
 
 
 def compiled_packet_obligation_diagnostics(
@@ -4011,254 +1535,62 @@ def compiled_packet_obligation_diagnostics(
     fingerprint: TTIRFingerprint | None = None,
     path_prefix: str = "<compiled-obligation>",
 ) -> tuple[Mapping[str, Any], ...]:
-    """Compare closed packet obligations with one compiled TTIR observation.
+    """Check only canonical J/pi compiler obligations.
 
-    The projection is source-neutral and reject-only.  It does not choose an
-    operation, address, loop, relation, or repair; callers decide whether the
-    observed TTIR belongs to source-aware Lift or source-blind Replay.
+    Source transfer occurrence, effect order, fills, access predicates, loop
+    structure, and address ownership are certified by the shared construction
+    ledger and canonical J elaboration.  The retired materialized pi graph is
+    not an alternate source of compiled obligations.
     """
 
-    observed = fingerprint if fingerprint is not None else parse_ttir(ttir)
-    actual_ops = dict(observed.op_multiset)
-    diagnostics: list[Mapping[str, Any]] = []
+    pi = packet.get("pi")
+    if not isinstance(pi, Mapping) or pi.get("schema") != NORMALIZATION_WITNESS_SCHEMA:
+        return (
+            {
+                "rule_code": "canonical_pi_schema_missing",
+                "path": "pi.schema",
+                "anonymous_handles": [],
+                "line": None,
+            },
+        )
 
-    expected_transfers, transfer_refs = _packet_transfer_direct_counts(packet)
-    expected_iteration_arities = _packet_required_compiled_iteration_arities(packet)
-    expected_iteration_contracts = _packet_compiled_iteration_contracts(packet)
-    expected_reduction_linearizations, linearization_refs = (
-        _packet_required_compiled_reduction_linearizations(packet)
-    )
-    expected_transposes, transpose_refs = _packet_required_compiled_transposes(packet)
-    expected_address_operations, address_refs = (
-        _packet_required_compiled_address_operations(packet)
-    )
-    expected_program_ids, program_domain_refs, expected_program_axes = (
+    observed = fingerprint if fingerprint is not None else parse_ttir(ttir)
+    actual_program_ids = dict(observed.op_multiset).get("tt.get_program_id", 0)
+    expected_program_ids, domain_refs, expected_axes = (
         _packet_required_compiled_program_ids(packet)
     )
-    expected_program_branches, program_branch_refs = (
-        _packet_required_compiled_program_branches(packet)
-    )
-    expected_terminal_controls, terminal_control_refs = (
-        _packet_required_terminal_controls(packet)
-    )
+    if expected_program_ids is None:
+        return ()
 
-    if expected_program_ids is not None:
-        actual_program_ids = actual_ops.get("tt.get_program_id", 0)
-        if expected_program_ids != actual_program_ids:
-            diagnostics.append(
-                {
-                    "rule_code": "compiled_program_id_count",
-                    "path": (
-                        f"{path_prefix} tt.get_program_id: "
-                        f"expected={expected_program_ids}, "
-                        f"actual={actual_program_ids}"
-                    ),
-                    "anonymous_handles": list(program_domain_refs[:32]),
-                    "line": None,
-                }
-            )
-
-    if expected_program_axes is not None:
-        actual_program_axes = _compiled_program_id_axes(ttir)
-        if actual_program_axes is None or expected_program_axes != actual_program_axes:
+    diagnostics: list[Mapping[str, Any]] = []
+    if expected_program_ids != actual_program_ids:
+        diagnostics.append(
+            {
+                "rule_code": "compiled_program_id_count",
+                "path": (
+                    f"{path_prefix} tt.get_program_id: expected={expected_program_ids}, "
+                    f"actual={actual_program_ids}"
+                ),
+                "anonymous_handles": list(domain_refs[:32]),
+                "line": None,
+            }
+        )
+    if expected_axes is not None:
+        actual_axes = compiled_program_id_axes(ttir)
+        if actual_axes is None or actual_axes != expected_axes:
             diagnostics.append(
                 {
                     "rule_code": "compiled_program_id_axes",
                     "path": (
                         f"{path_prefix} tt.get_program_id axes: "
-                        f"expected={list(expected_program_axes)}, "
-                        f"actual={list(actual_program_axes) if actual_program_axes is not None else 'unrecognized'}"
+                        f"expected={list(expected_axes)}, "
+                        f"actual={list(actual_axes) if actual_axes is not None else 'unrecognized'}"
                     ),
-                    "anonymous_handles": list(program_domain_refs[:32]),
+                    "anonymous_handles": list(domain_refs[:32]),
                     "line": None,
                 }
             )
-
-    actual_program_branches = actual_ops.get("control.scf.if", 0)
-    if actual_program_branches < expected_program_branches:
-        diagnostics.append(
-            {
-                "rule_code": "compiled_program_domain_branch_count",
-                "path": (
-                    f"{path_prefix} control.scf.if: expected-at-least="
-                    f"{expected_program_branches}, actual={actual_program_branches}"
-                ),
-                "anonymous_handles": list(program_branch_refs[:32]),
-                "line": None,
-            }
-        )
-
-    actual_terminal_controls = actual_ops.get("control.conditional", 0)
-    if actual_terminal_controls < expected_terminal_controls:
-        diagnostics.append(
-            {
-                "rule_code": "compiled_terminal_control_count",
-                "path": (
-                    f"{path_prefix} control.conditional: expected-at-least="
-                    f"{expected_terminal_controls}, actual={actual_terminal_controls}"
-                ),
-                "anonymous_handles": list(terminal_control_refs[:32]),
-                "line": None,
-            }
-        )
-
-    linearized_reduce_producers = {
-        producer
-        for producer, consumer, role in observed.dataflow_edges
-        if producer.startswith("tt.reshape[")
-        and consumer.startswith("tt.reduce[")
-        and role == "operand[0]"
-    }
-    actual_reduction_linearizations = min(
-        len(linearized_reduce_producers),
-        sum(reduction.axis == 0 for reduction in observed.reductions),
-    )
-    if actual_reduction_linearizations < expected_reduction_linearizations:
-        diagnostics.append(
-            {
-                "rule_code": "compiled_reduction_linearization_count",
-                "path": (
-                    f"{path_prefix} tt.reshape->tt.reduce(axis=0): "
-                    "expected-at-least="
-                    f"{expected_reduction_linearizations}, "
-                    f"actual={actual_reduction_linearizations}"
-                ),
-                "anonymous_handles": list(linearization_refs[:32]),
-                "line": None,
-            }
-        )
-
-    actual_transposes = actual_ops.get("tt.trans", 0)
-    if actual_transposes < expected_transposes:
-        diagnostics.append(
-            {
-                "rule_code": "compiled_transpose_realization_count",
-                "path": (
-                    f"{path_prefix} tt.trans: expected-at-least="
-                    f"{expected_transposes}, actual={actual_transposes}"
-                ),
-                "anonymous_handles": list(transpose_refs[:32]),
-                "line": None,
-            }
-        )
-
-    if expected_address_operations is not None:
-        actual_address_operations = actual_ops.get("tt.addptr", 0)
-        if expected_address_operations != actual_address_operations:
-            diagnostics.append(
-                {
-                    "rule_code": "compiled_address_operation_count",
-                    "path": (
-                        f"{path_prefix} tt.addptr: expected="
-                        f"{expected_address_operations}, "
-                        f"actual={actual_address_operations}"
-                    ),
-                    "anonymous_handles": list(address_refs[:32]),
-                    "line": None,
-                }
-            )
-
-    if expected_iteration_arities is not None:
-        actual_iteration_arities = tuple(
-            sorted(loop.block_argument_count for loop in observed.loops)
-        )
-        if len(expected_iteration_arities) != len(actual_iteration_arities):
-            diagnostics.append(
-                {
-                    "rule_code": "compiled_iteration_count",
-                    "path": (
-                        f"{path_prefix} scf.for: "
-                        f"expected={len(expected_iteration_arities)}, "
-                        f"actual={len(actual_iteration_arities)}"
-                    ),
-                    "anonymous_handles": [],
-                    "line": None,
-                }
-            )
-        elif expected_iteration_arities != actual_iteration_arities:
-            diagnostics.append(
-                {
-                    "rule_code": "compiled_iteration_carrier_arity",
-                    "path": (
-                        f"{path_prefix} scf.for block-arguments: expected="
-                        f"{list(expected_iteration_arities)}, "
-                        f"actual={list(actual_iteration_arities)}"
-                    ),
-                    "anonymous_handles": [],
-                    "line": None,
-                }
-            )
-
-    available_iteration_bases = list(observed.diagnostic_iteration_bases)
-    for contract in expected_iteration_contracts:
-        compatible = [
-            (index, row)
-            for index, row in enumerate(available_iteration_bases)
-            if row[0] == contract.block_arity
-            and row[2] == contract.extent
-            and row[3] == contract.tile_value
-        ]
-        exact = next(
-            (
-                (index, row)
-                for index, row in compatible
-                if row[1] == contract.basis
-            ),
-            None,
-        )
-        if exact is not None:
-            available_iteration_bases.pop(exact[0])
-            continue
-        # An unclassified loop cannot prove a contradiction.  Keep the formal
-        # observer responsible for it rather than guessing from a concrete
-        # extent.  A classified loop over the same authored extent/tile can,
-        # however, reject the wrong closed basis before a formal Gate1 round.
-        if not compatible:
-            continue
-        actual_bases = sorted({row[1] for _, row in compatible})
-        diagnostics.append(
-            {
-                "rule_code": "compiled_iteration_basis",
-                "path": (
-                    f"{path_prefix} {contract.path}.induction_basis: "
-                    f"expected={contract.basis}, actual={actual_bases}"
-                ),
-                "anonymous_handles": [contract.extent, contract.tile],
-                "line": None,
-            }
-        )
-
-    if expected_transfers is not None:
-        for operation in (
-            "tt.load",
-            "tt.load.masked",
-            "tt.store",
-            "tt.store.masked",
-        ):
-            expected = expected_transfers.get(operation, 0)
-            actual = actual_ops.get(operation, 0)
-            if expected != actual:
-                diagnostics.append(
-                    {
-                        "rule_code": "compiled_transfer_direct_count",
-                        "path": (
-                            f"{path_prefix} {operation}: "
-                            f"expected={expected}, actual={actual}"
-                        ),
-                        "anonymous_handles": list(transfer_refs[:32]),
-                        "line": None,
-                    }
-                )
-
-    transfer_order_diagnostic = _compiled_transfer_order_diagnostic(
-        packet,
-        ttir,
-        observed,
-        path_prefix=path_prefix,
-    )
-    if transfer_order_diagnostic is not None:
-        diagnostics.append(transfer_order_diagnostic)
-    return tuple(diagnostics[:20])
+    return tuple(diagnostics)
 
 
 def source_blind_replay_compile_check(
@@ -4498,16 +1830,40 @@ CuTe MLIR/PTX observation.
     raise ValueError(f"no source-blind frontend guidance for {frontend.value!r}")
 
 
+def _replay_projection_clause(artifact: Gate1Artifact) -> str:
+    """Render the one J/π-certified carrier fact visible to Replay.
+
+    The raw π witness remains outside the source-blind episode.  This derived
+    class is intentionally small: it constrains a legal target carrier, not a
+    Source recipe or an operation-by-operation implementation plan.
+    """
+
+    reductions = per_program_scalar_keepdims_reductions(artifact.j, artifact.pi)
+    if not reductions:
+        return ""
+    return (
+        "The J/π-proven rowwise keepdims carrier class applies to "
+        + ", ".join(reductions)
+        + ": one directly mapped target row holds its logical kept singleton "
+        "as a scalar. Do not reshape that scalar to `(1,)`; broadcast only at "
+        "an actual vector consumer.\n"
+    )
+
+
 def _replay_input_files(
     artifact: Gate1Artifact,
     *,
     frontend: Frontend,
     masked: bool,
+    callable_abi_order: Sequence[str] | None = None,
 ) -> tuple[dict[str, str], dict[str, Any], str]:
     """Build the complete, closed allowlist mounted for one agent episode."""
 
     packet = build_rewriter_payload(
-        artifact, frontend=frontend, masked=masked
+        artifact,
+        frontend=frontend,
+        masked=masked,
+        callable_abi_order=callable_abi_order,
     )
     assert_source_isolated_payload(packet)
     packet_text = json.dumps(
@@ -4567,14 +1923,19 @@ def _replay_input_files(
 
 J is the sole semantic authority: operators, operands, constants, predicates,
 domains, effects, result relations, and boundary index expressions come only from J.
-""" + implementation_contract + TRITON_REPLAY_API_CONTRACT + TRITON_REPLAY_ABI_CONTRACT + TRITON_REPLAY_CONTROL_CONTRACT + TRITON_REPLAY_STRUCTURE_CONTRACT + """
+""" + implementation_contract + _replay_projection_clause(artifact) + """
+`frontend.json.compile_entry_contract` is the exact target API, ABI, control and
+structural ingress contract. Follow it completely; this instruction does not repeat it.
 `semantic-program.intent` and `semantic-program.json` are deterministic, read-only,
 parameterized materializations of this episode's J. They are compiler input IR, not a
 target-source skeleton or a fourth artifact. Compile the complete semantic program;
 do not edit it. Source code, source
 compiler IR, Harness facts beyond optional C, Gate evidence, previous Replay, and kernel
 templates do not exist in this episode.
-For Triton, a J scalar used only as a pointwise arithmetic value may remain
+For Triton, use `u_f.callable_abi_order` when present as the exact anonymous
+callable parameter order. It is an ABI-order sidecar only; it does not change
+which handles belong to J or C, and compiler-kind C slots remain outside the
+callable. A J scalar used only as a pointwise arithmetic value may remain
 specializable: use it directly in the tensor expression (for example
 `rhs * p2`). Never call `.to(...)` on such a parameter, because Triton may
 present its specialized value as a Python scalar. Reserve `do_not_specialize`
@@ -4596,8 +1957,16 @@ occurrence and keep logical domain guards distinct from access-local predicates;
 all target realization yourself from S_J and public frontend capabilities.
 For a masked load, `fill_value` is the only authority for a target `other=` operand:
 materialize it exactly when present and omit `other=` when it is absent.  A
-`consumer_extension` proves how an already-authored outside value is consumed; it does
-not synthesize a missing fill value.
+`consumer_extension` is a separate J-owned consumer edge, not an alias for that
+load fill. Preserve the declared access predicate and make the extension's typed
+outside identity reach the exact consumer operand along its closed provenance
+path. If the path contains an operation that changes the load fill, materialize
+the predicate/identity immediately after the first such operation and before
+later identity-preserving steps; do not wait until the final reduction operand.
+If the load's typed `other=` already equals the outside identity and the closed
+path preserves that value unchanged for this consumer, the load fill discharges
+the extension and no redundant select is needed. When one access has multiple
+extensions, retain one independently observable consumer edge per row.
 Ordinary algebraic instruction selection may fold a J `add` whose one operand is an
 exact all-zero constant, including when that identity node exists only to express a
 logical broadcasted output shape.  Preserve the other operand, output mapping, access
@@ -4605,7 +1974,10 @@ shape, predicate and effect, but do not emit target add arithmetic for the ident
 The declaration order of `boundary_ownership.access_effects` is J-owned observable
 effect order: emit the corresponding loads, stores, atomics, and updates in that order.
 Do not postpone an earlier authored statistics store until after later parameter loads or
-another output store merely to group computations or outputs. One authored access with a
+another output store merely to group computations or outputs. When an output mapping's
+producer is already available at its effect position, emit that store at the earliest
+legal point before constructing later independent consumers; do not defer it to a
+final epilogue. One authored access with a
 multi-axis index is one target transfer whose tensor result may then be
 split; never replace it with one load/store per component. Do not realize an ordinary
 finite J domain with a Python/Triton serial loop: specialization may unroll it and change
@@ -4712,10 +2084,11 @@ canonical public Triton realization of that J subscript shape, not a Source-spec
 template. For rank-2-by-rank-2 matrix multiplication, use the normal per-K-tile `tl.dot`
 accumulation instead; do not apply the rank-1-output partial-product form.
 For a J `consumer_extension` whose outside value is the reduction's two-sided
-identity, use that identity only to preserve the reduction semantics.  Put it in
-the predicated load's `other=` argument only when the matching J access also has
-that explicit `fill_value`; when the access has no fill, omit `other=` and do not
-add a post-load `where/select`.
+identity, use that identity along the declared producer chain. If an intervening
+producer first changes the load fill, use a `where/select` immediately after that
+producer with the same access predicate and identity; if no producer changes it,
+do not add a redundant `where/select`. The load's `other=` is otherwise only the
+access-local fill, and one consumer edge must remain for every extension row.
 When a J `reduce` declares a collapsed result shape, keep the target reduction
 collapsed (`keep_dims=False`, normally the API default).  Reintroduce singleton
 axes only at the exact broadcasted consumer/store that needs them; do not change
@@ -4801,24 +2174,37 @@ target operator, API, source statement, instruction selection, or repair.
 """ + TRITON_REPLAY_API_CONTRACT + TRITON_REPLAY_ABI_CONTRACT + TRITON_REPLAY_CONTROL_CONTRACT + TRITON_REPLAY_STRUCTURE_CONTRACT + """
 Act like a compiler coding agent. Read `compiler-index.intent`,
 `semantic-program.intent`, and `frontend.json` completely; also read `c.json` when
-it is present. Query exact J/S_J/C only for a named
-cross-reference, and write one complete `/output/replay.source`.
+it is present. Query exact J/S_J/C only for a named cross-reference. The provider
+tool surface grants two orientation reads, then requires one complete first source
+through `submit_replay(source_text)`. After that, mutate the source only through
+`apply_replay_patch` or another complete `submit_replay(source_text)`, never with
+a shell redirection or helper program. After a submission preflight rejection, the
+next source mutation must be an exact `apply_replay_patch` of that source; only the
+changed source can reopen a later whole-source submission. For Triton, the submitted module must contain
+only the allowed imports and `@triton.jit` function definitions: do not append a host
+launch, kernel specialization assignment, or other top-level executable statement
+(in particular, do not write `scrc_k0 = scrc_k0[...]`; Gate1 supplies the launch
+context).
 
 ```text
-python .agents/intentir_agent_tool.py semantic_query overview
-python .agents/intentir_agent_tool.py semantic_query ownership
-python .agents/intentir_agent_tool.py semantic_query node REF
-python .agents/intentir_agent_tool.py packet_query abi 0 48
-python .agents/intentir_agent_tool.py packet_query graph 0 12
-python .agents/intentir_agent_tool.py replay_compile_check
-python .agents/intentir_agent_tool.py replay_ttir_inspect jc
-python .agents/intentir_agent_tool.py submit_replay
+intentir_semantic_query overview
+intentir_semantic_query ownership
+intentir_semantic_query node REF
+intentir_packet_query abi 0 48
+intentir_packet_query graph 0 12
+intentir_replay_compile_check /output/replay.source
+intentir_replay_inspect /output/replay.source jc
 ```
 
-Use ordinary file edits and your own helper files under `/work`. You may compile,
-inspect only your current Replay IR, checkpoint and patch repeatedly within this one
-episode. After construction PASS, use the bounded `jc` view; revisit your own IR when
-a concrete J obligation remains. Every operand and result dtype printed in S_J is
+The only source-writing tools are `submit_replay(source_text)` and
+`apply_replay_patch(path, old_text, new_text, submit?)`; shell commands are
+read-only with respect to `/output/replay.source`. You may compile and inspect only
+your current Replay IR, then patch and submit repeatedly within this one episode.
+When submission rejects current source, use an exact patch before the next complete
+submission; do not repeatedly replace rejected source without consuming its latest
+preflight diagnostic.
+After construction PASS, use the bounded `jc` view; revisit your own IR when a
+concrete J obligation remains. Every operand and result dtype printed in S_J is
 authoritative: preserve intermediate result dtypes at the corresponding operation
 boundary and insert an explicit target cast when implicit promotion would skip it. In
 particular, an f16 intermediate later consumed by an f32 operation must remain f16 before
@@ -4827,6 +2213,7 @@ For Triton/CUDA, preserve the public target realization of authored predicate
 and transcendental nodes: lower `map_unary(fn=erf)` with
 `tl.math.erf(x.to(tl.float32))`, not `libdevice.erf`,
 `map_unary(fn=exp)` with `libdevice.exp`,
+`map_unary(fn=tanh)` with `libdevice.tanh(x.to(tl.float32))`,
 `map_unary(fn=sigmoid)` as `1 / (1 + libdevice.exp2(-x.to(tl.float32) *
 1.4426950408889634))`,
 importing `libdevice` from `triton.language.extra.cuda`; call
@@ -4899,7 +2286,11 @@ class ResponsesReplayWriter:
         return tuple(self._records)
 
     def generate(
-        self, artifact: Gate1Artifact, *, masked: bool = False
+        self,
+        artifact: Gate1Artifact,
+        *,
+        masked: bool = False,
+        callable_abi_order: Sequence[str] | None = None,
     ) -> ReplayGeneration:
         if self.frontend is not Frontend.TRITON and self.compile_checker is None:
             raise ValueError(
@@ -4909,6 +2300,7 @@ class ResponsesReplayWriter:
             artifact,
             frontend=self.frontend,
             masked=masked,
+            callable_abi_order=callable_abi_order,
         )
         packet = json.loads(user)
         u_f = packet["u_f"]
@@ -4929,6 +2321,7 @@ class ResponsesReplayWriter:
             provider=self.provider,
             effort=self.effort,
         )
+        ingress_diagnostics: tuple[Mapping[str, Any], ...] = ()
         try:
             code, entry_function_name = _extract_replay_code(
                 reply.text,
@@ -4943,6 +2336,9 @@ class ResponsesReplayWriter:
                 packet=packet,
             )
             if ingress.status != "pass" or ingress.code is None:
+                ingress_diagnostics = _closed_attempt_diagnostics(
+                    ingress.diagnostics
+                )
                 raise ValueError(
                     "Replay ingress rejected response: "
                     + json.dumps(
@@ -4966,6 +2362,9 @@ class ResponsesReplayWriter:
                         "Replay compile checker must return ReplayIngressResult"
                     )
                 if compile_result.status != "pass":
+                    ingress_diagnostics = _closed_attempt_diagnostics(
+                        compile_result.diagnostics
+                    )
                     raise ValueError(
                         "Replay compile preflight rejected response: "
                         + json.dumps(
@@ -4977,6 +2376,18 @@ class ResponsesReplayWriter:
                         )
                     )
         except Exception as exc:
+            # This is a rejection of the submitted source-blind Replay
+            # response, not a Source/J/C/pi diagnostic.  Preserve only its
+            # classification so Gate1 lifecycle control never needs to parse
+            # or re-emit exception text.
+            ingress_diagnostics = (
+                *ingress_diagnostics,
+                {
+                    "rule_code": "replay_response_rejected",
+                    "path": "<replay-response>",
+                    "exception_type": type(exc).__name__,
+                },
+            )
             attempt = ReplayAttempt(
                 model=reply.model,
                 diagnostic=f"{type(exc).__name__}: {exc}",
@@ -4997,6 +2408,7 @@ class ResponsesReplayWriter:
                 physical_provider_calls=reply.attempts,
                 transport_retries=max(0, reply.attempts - 1),
                 elapsed_ms=reply.elapsed_ms,
+                ingress_diagnostics=ingress_diagnostics,
             )
             self._records.append(attempt)
             raise ReplayGenerationError(attempt) from exc
@@ -5051,27 +2463,20 @@ class MiniSWEReplayWriter:
         return tuple(self._records)
 
     def generate(
-        self, artifact: Gate1Artifact, *, masked: bool = False
+        self,
+        artifact: Gate1Artifact,
+        *,
+        masked: bool = False,
+        callable_abi_order: Sequence[str] | None = None,
     ) -> ReplayGeneration:
         provider = self.provider or get_provider()
         effective_effort = self.effort or provider.reasoning_effort
         timeout = self.model_timeout_seconds
-        if timeout is None:
-            provider_timeout = (
-                XHIGH_RESPONSES_TIMEOUT_SECONDS
-                if effective_effort.casefold() in {"xhigh", "max"}
-                else DEFAULT_RESPONSES_TIMEOUT_SECONDS
-            )
-            turn_timeout = (
-                MINISWE_REPLAY_XHIGH_TURN_TIMEOUT_SECONDS
-                if effective_effort.casefold() in {"xhigh", "max"}
-                else MINISWE_REPLAY_TURN_TIMEOUT_SECONDS
-            )
-            timeout = min(provider_timeout, turn_timeout)
         files, packet, instructions = _replay_input_files(
             artifact,
             frontend=self.frontend,
             masked=masked,
+            callable_abi_order=callable_abi_order,
         )
         function_name = str(packet["u_f"]["replay_function"])
         try:
@@ -5082,16 +2487,12 @@ class MiniSWEReplayWriter:
                 IntentIRReplayRunError,
                 create_intentir_replay_model,
                 run_intentir_replay,
-                validated_intentir_replay_config,
             )
         except ImportError as exc:
             raise RuntimeError(
                 "MiniSWE Replay backend requires the lift-agent dependencies"
             ) from exc
 
-        effective_worker_config = validated_intentir_replay_config(
-            self.worker_config
-        )
         # This exact callable is used by every virtual ingress check and once
         # again by the writer after submission. It has no compiler or Source
         # dependency.
@@ -5235,6 +2636,9 @@ class MiniSWEReplayWriter:
             safe_trajectory
         )
         if formal_ingress.status != "pass" or formal_ingress.code is None:
+            ingress_diagnostics = _closed_attempt_diagnostics(
+                formal_ingress.diagnostics
+            )
             attempt = ReplayAttempt(
                 model=provider.model,
                 diagnostic=json.dumps(
@@ -5251,6 +2655,7 @@ class MiniSWEReplayWriter:
                 elapsed_ms=result.elapsed_ms,
                 trajectory=safe_trajectory,
                 backend_protocol=MINISWE_REPLAY_BACKEND,
+                ingress_diagnostics=ingress_diagnostics,
             )
             self._records.append(attempt)
             raise ReplayGenerationError(attempt)
@@ -5325,10 +2730,17 @@ class StaticReplayWriter:
     calls: list[bool] = field(default_factory=list, init=False)
 
     def generate(
-        self, artifact: Gate1Artifact, *, masked: bool = False
+        self,
+        artifact: Gate1Artifact,
+        *,
+        masked: bool = False,
+        callable_abi_order: Sequence[str] | None = None,
     ) -> ReplayGeneration:
         _instructions, user = build_rewriter_prompt(
-            artifact, frontend=self.frontend, masked=masked
+            artifact,
+            frontend=self.frontend,
+            masked=masked,
+            callable_abi_order=callable_abi_order,
         )
         packet = json.loads(user)
         u_f = packet["u_f"]

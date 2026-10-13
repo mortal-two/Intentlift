@@ -167,19 +167,6 @@ def _run_agent_stage(
         except Exception as exc:
             caught = exc
             exit_status = "InvalidSubmission"
-    elif caught is None:
-        activate_fallback = getattr(
-            environment, "activate_committed_fallback", None
-        )
-        if callable(activate_fallback):
-            try:
-                output_text = activate_fallback(exit_status)
-            except Exception as exc:
-                caught = exc
-                exit_status = "InvalidSubmission"
-            else:
-                if output_text is not None:
-                    exit_status = "SubmittedCheckpoint"
     candidate_read_elapsed_ms = (
         time.monotonic() - candidate_read_started
     ) * 1000.0
@@ -265,49 +252,48 @@ def run_intentir_lift(
     config_overrides: Mapping[str, Any] | None = None,
     environment: Environment | None = None,
     candidate_checker: Callable[[str], Mapping[str, Any]] | None = None,
-    continuation_history: list[dict[str, Any]] | None = None,
-    continuation_message: str | None = None,
+    semantic_candidate_checker: Callable[[str], Mapping[str, Any]] | None = None,
+    candidate_constructor: Callable[
+        [str], tuple[str, tuple[Mapping[str, Any], ...]]
+    ] | None = None,
 ) -> IntentIRLiftRunResult:
-    """Run a fresh or branch-continuation agent and return one full candidate."""
+    """Run one fresh Lift owner and return its canonical candidate bytes.
+
+    A later attempt may receive bounded rule-level guidance, but never a prior
+    candidate, model conversation, continuation message, or repair base.
+    """
 
     config = recursive_merge(
         load_intentir_lift_config(), dict(config_overrides or {})
     )
-    if environment is not None and candidate_checker is not None:
+    if environment is not None and (
+        candidate_checker is not None
+        or semantic_candidate_checker is not None
+        or candidate_constructor is not None
+    ):
         raise ValueError(
-            "candidate_checker must be installed by the supplied environment"
+            "candidate checkers and canonical candidate construction must be installed by the "
+            "supplied environment"
         )
     environment = environment or IntentIRLiftEnvironment(
         input_dir=workspace.input_dir,
         output_dir=workspace.output_dir,
         scratch_dir=workspace.scratch_dir,
         candidate_checker=candidate_checker,
+        semantic_candidate_checker=semantic_candidate_checker,
+        candidate_constructor=candidate_constructor,
         **config.get("environment", {}),
     )
-    if (continuation_history is None) != (continuation_message is None):
-        raise ValueError(
-            "continuation_history and continuation_message must be supplied together"
-        )
-    initial_messages = None
-    if continuation_history is not None and continuation_message is not None:
-        initial_messages = [
-            *continuation_history,
-            model.format_message(role="user", content=continuation_message),
-        ]
     stage = _run_agent_stage(
         model=model,
         environment=environment,
         agent_config=config["agent"],
         output_reader=workspace.read_candidate,
-        initial_messages=initial_messages,
+        initial_messages=None,
     )
     result = _public_result(
         stage,
-        continued_from_messages=(
-            len(continuation_history)
-            if continuation_history is not None
-            else 0
-        ),
+        continued_from_messages=0,
     )
     if stage.caught is not None:
         raise IntentIRLiftRunError(

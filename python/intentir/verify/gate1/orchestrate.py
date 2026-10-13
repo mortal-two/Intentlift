@@ -6,7 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from dataclasses import dataclass, replace
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, Sequence
+
+from intentir.extraction.providers.client import ProviderError
 
 from .compare import TTIRComparator, TTIRComparison
 from .compiler import CompileCase, CompileResult, KernelSource, TritonCompiler
@@ -52,10 +54,29 @@ class Gate1ArmEvidence:
     diagnostic: str | None = None
     physical_calls: int = 0
     normalization: Mapping[str, Any] | None = None
+    ingress_diagnostics: tuple[Mapping[str, Any], ...] = ()
 
     @property
     def hard_closed(self) -> bool:
         return self.comparison is not None and self.comparison.hard_pass
+
+    @property
+    def comparable(self) -> bool:
+        """Whether this arm reached an exact submitted Replay comparison.
+
+        A missing comparison is not a negative masked-J result.  It means the
+        independent writer never supplied evidence that the Gate can interpret
+        (for example, it exited before formal submission or its submitted
+        source did not compile).  Keep that distinct from a completed masked
+        comparison that deliberately does *not* close.
+        """
+
+        return (
+            self.generation is not None
+            and self.compile_result is not None
+            and self.fingerprint is not None
+            and self.comparison is not None
+        )
 
 
 @dataclass(frozen=True)
@@ -76,13 +97,20 @@ class Gate1ExecutionResult:
 
     @property
     def passed(self) -> bool:
-        return self.status is Gate1Status.REPLAY_CLOSED
+        # A requested masked-J arm is a required independent observation.  A
+        # missing submission/comparison is inconclusive evidence, never a
+        # successful Gate1 result that may flow into Gate2.
+        return (
+            self.status is Gate1Status.REPLAY_CLOSED
+            and self.normal.hard_closed
+            and (self.masked_j is None or self.masked_j.comparable)
+        )
 
     @property
     def j_necessity_status(self) -> JNecessityStatus:
         """Report masked-J separately from the main Gate1 status."""
 
-        if self.masked_j is None or self.masked_j.comparison is None:
+        if self.masked_j is None or not self.masked_j.comparable:
             return JNecessityStatus.INCONCLUSIVE
         if self.masked_j.hard_closed:
             return JNecessityStatus.NOT_PROVED
@@ -130,6 +158,9 @@ class Gate1ExecutionResult:
                     dict(value.normalization)
                     if value.normalization is not None else None
                 ),
+                "ingress_diagnostics": [
+                    dict(item) for item in value.ingress_diagnostics
+                ],
             }
 
         normal_fanout = None
@@ -267,6 +298,34 @@ def _opaque_python_interface(
     if "function_name" in result:
         result["function_name"] = opaque_function
     return result
+
+
+def _source_callable_abi_order(
+    artifact: Gate1Artifact,
+    metadata: Mapping[str, Any],
+) -> tuple[str, ...] | None:
+    """Extract only the anonymous callable order from Source compiler metadata.
+
+    The order is the sole Source-derived fact allowed into a Replay packet.  It
+    is accepted only when its handle set is exactly J.signature plus C constexpr
+    slots; original Source names and compiler-kind C bindings are never carried
+    across this boundary.
+    """
+
+    raw_names = metadata.get("arg_names") if isinstance(metadata, Mapping) else None
+    if not isinstance(raw_names, (list, tuple)) or not all(
+        isinstance(name, str) for name in raw_names
+    ):
+        return None
+    expected = [parameter.name for parameter in artifact.j.signature.parameters]
+    expected.extend(
+        slot.name
+        for slot in artifact.c.slots
+        if slot.kind is ScheduleSlotKind.CONSTEXPR
+    )
+    if len(raw_names) != len(expected) or set(raw_names) != set(expected):
+        return None
+    return tuple(raw_names)
 
 
 def _replay_case(
@@ -478,19 +537,54 @@ class Gate1Runner:
         replay_case: CompileCase,
         *,
         masked: bool,
+        callable_abi_order: tuple[str, ...] | None = None,
     ) -> Gate1ArmEvidence:
         mode = "masked_j" if masked else "normal"
         try:
-            generation = writer.generate(artifact, masked=masked)
+            generate_kwargs: dict[str, Any] = {"masked": masked}
+            if callable_abi_order is not None:
+                generate_kwargs["callable_abi_order"] = callable_abi_order
+            generation = writer.generate(artifact, **generate_kwargs)
         except Exception as exc:
             attempt = getattr(exc, "attempt", None)
             physical_calls = getattr(attempt, "physical_provider_calls", 0)
             if not physical_calls:
                 physical_calls = getattr(attempt, "attempts", 0)
+            ingress_diagnostics = tuple(
+                item
+                for item in getattr(attempt, "ingress_diagnostics", ())
+                if isinstance(item, Mapping)
+            )
+            if not ingress_diagnostics:
+                # Generation may fail before a ReplayAttempt exists (notably
+                # at the Responses transport boundary).  Preserve a bounded,
+                # source- and response-free classification so callers can
+                # distinguish a provider stop condition from a malformed
+                # Replay submission without serializing exception text as
+                # lifecycle evidence.
+                if isinstance(exc, ProviderError):
+                    ingress_diagnostics = (
+                        {
+                            "rule_code": "replay_provider_generation_failed",
+                            "path": "<replay-provider>",
+                            "provider_failure_class": exc.failure_class,
+                            "physical_provider_calls": exc.attempts,
+                        },
+                    )
+                    physical_calls = exc.attempts
+                else:
+                    ingress_diagnostics = (
+                        {
+                            "rule_code": "replay_generation_failed",
+                            "path": "<replay-provider>",
+                            "exception_type": type(exc).__name__,
+                        },
+                    )
             return Gate1ArmEvidence(
                 mode, None, None, None, None,
-                f"generation failed: {type(exc).__name__}: {exc}",
+                f"generation failed: {type(exc).__name__}",
                 physical_calls,
+                ingress_diagnostics=ingress_diagnostics,
             )
         physical_calls = (
             generation.physical_provider_calls or generation.attempts
@@ -501,6 +595,7 @@ class Gate1Runner:
                 artifact,
                 frontend=Frontend.TRITON,
                 masked=masked,
+                callable_abi_order=callable_abi_order,
             )
             function_name = str(packet["u_f"]["replay_function"])
             ingress = replay_source_ingress(
@@ -595,6 +690,7 @@ class Gate1Runner:
         artifact: Gate1Artifact,
         source_fingerprint: TTIRFingerprint,
         replay_case: CompileCase,
+        callable_abi_order: tuple[str, ...] | None,
     ) -> tuple[Gate1ArmEvidence, ...]:
         if len(self.writers) == 1:
             return (
@@ -604,6 +700,7 @@ class Gate1Runner:
                     source_fingerprint,
                     replay_case,
                     masked=False,
+                    callable_abi_order=callable_abi_order,
                 ),
             )
         # Replay workers receive identical J/optional-C packets and no Source or
@@ -620,6 +717,7 @@ class Gate1Runner:
                     source_fingerprint,
                     replay_case,
                     masked=False,
+                    callable_abi_order=callable_abi_order,
                 )
                 for writer in self.writers
             ]
@@ -637,6 +735,10 @@ class Gate1Runner:
         *,
         source: KernelSource,
         source_case: CompileCase,
+        authorization_validator: Callable[
+            [Gate1Artifact, TTIRFingerprint], Sequence[Mapping[str, Any]]
+        ] | None = None,
+        authorization_observer: Callable[[], TTIRFingerprint] | None = None,
     ) -> Gate1ExecutionResult:
         if artifact.c.slots:
             artifact.c.validate_complete_values(path="Gate1 active C")
@@ -673,6 +775,10 @@ class Gate1Runner:
                 0,
                 0,
             )
+        callable_abi_order = _source_callable_abi_order(
+            artifact,
+            source_compile.python_interface,
+        )
         source_normalization: Mapping[str, Any] | None = None
         try:
             normalized_source = normalize_ttir_for_gate1(
@@ -727,8 +833,74 @@ class Gate1Runner:
                 0,
             )
 
+        if authorization_validator is not None:
+            try:
+                # This second fingerprint intentionally observes the exact
+                # unnormalized Source compilation.  Its diagnostic-only
+                # provenance sidecars are needed to revalidate Source-issued
+                # owner/guard receipts; they never participate in the Gate1
+                # comparison or its digest.
+                authorization_observation = (
+                    authorization_observer()
+                    if authorization_observer is not None
+                    else fingerprint_ttir(
+                        source_compile.ttir,
+                        python_interface=_opaque_python_interface(
+                            artifact, source_compile.python_interface
+                        ),
+                        schedule=artifact.c.values,
+                        runtime_values={
+                            name: argument.value
+                            for name, argument in source_case.arguments.items()
+                            if argument.kind == "scalar"
+                            and isinstance(argument.value, (bool, int))
+                        },
+                    )
+                )
+                authorization_diagnostics = tuple(
+                    item
+                    for item in authorization_validator(
+                        artifact, authorization_observation
+                    )
+                    if isinstance(item, Mapping)
+                )
+            except Exception:
+                authorization_diagnostics = (
+                    {
+                        "rule_code": "gate1_source_authorization_revalidation_unavailable",
+                        "path": "<gate1-source-authorization>",
+                        "observed_refs_or_types": [
+                            "expected:exact Source/compiler authorization receipt"
+                        ],
+                    },
+                )
+            if authorization_diagnostics:
+                normal = Gate1ArmEvidence(
+                    "normal",
+                    None,
+                    None,
+                    None,
+                    None,
+                    "Gate1 Source authorization revalidation rejected artifact",
+                    ingress_diagnostics=authorization_diagnostics,
+                )
+                return Gate1ExecutionResult(
+                    Gate1Status.NO_CLOSURE,
+                    digest,
+                    source_compile,
+                    source_fingerprint,
+                    normal,
+                    None,
+                    0,
+                    0,
+                    source_normalization=source_normalization,
+                )
+
         normal_candidates = self._normal_arms(
-            artifact, source_fingerprint, replay_case
+            artifact,
+            source_fingerprint,
+            replay_case,
+            callable_abi_order,
         )
         selected_normal_index = max(
             range(len(normal_candidates)),
@@ -755,7 +927,6 @@ class Gate1Runner:
 
         masked_evidence: Gate1ArmEvidence | None = None
         masked_calls = 0
-        status = Gate1Status.REPLAY_CLOSED
         if self.config.run_masked_j:
             masked_calls = 1
             masked_evidence = self._arm(
@@ -764,7 +935,14 @@ class Gate1Runner:
                 source_fingerprint,
                 replay_case,
                 masked=True,
+                callable_abi_order=callable_abi_order,
             )
+        status = (
+            Gate1Status.REPLAY_CLOSED
+            if not self.config.run_masked_j
+            or (masked_evidence is not None and masked_evidence.comparable)
+            else Gate1Status.NO_CLOSURE
+        )
         return Gate1ExecutionResult(
             status,
             digest,

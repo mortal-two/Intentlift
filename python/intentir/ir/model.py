@@ -16,10 +16,13 @@ from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 from .intent_op_contract import (
+    IntentOpContractError,
     canonicalize_dtype,
     is_non_boolean_integer_dtype,
     is_ragged_carrier_dtype,
+    is_scalar_literal,
     is_scalar_literal_or_value_reference,
+    validate_const_literal,
     validate_intent_op_structure,
 )
 
@@ -565,10 +568,9 @@ class LoopValueType:
 class LoopStateBinding:
     """One explicit ``init -> body arg -> next -> result`` loop binding.
 
-    The legacy IntentIR spelling only carried ``name`` and ``init`` and relied
-    on positional ``result``/``yield`` arrays.  ``from_json`` still accepts that
-    shape for non-SCRC historical artifacts, while SCRC's strict schema requires
-    every field below and validates the redundant positional correspondence.
+    The binding is the single structured-loop wire shape.  Positional loop
+    result/yield arrays are checked by ``IntentOp.from_json`` against these
+    explicit fields; no historical ``name``/``init`` spelling is accepted.
     """
 
     state_id: str
@@ -603,76 +605,60 @@ class LoopStateBinding:
         index: int,
         positional_result: str | None = None,
         positional_yield: str | None = None,
-        strict: bool = True,
     ) -> "LoopStateBinding":
-        if strict:
-            _closed_keys(
-                d,
-                {
-                    "state_id", "init_value", "body_argument", "next_value",
-                    "result_value", "type",
-                },
-                "LoopStateBinding",
-            )
-            legacy_name = None
-            body_argument = d.get("body_argument")
-            result_value = d.get("result_value")
-            next_value = d.get("next_value")
-            init_value = d.get("init_value")
-        else:
-            legacy_name = d.get("name")
-            body_argument = d.get("body_argument", legacy_name)
-            result_value = d.get("result_value", positional_result or legacy_name)
-            next_value = d.get("next_value", positional_yield or body_argument)
-            init_value = d.get("init_value", d.get("init"))
+        _closed_keys(
+            d,
+            {
+                "state_id", "init_value", "body_argument", "next_value",
+                "result_value", "type",
+            },
+            "LoopStateBinding",
+        )
+        body_argument = d.get("body_argument")
+        result_value = d.get("result_value")
+        next_value = d.get("next_value")
+        init_value = d.get("init_value")
         value_type = d.get("type")
-        if strict:
-            state_id = _require_handle(
-                d.get("state_id"),
-                _LOOP_STATE_HANDLE,
-                "LoopStateBinding.state_id",
-                "loop-state s*",
+        state_id = _require_handle(
+            d.get("state_id"),
+            _LOOP_STATE_HANDLE,
+            "LoopStateBinding.state_id",
+            "loop-state s*",
+        )
+        if not is_scalar_literal_or_value_reference(init_value):
+            raise ValueError(
+                "LoopStateBinding.init_value must be a scalar literal or "
+                "a t*/v* value reference"
             )
-            if not is_scalar_literal_or_value_reference(init_value):
-                raise ValueError(
-                    "LoopStateBinding.init_value must be a scalar literal or "
-                    "a t*/v* value reference"
-                )
-            if positional_result is not None and result_value != positional_result:
-                raise ValueError(
-                    "LoopStateBinding.result_value disagrees with loop.result"
-                )
-            if positional_yield is not None and next_value != positional_yield:
-                raise ValueError(
-                    "LoopStateBinding.next_value disagrees with loop.yield"
-                )
-            body_argument = _require_handle(
-                body_argument,
-                _SSA_HANDLE,
-                "LoopStateBinding.body_argument",
-                "SSA v*",
+        if positional_result is not None and result_value != positional_result:
+            raise ValueError(
+                "LoopStateBinding.result_value disagrees with loop.result"
             )
-            next_value = _require_handle(
-                next_value,
-                _SSA_HANDLE,
-                "LoopStateBinding.next_value",
-                "SSA v*",
+        if positional_yield is not None and next_value != positional_yield:
+            raise ValueError(
+                "LoopStateBinding.next_value disagrees with loop.yield"
             )
-            result_value = _require_handle(
-                result_value,
-                _SSA_HANDLE,
-                "LoopStateBinding.result_value",
-                "SSA v*",
-            )
-            if value_type is None:
-                raise ValueError("LoopStateBinding.type is required")
-            parsed_type = LoopValueType.from_json(value_type)
-        else:
-            state_id = d.get("state_id", f"s{index}")
-            parsed_type = (
-                LoopValueType.from_json(value_type)
-                if value_type is not None else None
-            )
+        body_argument = _require_handle(
+            body_argument,
+            _SSA_HANDLE,
+            "LoopStateBinding.body_argument",
+            "SSA v*",
+        )
+        next_value = _require_handle(
+            next_value,
+            _SSA_HANDLE,
+            "LoopStateBinding.next_value",
+            "SSA v*",
+        )
+        result_value = _require_handle(
+            result_value,
+            _SSA_HANDLE,
+            "LoopStateBinding.result_value",
+            "SSA v*",
+        )
+        if value_type is None:
+            raise ValueError("LoopStateBinding.type is required")
+        parsed_type = LoopValueType.from_json(value_type)
         return cls(
             state_id=state_id,
             init_value=init_value,
@@ -695,25 +681,6 @@ class LoopStateBinding:
                 raise TypeError("LoopStateBinding.type must be a LoopValueType")
             result["type"] = self.type.to_json()
         return result
-
-    def __getitem__(self, key: str) -> Any:
-        """Read-only compatibility for archived callers using dict syntax."""
-
-        aliases = {
-            "name": "body_argument",
-            "init": "init_value",
-        }
-        return getattr(self, aliases.get(key, key))
-
-    def get(self, key: str, default: Any = None) -> Any:
-        """Dictionary-style compatibility without weakening the typed model."""
-
-        aliases = {
-            "name": "body_argument",
-            "init": "init_value",
-        }
-        return getattr(self, aliases.get(key, key), default)
-
 
 @dataclass
 class LoopTrip:
@@ -2206,7 +2173,27 @@ def validate_loop_wiring(
             raise ValueError(
                 f"{context}.carry state {state.state_id!r} has an invalid init_value"
             )
-        if isinstance(state.init_value, str):
+        if is_scalar_literal(state.init_value):
+            if state.type.kind != "tensor" or state.type.dtype is None:
+                raise ValueError(
+                    f"{context}.carry state {state.state_id!r} scalar init_value "
+                    "requires a tensor carry type"
+                )
+            try:
+                validate_const_literal(
+                    {
+                        "value": state.init_value,
+                        "dtype": state.type.dtype,
+                        "shape": list(state.type.shape),
+                    },
+                    result_type=state.type.to_json(),
+                    context=(
+                        f"{context}.carry state {state.state_id!r}.init_value"
+                    ),
+                )
+            except IntentOpContractError as exc:
+                raise ValueError(str(exc)) from exc
+        elif isinstance(state.init_value, str):
             if _VALUE_HANDLE.fullmatch(state.init_value) is None:
                 raise ValueError(
                     f"{context}.carry state {state.state_id!r} init_value must be "
@@ -2319,7 +2306,7 @@ def validate_loop_wiring(
             )
         return None
 
-    for state in operation.carry:
+    for state_index, state in enumerate(operation.carry):
         next_type = direct_producer_type(state.next_value)
         if next_type is None:
             raise ValueError(
@@ -2328,7 +2315,10 @@ def validate_loop_wiring(
             )
         if next_type != state.type.as_value_type():
             raise ValueError(
-                f"{context}.carry next_value {state.next_value!r} must have "
+                f"{context}.carry[{state_index}].next_value "
+                f"{state.next_value!r} direct producer type "
+                f"{next_type.to_json()} differs from declared carry type "
+                f"{state.type.as_value_type().to_json()}; next_value must have "
                 "exactly the carry state type"
             )
     return direct_producers

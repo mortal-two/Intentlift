@@ -15,6 +15,9 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
+from .canonical_construction import (
+    CANONICAL_C_WIRE_FIELDS,
+)
 from .dim_expr import dimension_expression_references
 
 LayerCScalar = bool | int | float | str
@@ -1570,29 +1573,6 @@ def _j_object(j: Any) -> Mapping[str, Any]:
     return value
 
 
-def _walk_j_operations(
-    body: Any,
-    prefix: str = "body",
-) -> Iterable[tuple[str, Mapping[str, Any]]]:
-    if not isinstance(body, list):
-        raise _error(f"J intent {prefix} must be an array")
-    for index, operation in enumerate(body):
-        if not isinstance(operation, Mapping):
-            raise _error(f"J intent {prefix}[{index}] must be an object")
-        path = f"{prefix}[{index}]"
-        yield path, operation
-        nested = operation.get("body")
-        if nested is not None:
-            yield from _walk_j_operations(nested, f"{path}.body")
-        if operation.get("op") in {"effect_if", "value_if"}:
-            for polarity in ("positive", "negative"):
-                arm = operation.get(polarity)
-                if isinstance(arm, Mapping) and "body" in arm:
-                    yield from _walk_j_operations(
-                        arm["body"], f"{path}.{polarity}.body"
-                    )
-
-
 def layer_c_attachment_domain(
     j: Any,
 ) -> dict[str, frozenset[LayerCAxisRef]]:
@@ -1604,14 +1584,28 @@ def layer_c_attachment_domain(
     """
 
     data = _j_object(j)
-    intent = data.get("intent")
-    function = intent.get("intent_function") if isinstance(intent, Mapping) else None
-    if not isinstance(function, Mapping):
-        raise _error("J.intent.intent_function is required for Layer-C attachment")
-    inputs = function.get("inputs")
-    outputs = function.get("outputs")
-    if not isinstance(inputs, list) or not isinstance(outputs, list):
-        raise _error("J intent inputs/outputs must be arrays")
+    # Layer-C is an extension consumer, not a second J elaborator.  Normalize
+    # the accepted archive through the same constructor used by Replay,
+    # Gate1, and the other backends before deriving attachment subjects.
+    # Keep the import local: canonical_j's model-facing imports must not depend
+    # on this optional Layer-C extension module during module initialization.
+    try:
+        from .canonical_j import elaborate_j, j_elaboration
+        from intentir.verify.gate1.model import SemanticArchive
+
+        archive = (
+            j
+            if isinstance(j, SemanticArchive)
+            else SemanticArchive.from_json(dict(data))
+        )
+        archive = elaborate_j(archive)
+        elaboration = j_elaboration(archive)
+        data = archive.to_json()
+        function = archive.intent
+        inputs = [item.to_json() for item in function.inputs]
+        outputs = [item.to_json() for item in function.outputs]
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        raise _error(f"J cannot be canonically elaborated for Layer-C: {exc}") from exc
 
     tensor_shapes: dict[str, tuple[Any, ...]] = {}
     dimensions: set[str] = set()
@@ -1630,13 +1624,22 @@ def layer_c_attachment_domain(
             if _AXIS_REF.fullmatch(reference) is not None
         )
 
-    operations = dict(_walk_j_operations(function.get("body", [])))
+    operation_records = elaboration.operation_records
+    if not operation_records:
+        raise _error("J intent has no complete canonical operation table")
+    operations = {
+        record["path"]: record["wire"]
+        for record in operation_records
+        if isinstance(record, Mapping)
+        and isinstance(record.get("path"), str)
+        and isinstance(record.get("wire"), Mapping)
+    }
     operations_by_node: dict[str, Mapping[str, Any]] = {}
     for _path, operation in operations.items():
         node = operation.get("id")
         if isinstance(node, str) and re.fullmatch(r"n[0-9]+", node):
             operations_by_node[node] = operation
-    node_ids = data.get("node_ids")
+    node_ids = archive.node_ids
     if not isinstance(node_ids, Mapping):
         raise _error("J.node_ids must be an object")
     for node, path in node_ids.items():
@@ -1647,16 +1650,22 @@ def layer_c_attachment_domain(
             raise _error(f"J.node_ids path {path!r} is not declared")
         operations_by_node[node] = operation
 
+    # Intermediate SSA shapes belong to the elaborated construction bundle,
+    # not to the optional raw ``operation.type`` spelling.  The canonical
+    # elaborator may prove a result type from the closed operation contract;
+    # reading only the raw wire here would make Layer-C disagree with Replay,
+    # Gate1, and the typed materializer for operations that omit ``type``.
     value_shapes = dict(tensor_shapes)
-    for _path, operation in operations.items():
-        declared = operation.get("type")
-        shape = declared.get("shape") if isinstance(declared, Mapping) else None
-        results = operation.get("result")
-        names = [results] if isinstance(results, str) else results
-        if isinstance(shape, list) and isinstance(names, list):
-            for name in names:
-                if isinstance(name, str):
-                    value_shapes[name] = tuple(shape)
+    for name, value_type in elaboration.value_type_by_name.items():
+        if not value_type.is_tensor:
+            continue
+        value_shapes[name] = tuple(value_type.shape)
+        dimensions.update(
+            reference
+            for extent in value_type.shape
+            for reference in dimension_expression_references(extent)
+            if _AXIS_REF.fullmatch(reference) is not None
+        )
 
     result: dict[str, frozenset[LayerCAxisRef]] = {}
 
@@ -1735,7 +1744,7 @@ def layer_c_attachment_domain(
                                 )
         add(node, axes)
 
-    boundary = data.get("boundary")
+    boundary = elaboration.boundary_record
     if not isinstance(boundary, Mapping):
         raise _error("J.boundary must be an object")
     domains = boundary.get("domains")
@@ -2240,11 +2249,14 @@ def resolve_layer_c_scalar(
     """Resolve a Source/Harness schedule role from canonical ``{slots, values}``.
 
     This compatibility query remains separate from ``TargetLayerCPlugin``.  It
-    accepts only the current closed ScheduleSlot shape, including the optional
-    ``subject_ref``/``axis_ref`` attachment fields.
+    accepts only the physical Source-C slot ledger; J-axis associations belong
+    to pi, not to this `{slots, values}` object.
     """
 
-    if not isinstance(layer_c, Mapping) or set(layer_c) != {"slots", "values"}:
+    if (
+        not isinstance(layer_c, Mapping)
+        or set(layer_c) != set(CANONICAL_C_WIRE_FIELDS)
+    ):
         raise _error("Layer C must be the canonical {slots, values} object")
     slots = layer_c["slots"]
     values = layer_c["values"]
@@ -2255,12 +2267,11 @@ def resolve_layer_c_scalar(
     matches: list[tuple[str, str]] = []
     declared: set[str] = set()
     base = {"name", "kind", "role", "value_type", "required"}
-    optional = {"subject_ref", "axis_ref"}
     for index, item in enumerate(slots):
         if not isinstance(item, Mapping):
             raise _error(f"Layer C slot {index} must be an object")
         actual = set(item)
-        if not base <= actual or actual - base - optional:
+        if not base <= actual or actual - base:
             raise _error("Layer C slot uses a non-canonical schema")
         name = item["name"]
         if not isinstance(name, str) or not name:
@@ -2278,25 +2289,6 @@ def resolve_layer_c_scalar(
         value_type = _value_type(item["value_type"], f"Layer C slot {index} value_type")
         if not isinstance(item["required"], bool):
             raise _error("Layer C slot required must be boolean")
-        subject_ref = item.get("subject_ref")
-        axis_ref = item.get("axis_ref")
-        if subject_ref is not None and (
-            not isinstance(subject_ref, str)
-            or _SUBJECT_REF.fullmatch(subject_ref) is None
-        ):
-            raise _error("Layer C slot subject_ref is invalid")
-        if axis_ref is not None:
-            if subject_ref is None:
-                raise _error("Layer C slot axis_ref requires subject_ref")
-            if isinstance(axis_ref, bool) or not isinstance(axis_ref, (int, str)):
-                raise _error("Layer C slot axis_ref is invalid")
-            if isinstance(axis_ref, int):
-                if axis_ref < 0:
-                    raise _error("Layer C slot axis_ref is invalid")
-            elif _AXIS_REF.fullmatch(axis_ref) is None:
-                raise _error("Layer C slot axis_ref is invalid")
-        if kind == "compiler" and (subject_ref is not None or axis_ref is not None):
-            raise _error("compiler Layer C slots cannot attach to J")
         if slot_role == role:
             matches.append((name, value_type))
     if any(not isinstance(name, str) for name in values):

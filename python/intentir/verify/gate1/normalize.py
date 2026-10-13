@@ -21,30 +21,27 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 import re
-from typing import Any
+from typing import Any, Mapping
+
+from intentir.ir.canonical_j import j_elaboration, parse_index_expression
 
 from .model import Gate1Artifact, opaque_replay_representation
+from .pi import (
+    CLOSED_CONSUMER_IDENTITY_CLASS,
+    DEFAULT_ZERO_LOWER_BOUND_CLASS,
+    PER_PROGRAM_SCALAR_KEEPDIMS_CLASS,
+    default_zero_lower_bound_accesses,
+    closed_consumer_identity_extensions,
+    per_program_scalar_keepdims_reductions,
+    zero_lower_bound_coordinates_from_j,
+)
+from .ttir import compiled_program_id_axes
 
 
 NORMALIZER_PROTOCOL = "intentir.gate1.jc-normalizer.v2"
 
 
 _SSA_NAME = r"%[A-Za-z0-9_.$-]+"
-_POINTER_DEF_RE = re.compile(
-    rf"^\s*(?P<result>{_SSA_NAME})\s*=\s*"
-    r"(?:tt\.addptr|tt\.advance|tt\.splat|tt\.broadcast|"
-    r"tt\.expand_dims|tt\.reshape)\s+(?P<operand>"
-    rf"{_SSA_NAME})\b"
-)
-_UNMASKED_LOAD_RE = re.compile(
-    rf"^(?P<indent>\s*)(?P<result>{_SSA_NAME})\s*=\s*"
-    rf"(?:tt\.load|\"tt\.load\")\s+(?P<pointer>{_SSA_NAME})"
-    r"\s*:\s*(?P<type>.+?)(?:\s+loc\(.*\))?\s*$"
-)
-_EFFECT_POINTER_RE = re.compile(
-    rf"(?:tt\.store|\"tt\.store\"|tt\.atomic_[A-Za-z0-9_]+)\s+"
-    rf"(?P<pointer>{_SSA_NAME})\b"
-)
 _POINTER_OPERATION_RE = re.compile(
     rf"^\s*(?:(?P<result>{_SSA_NAME})\s*=\s*)?"
     r"(?P<operation>\"?tt\.(?:addptr|advance|bitcast|splat|broadcast|"
@@ -208,21 +205,85 @@ def _address_normalization_certificate(
     The returned flag is an authorization for the *address-form* quotient only.
     It is intentionally derived independently for one observation.  No peer
     text, replay code, fingerprint, or comparator result is consulted.  The
-    certificate is rejected if any J access lacks typed address ownership, if a
-    tensor/root/access mapping is ambiguous, if a surviving transfer is
-    duplicated or missing, or if an addptr result escapes the pointer slice.
+    certificate is rejected if any J access lacks typed address ownership,
+    except for a direct rank-1 logical-index access that has no scalar stride
+    stage in J/pi.  Such an access owns its address through its single logical
+    index rather than through a row-stride carrier.  All tensor/root/access
+    mappings, surviving transfers, and pointer-slice containment remain
+    strict.
     """
 
     try:
         representation = opaque_replay_representation(artifact)
     except Exception:
         return False, (), "typed_address_ownership_unavailable"
-    address_bindings = representation.get("address_bindings")
-    if not isinstance(address_bindings, list) or not address_bindings:
+    address_bindings = representation.get("address_bindings", [])
+    if not isinstance(address_bindings, list):
         return False, (), "typed_address_ownership_unavailable"
 
     accesses = list(artifact.j.boundary.accesses)
     access_by_id = {access.access_id: access for access in accesses}
+    tensors = {
+        **{tensor.name: tensor for tensor in artifact.j.intent.inputs},
+        **{
+            binding.output: binding.output_type
+            for binding in j_elaboration(artifact.j).output_bindings
+        },
+    }
+
+    def direct_rank_one_access_without_stride(access: Any) -> bool:
+        tensor = tensors.get(access.tensor)
+        if tensor is None or len(tensor.shape) != 1:
+            return False
+        expression = access.index_expression
+        if not isinstance(expression, str):
+            return False
+        try:
+            coordinates = parse_index_expression(
+                expression,
+                context=f"J boundary access {access.access_id} index_expression",
+            ).direct_coordinates
+        except Exception:
+            return False
+        if coordinates is None or len(coordinates) != 1:
+            return False
+        coordinate = coordinates[0]
+        if isinstance(coordinate, str):
+            if re.fullmatch(r"k[0-9]+", coordinate) is not None:
+                return True
+            # The canonical semantic-transfer wire uses the tensor's x*
+            # dimension handle as the sole direct rank-1 axis.  Accept only
+            # an exact match to that already typed tensor extent; an arbitrary
+            # x* spelling or another symbolic expression remains unowned.
+            return (
+                re.fullmatch(r"x[0-9]+", coordinate) is not None
+                and tensor.shape[0] == coordinate
+            )
+        # A fixed rank-1 element such as ``[1]`` or ``[2]`` is still a
+        # complete logical address.  It does not need a separate J/pi stride
+        # carrier; the target may materialize the constant offset as an
+        # address-only addptr.  Restrict this exception to integer constants
+        # so symbolic/non-affine address expressions remain hard.
+        return isinstance(coordinate, int) and not isinstance(coordinate, bool)
+
+    def direct_rank_one_base_access(access: Any) -> bool:
+        """Return whether a rank-1 access is exactly the tensor base."""
+
+        tensor = tensors.get(access.tensor)
+        if tensor is None or len(tensor.shape) != 1:
+            return False
+        expression = access.index_expression
+        if not isinstance(expression, str):
+            return False
+        try:
+            coordinates = parse_index_expression(
+                expression,
+                context=f"J boundary access {access.access_id} index_expression",
+            ).direct_coordinates
+        except Exception:
+            return False
+        return coordinates == (0,)
+
     rows_by_access: dict[str, list[dict[str, Any]]] = defaultdict(list)
     seen_access_axes: set[tuple[str, int]] = set()
     for row in address_bindings:
@@ -247,7 +308,11 @@ def _address_normalization_certificate(
             return False, (), "typed_address_ownership_duplicate"
         seen_access_axes.add(key)
         rows_by_access[access_ref].append(row)
-    if set(rows_by_access) != set(access_by_id):
+    unbound_accesses = set(access_by_id) - set(rows_by_access)
+    if any(
+        not direct_rank_one_access_without_stride(access_by_id[access_ref])
+        for access_ref in unbound_accesses
+    ):
         return False, (), "typed_address_ownership_incomplete"
 
     parameters_by_tensor: dict[str, list[Any]] = defaultdict(list)
@@ -261,7 +326,15 @@ def _address_normalization_certificate(
             continue
         parameters_by_tensor[parameter.logical_ref].append(parameter)
 
-    access_for_root: dict[str, str] = {}
+    # One ABI tensor root may own several distinct J boundary occurrences.  A
+    # root-to-single-access map is therefore insufficient for address
+    # normalization: it rejects the common case of three scalar parameter
+    # loads or three column stores from the same tensor.  Keep the J access
+    # declaration order as the occurrence order and consume one entry for
+    # each observed memory transfer below.  The transfer kind/mask/fill checks
+    # remain hard, and the final count/uniqueness checks still require a
+    # one-to-one root-local occurrence mapping.
+    access_for_root: dict[str, list[str]] = defaultdict(list)
     runtime_parameter_index_by_name: dict[str, int] = {}
     runtime_parameter_index = 0
     for parameter in artifact.j.signature.parameters:
@@ -283,25 +356,27 @@ def _address_normalization_certificate(
         # authored p* spelling is retained for source-independent observations
         # that preserve opaque ABI names.
         for root in root_aliases:
-            previous = access_for_root.get(root)
-            if previous is not None and previous != access.access_id:
-                return False, (), "tensor_root_mapping_ambiguous"
-            access_for_root[root] = access.access_id
+            access_for_root[root].append(access.access_id)
 
     definitions, addptr_results = _pointer_operation_definitions(ttir)
     rows = _memory_operation_rows(ttir)
     if not addptr_results or rows is None or len(rows) != len(accesses):
         return False, (), "address_transfer_multiplicity_unproved"
 
-    anchor_use_count: Counter[str] = Counter()
+    anchor_roots: dict[str, str] = {}
+    consumed_accesses_by_root: Counter[str] = Counter()
     observed_accesses: list[str] = []
     observed_anchors: set[str] = set()
-    consumed_anchor_groups: set[str] = set()
     for kind, pointer, _operation, masked, has_fill in rows:
         root = _resolve_pointer_root_from_definitions(pointer, definitions)
-        access_ref = access_for_root.get(root) if root is not None else None
-        if access_ref is None:
+        root_accesses = access_for_root.get(root) if root is not None else None
+        if not root_accesses:
             return False, (), "physical_pointer_root_unowned"
+        occurrence = consumed_accesses_by_root[root]
+        if occurrence >= len(root_accesses):
+            return False, (), "physical_transfer_multiplicity_unproved"
+        access_ref = root_accesses[occurrence]
+        consumed_accesses_by_root[root] += 1
         access = access_by_id[access_ref]
         expected_kind = getattr(access.kind, "value", access.kind)
         if kind != expected_kind:
@@ -321,18 +396,23 @@ def _address_normalization_certificate(
         anchors = _resolve_address_anchors(pointer, definitions)
         if len(anchors) != 1:
             if not anchors:
-                return False, (), "physical_address_anchor_unresolved"
-            # Multiple addptrs are allowed only as one closed chain owned by
-            # this access.  No anchor may be shared by two memory effects.
-            if consumed_anchor_groups.intersection(anchors):
-                return False, (), "address_anchor_shared_between_accesses"
-            consumed_anchor_groups.update(anchors)
-        else:
-            anchor = next(iter(anchors))
-            anchor_use_count[anchor] += 1
-            if anchor_use_count[anchor] != 1:
-                return False, (), "address_anchor_multiplicity_unproved"
-            consumed_anchor_groups.add(anchor)
+                # A rank-1 ``[0]`` transfer may legally use the ABI pointer
+                # directly; it has no address-only addptr anchor to exempt.
+                # Any other access must expose a pointer stage so that the
+                # occurrence remains independently owned.
+                if not direct_rank_one_base_access(access):
+                    return False, (), "physical_address_anchor_unresolved"
+        # A source compiler may materialize one row/base advance once and
+        # reuse that pointer for several same-root accesses (for example the
+        # three fixed columns of one rank-2 output).  Such sharing is still a
+        # representation-only address prefix, not an ambiguous tensor alias.
+        # Keep the root ownership hard: an addptr may be shared only by
+        # accesses whose ABI pointer root is the same.
+        for anchor in anchors:
+            previous_root = anchor_roots.get(anchor)
+            if previous_root is not None and previous_root != root:
+                return False, (), "address_anchor_shared_between_roots"
+            anchor_roots[anchor] = root
         observed_accesses.append(access_ref)
         observed_anchors.update(anchors)
 
@@ -342,6 +422,15 @@ def _address_normalization_certificate(
         return False, (), "physical_transfer_multiplicity_unproved"
     if set(observed_accesses) != set(access_by_id):
         return False, (), "J_access_occurrence_unmatched"
+    # ``access_for_root`` contains both the authored p* alias and Triton's
+    # %argN alias for each ABI root.  Only the alias actually observed in this
+    # TTIR participates in the transfer count; the other spelling is a bridge
+    # lookup, not an additional physical occurrence.
+    if any(
+        consumed_accesses_by_root[root] != len(access_for_root[root])
+        for root in consumed_accesses_by_root
+    ):
+        return False, (), "physical_transfer_multiplicity_unproved"
 
     # Every addptr result must stay inside the pointer/address slice.  A
     # hidden use in a value, predicate, loop bound, or control operation would
@@ -400,17 +489,6 @@ def _address_normalization_certificate(
     )
 
 
-def _pointer_roots(ttir: str) -> dict[str, str]:
-    """Collect only direct, acyclic pointer-definition edges from one TTIR."""
-
-    definitions: dict[str, str] = {}
-    for line in ttir.splitlines():
-        match = _POINTER_DEF_RE.match(line)
-        if match is not None:
-            definitions[match.group("result")] = match.group("operand")
-    return definitions
-
-
 def _resolve_pointer_root(
     name: str,
     definitions: dict[str, str],
@@ -432,175 +510,44 @@ def _resolve_pointer_root(
     )
 
 
-def _j_readonly_accesses_by_root(
-    artifact: Gate1Artifact,
-) -> tuple[dict[str, str], dict[str, int]]:
-    """Return unambiguous ABI-root -> J-access bindings and pi multiplicities."""
-
-    parameters = {
-        parameter.name: parameter
-        for parameter in artifact.j.signature.parameters
-    }
-    accesses_by_tensor: dict[str, list[Any]] = defaultdict(list)
-    for access in artifact.j.boundary.accesses:
-        accesses_by_tensor[access.tensor].append(access)
-
-    access_for_root: dict[str, str] = {}
-    for parameter_name, parameter in parameters.items():
-        logical_ref = parameter.logical_ref
-        if logical_ref is None:
-            continue
-        if getattr(parameter.mode, "value", parameter.mode) != "input":
-            continue
-        candidates = accesses_by_tensor.get(logical_ref, [])
-        if len(candidates) != 1:
-            # More than one authored access to the same tensor needs an
-            # index/effect occurrence matcher.  Root identity alone is not a
-            # unique J anchor, so keep every such relation hard.
-            continue
-        access = candidates[0]
-        if getattr(access.kind, "value", access.kind) != "load":
-            continue
-        if access.predicate is not None or access.fill_value is not None:
-            continue
-        access_for_root[f"%{parameter_name.removeprefix('%')}"] = access.access_id
-
-    transfer_counts: Counter[str] = Counter()
-    for instance in artifact.pi.instances:
-        if not isinstance(instance, dict):
-            continue
-        if instance.get("mechanism") != "transfer_direct":
-            continue
-        semantic_ref = instance.get("semantic_ref")
-        if isinstance(semantic_ref, str):
-            transfer_counts[semantic_ref] += 1
-
-    return access_for_root, dict(transfer_counts)
-
-
 def _elide_proven_physical_duplicate_loads(
     ttir: str,
     artifact: Gate1Artifact,
 ) -> tuple[str, int, tuple["NormalizationRelationRow", ...]]:
-    """Canonicalize only pi-authorized repeated reads of one J load.
+    """Keep duplicate physical reads hard without an explicit J-proven class.
 
-    This is a unary observation rule.  It does not compare Source with Replay:
-    both arms independently reduce a bounded physical duplicate to the single
-    J access occurrence.  Exact pointer SSA identity, an input-only J tensor,
-    an unmasked read, no intervening same-root write, and the extra
-    ``transfer_direct`` count are all required before one load is removed.
+    The retired pi realization graph used to supply transfer-stage multiplicity.
+    Canonical pi deliberately carries no execution topology, so it cannot prove
+    a duplicate read removable.  Source transfer occurrence comparison remains
+    owned by the construction ledger and Gate1.
     """
 
-    access_for_root, transfer_counts = _j_readonly_accesses_by_root(artifact)
-    if not access_for_root:
-        return ttir, 0, ()
+    del artifact
+    return ttir, 0, ()
 
-    remaining = {
-        access_ref: count - 1
-        for access_ref, count in transfer_counts.items()
-        if count > 1
-    }
-    if not remaining:
-        return ttir, 0, ()
 
-    definitions = _pointer_roots(ttir)
-    lines = ttir.splitlines()
-    seen_loads: dict[tuple[str, str, str], str] = {}
-    blocked_roots: set[str] = set()
-    replacements: dict[str, str] = {}
-    removed: list[tuple[str, str]] = []
-    kept_lines: list[str] = []
+def _default_zero_lower_bound_certificate(
+    artifact: Gate1Artifact,
+    *,
+    address_proven: bool,
+    address_accesses: tuple[tuple[str, str], ...],
+) -> tuple[bool, tuple[str, ...], str]:
+    """Authorize one class-level, unary zero-bound representation quotient."""
 
-    for line in lines:
-        effect = _EFFECT_POINTER_RE.search(line)
-        if effect is not None:
-            root = _resolve_pointer_root(
-                effect.group("pointer"), definitions
-            )
-            if root is not None:
-                blocked_roots.add(root)
-
-        load = _UNMASKED_LOAD_RE.match(line)
-        if load is None:
-            kept_lines.append(line)
-            continue
-
-        result = load.group("result")
-        pointer = load.group("pointer")
-        root = _resolve_pointer_root(pointer, definitions)
-        access_ref = access_for_root.get(root) if root is not None else None
-        key = (root or "", pointer, load.group("type"))
-        previous = seen_loads.get(key)
-        if (
-            root is not None
-            and root not in blocked_roots
-            and access_ref is not None
-            and previous is not None
-            and remaining.get(access_ref, 0) > 0
-        ):
-            replacements[result] = previous
-            remaining[access_ref] -= 1
-            removed.append((access_ref, result))
-            continue
-
-        if root is not None and root not in blocked_roots and access_ref is not None:
-            seen_loads.setdefault(key, result)
-        kept_lines.append(line)
-
-    if not removed:
-        return ttir, 0, ()
-
-    trailing_newline = "\n" if ttir.endswith("\n") else ""
-    normalized = "\n".join(kept_lines) + trailing_newline
-    for old, new in replacements.items():
-        normalized = re.sub(
-            rf"(?<![A-Za-z0-9_.$-]){re.escape(old)}(?![A-Za-z0-9_.$-])",
-            new,
-            normalized,
-        )
-
-    instance_paths: dict[str, list[str]] = defaultdict(list)
-    for index, instance in enumerate(artifact.pi.instances):
-        if not isinstance(instance, dict):
-            continue
-        if instance.get("mechanism") != "transfer_direct":
-            continue
-        semantic_ref = instance.get("semantic_ref")
-        if isinstance(semantic_ref, str):
-            instance_paths[semantic_ref].append(
-                f"pi.instances[{index}]"
-            )
-    consumed_paths: Counter[str] = Counter()
-    relation_rows: list[NormalizationRelationRow] = []
-    for access_ref, _result in removed:
-        consumed_paths[access_ref] += 1
-        paths = instance_paths.get(access_ref, [])
-        ordinal = consumed_paths[access_ref]
-        path = (
-            paths[ordinal]
-            if ordinal < len(paths)
-            else f"pi.instances[semantic_ref={access_ref}]"
-        )
-        access = next(
-            item
-            for item in artifact.j.boundary.accesses
-            if item.access_id == access_ref
-        )
-        relation_rows.append(
-            NormalizationRelationRow(
-                path=path,
-                family="transfer_direct",
-                relation="duplicate_read_elided",
-                anchor_refs=(access_ref, access.tensor),
-                disposition="normalized",
-                reason=(
-                    "unique_readonly_J_access_exact_pointer_reuse_without_"
-                    "intervening_same_root_write"
-                ),
-            )
-        )
-
-    return normalized, len(removed), tuple(relation_rows)
+    access_refs = default_zero_lower_bound_accesses(artifact.j, artifact.pi)
+    if not access_refs:
+        return False, (), "J_dense_zero_lower_bound_class_not_authorized"
+    if not address_proven:
+        return False, (), "access_occurrence_owner_not_proved_for_zero_bound_class"
+    observed_refs = {access_ref for access_ref, _tensor in address_accesses}
+    if observed_refs != {access.access_id for access in artifact.j.boundary.accesses}:
+        return False, (), "zero_bound_class_access_coverage_unproved"
+    if not all(
+        zero_lower_bound_coordinates_from_j(artifact.j, access_ref)
+        for access_ref in access_refs
+    ):
+        return False, (), "zero_bound_class_domain_certificate_unproved"
+    return True, access_refs, "J_dense_domain_explicit_zero_lower_and_upper_bounds"
 
 
 @dataclass(frozen=True)
@@ -634,10 +581,15 @@ class NormalizedTTIR:
     active_rules: tuple[str, ...]
     hard_relations: tuple[str, ...] = ()
     representation_anchor_exemptions: frozenset[str] = frozenset()
+    normalization_classes: tuple[str, ...] = ()
     relation_rows: tuple[NormalizationRelationRow, ...] = ()
+    address_certificate_proven: bool = False
+    address_certificate_reason: str = "typed_address_ownership_unavailable"
 
     def evidence(self) -> dict[str, Any]:
-        if self.transformed_occurrences == 0:
+        if self.normalization_classes:
+            hard_preservation_check = "passed_by_authorized_class_profile"
+        elif self.transformed_occurrences == 0:
             hard_preservation_check = "passed_by_byte_identity"
         elif (
             "elide_proven_physical_duplicate_loads" in self.active_rules
@@ -660,10 +612,18 @@ class NormalizedTTIR:
             "peer_observation_visible": False,
             "transformed_occurrences": self.transformed_occurrences,
             "active_rules": list(self.active_rules),
+            "normalization_classes": list(self.normalization_classes),
             "hard_relations": list(self.hard_relations),
             "representation_anchor_exemptions": sorted(
                 self.representation_anchor_exemptions
             ),
+            "address_normalization_certificate": {
+                # Persist only the unary verdict and its closed reason code.
+                # Pointer SSA, address formulas, Source text, and peer
+                # comparison data remain outside the evidence surface.
+                "proven": self.address_certificate_proven,
+                "reason": self.address_certificate_reason,
+            },
             "relation_rows": [row.evidence() for row in self.relation_rows],
             "hard_preservation_check": hard_preservation_check,
             "idempotence_check": "passed",
@@ -683,11 +643,14 @@ def normalize_ttir_for_gate1(ttir: str, artifact: Gate1Artifact) -> NormalizedTT
     """Return ``N^pi(ttir)`` without consulting another observation.
 
     ``program_axes`` and every relation without a unique occurrence anchor
-    remain hard.  The narrow duplicate-read rule above is the only active
-    transformation: it removes at most the extra ``transfer_direct`` rows
-    explicitly present in ``pi`` after independently proving a unique
-    read-only J access and exact pointer reuse.  Raw axis identity,
-    multiplicity, users, and downstream dataflow remain visible otherwise.
+    remain hard.  The duplicate-read rule, the explicit dense zero-based
+    domain class, and the closed consumer-identity class are the only active
+    transformations.  They are unary class quotients: the former removes only
+    a compiler-materialized ``0 <= coordinate`` conjunct from a masked memory
+    predicate; the latter removes only an optional value ``where/select`` that
+    matches a J-proven producer mapping.  Upper bounds, access mask/fill,
+    effect order, reductions, loops, outputs, and all unproved dataflow remain
+    visible and hard.
     """
 
     normalized_text, transformed_occurrences, duplicate_rows = (
@@ -699,11 +662,71 @@ def normalize_ttir_for_gate1(ttir: str, artifact: Gate1Artifact) -> NormalizedTT
     address_proven, address_accesses, address_reason = (
         _address_normalization_certificate(normalized_text, artifact)
     )
-    representation_anchor_exemptions = frozenset(
-        {"tt.addptr"} if address_proven else ()
+    zero_bound_proven, zero_bound_accesses, zero_bound_reason = (
+        _default_zero_lower_bound_certificate(
+            artifact,
+            address_proven=address_proven,
+            address_accesses=address_accesses,
+        )
     )
+    consumer_identity_edges = closed_consumer_identity_extensions(
+        artifact.j,
+        artifact.pi,
+    )
+    scalar_keepdims_reductions = per_program_scalar_keepdims_reductions(
+        artifact.j,
+        artifact.pi,
+    )
+    # A J certificate establishes only that a class *can* be safely applied.
+    # It must not silently authorize a Gate1 quotient: Lift declares the
+    # closed class in π, TypeCheck verifies the J-only premise, and this
+    # normalizer consumes that same declaration.  Keeping these two gates
+    # separate prevents an accidental J pattern from weakening Gate1.
+    declared_classes = frozenset(
+        str(row["name"])
+        for row in artifact.pi.normalization_classes
+        if isinstance(row, Mapping) and isinstance(row.get("name"), str)
+    )
+    zero_bound_authorized = (
+        zero_bound_proven and DEFAULT_ZERO_LOWER_BOUND_CLASS in declared_classes
+    )
+    consumer_identity_authorized = bool(consumer_identity_edges) and (
+        CLOSED_CONSUMER_IDENTITY_CLASS in declared_classes
+    )
+    scalar_keepdims_authorized = bool(scalar_keepdims_reductions) and (
+        PER_PROGRAM_SCALAR_KEEPDIMS_CLASS in declared_classes
+    )
+    representation_exemptions = {"tt.addptr"} if address_proven else set()
+    if zero_bound_authorized:
+        representation_exemptions.add(
+            f"{DEFAULT_ZERO_LOWER_BOUND_CLASS}:{len(zero_bound_accesses)}"
+        )
+    if consumer_identity_authorized:
+        representation_exemptions.add(
+            f"{CLOSED_CONSUMER_IDENTITY_CLASS}:{len(consumer_identity_edges)}"
+        )
+    if scalar_keepdims_authorized:
+        representation_exemptions.add(
+            f"{PER_PROGRAM_SCALAR_KEEPDIMS_CLASS}:"
+            f"{len(scalar_keepdims_reductions)}"
+        )
+    representation_anchor_exemptions = frozenset(representation_exemptions)
     if address_proven:
         active_rules.append("normalize_proven_address_representations")
+    normalization_classes: list[str] = []
+    if zero_bound_authorized:
+        active_rules.append("normalize_default_zero_lower_bound_class")
+        normalization_classes.append(DEFAULT_ZERO_LOWER_BOUND_CLASS)
+    if consumer_identity_authorized:
+        active_rules.append("normalize_closed_consumer_identity_class")
+        normalization_classes.append(CLOSED_CONSUMER_IDENTITY_CLASS)
+    if scalar_keepdims_authorized:
+        # This class validates a physical carrier projection rather than
+        # deleting an observed TTIR operation.  A scalar ``tl.sum`` carrier is
+        # the legal realization of the J-kept singleton for one directly
+        # mapped row; all J dataflow remains visible in the observation.
+        active_rules.append("normalize_per_program_scalar_keepdims_class")
+        normalization_classes.append(PER_PROGRAM_SCALAR_KEEPDIMS_CLASS)
     # Every remaining access representation relation requires a unique
     # physical occurrence or pointer/use-chain mapping for its ``a*`` row.
     # Complete J coverage and matching operation counts do not establish that
@@ -731,25 +754,109 @@ def normalize_ttir_for_gate1(ttir: str, artifact: Gate1Artifact) -> NormalizedTT
             )
         )
 
-    if address_proven:
-        for access_ref, tensor in address_accesses:
-            record(
-                path=f"pi.access_representation[access={access_ref}]",
-                family="access_representation_bindings",
-                relation="address_recomputed",
-                anchor_refs=(access_ref, tensor),
-                disposition="normalized",
-                reason=address_reason,
+    for index, normalization_class in enumerate(artifact.pi.normalization_classes):
+        class_name = str(normalization_class["name"])
+        class_scope = str(normalization_class["scope"])
+        if class_name == DEFAULT_ZERO_LOWER_BOUND_CLASS:
+            class_accesses = default_zero_lower_bound_accesses(
+                artifact.j, artifact.pi
             )
+            if zero_bound_proven:
+                record(
+                    path=f"pi.normalization_classes[{index}]",
+                    family="normalization_classes",
+                    relation=class_name,
+                    anchor_refs=(
+                        class_scope,
+                        *class_accesses,
+                    ),
+                    disposition="normalized",
+                    reason=zero_bound_reason,
+                )
+            else:
+                record(
+                    path=f"pi.normalization_classes[{index}]",
+                    family="normalization_classes",
+                    relation=class_name,
+                    anchor_refs=(class_scope,),
+                    disposition="hard",
+                    reason=zero_bound_reason,
+                )
+        elif class_name == CLOSED_CONSUMER_IDENTITY_CLASS:
+            if consumer_identity_edges:
+                record(
+                    path=f"pi.normalization_classes[{index}]",
+                    family="normalization_classes",
+                    relation=class_name,
+                    anchor_refs=tuple(
+                        f"{consumer}:{access}:{dtype}"
+                        for consumer, access, dtype in consumer_identity_edges
+                    ),
+                    disposition="normalized",
+                    reason=(
+                        "J-proven closed producer mapping permits removal of an "
+                        "optional closed consumer-identity materialization"
+                    ),
+                )
+            else:
+                record(
+                    path=f"pi.normalization_classes[{index}]",
+                    family="normalization_classes",
+                    relation=class_name,
+                    anchor_refs=(class_scope,),
+                    disposition="hard",
+                    reason="closed_consumer_identity_certificate_unproved",
+                )
+        elif class_name == PER_PROGRAM_SCALAR_KEEPDIMS_CLASS:
+            if scalar_keepdims_reductions:
+                record(
+                    path=f"pi.normalization_classes[{index}]",
+                    family="normalization_classes",
+                    relation=class_name,
+                    anchor_refs=tuple(scalar_keepdims_reductions),
+                    disposition="normalized",
+                    reason=(
+                        "J/pi prove one scalar target carrier for each "
+                        "directly mapped rowwise keepdims reduction"
+                    ),
+                )
+            else:
+                record(
+                    path=f"pi.normalization_classes[{index}]",
+                    family="normalization_classes",
+                    relation=class_name,
+                    anchor_refs=(class_scope,),
+                    disposition="hard",
+                    reason="per_program_scalar_keepdims_certificate_unproved",
+                )
 
+    observed_program_axes = compiled_program_id_axes(normalized_text)
+    launch_axis_atoms = {0: "program_axis:x", 1: "program_axis:y", 2: "program_axis:z"}
     for index, binding in enumerate(artifact.pi.program_axes):
+        axis = binding["axis"]
+        observation_anchor = (
+            launch_axis_atoms.get(axis)
+            if observed_program_axes is not None and axis in observed_program_axes
+            else None
+        )
         record(
             path=f"pi.program_axes[{index}]",
             family="program_axes",
             relation="physical_launch_axis",
             anchor_refs=(
                 str(binding["domain_ref"]),
-                str(binding["axis"]),
+                str(axis),
+                *((observation_anchor,) if observation_anchor is not None else ()),
+            ),
+            # Launch-axis identity remains hard and fully visible in the TTIR
+            # fingerprint.  Mapping the frozen pi row to its exact x/y/z atom
+            # improves ownership evidence but authorizes no quotient, rewrite,
+            # duplicate elimination, or cross-axis collapse.
+            disposition="hard",
+            reason=(
+                "mapped_to_observed_program_axis_atom"
+                if observation_anchor is not None
+                else "observation_anchor_mapping_unavailable"
             ),
         )
     for index, binding in enumerate(artifact.pi.program_bindings):
@@ -793,32 +900,69 @@ def normalize_ttir_for_gate1(ttir: str, artifact: Gate1Artifact) -> NormalizedTT
             relation=str(binding["relation"]),
             anchor_refs=(str(binding["value_ref"]),),
         )
+    address_tensors = dict(address_accesses)
     for index, binding in enumerate(artifact.pi.access_representation_bindings):
         relation = str(binding["relation"])
         access_ref = str(binding["access_ref"])
         if relation in {"address_recomputed", "pointer_advanced"}:
-            disposition = "hard"
-            reason = "per_access_address_occurrence_mapping_unavailable"
+            tensor = address_tensors.get(access_ref)
+            if address_proven and tensor is not None:
+                disposition = "normalized"
+                reason = address_reason
+                anchor_refs = (access_ref, tensor)
+            else:
+                disposition = "hard"
+                reason = (
+                    address_reason
+                    if not address_proven
+                    else "address_certificate_access_unmatched"
+                )
+                anchor_refs = (access_ref,)
         elif relation == "guard_lower_bound_elided":
-            disposition = "hard"
-            reason = "per_access_guard_occurrence_mapping_unavailable"
+            coordinates = zero_lower_bound_coordinates_from_j(
+                artifact.j, access_ref
+            )
+            # This access-level relation is part of the same class quotient as
+            # the predicate rewrite above.  A J certificate proves only that
+            # the quotient is available; π must explicitly select it before
+            # Gate1 can normalize this row.  Do not let a binding relation
+            # become an implicit second authorization path.
+            if (
+                zero_bound_authorized
+                and access_ref in zero_bound_accesses
+                and coordinates
+            ):
+                disposition = "normalized"
+                reason = zero_bound_reason
+                anchor_refs = (access_ref, *sorted(coordinates))
+            else:
+                disposition = "hard"
+                reason = (
+                    "J_dense_zero_lower_bound_class_not_authorized"
+                    if not zero_bound_authorized
+                    else "zero_bound_class_access_certificate_unmatched"
+                )
+                anchor_refs = (access_ref,)
         elif relation == "boolean_storage_byte":
             disposition = "hard"
             reason = "per_access_pointer_chain_mapping_unavailable"
+            anchor_refs = (access_ref,)
         else:  # The strict pi decoder owns the closed relation vocabulary.
             disposition = "hard"
             reason = "unsupported_relation"
+            anchor_refs = (access_ref,)
         record(
             path=f"pi.access_representation_bindings[{index}]",
             family="access_representation_bindings",
             relation=relation,
-            anchor_refs=(access_ref,),
+            anchor_refs=anchor_refs,
             disposition=disposition,
             reason=reason,
         )
 
     hard_relation_order = (
         "transfer_direct",
+        "normalization_classes",
         "program_axes",
         "program_bindings",
         "iteration_bindings",
@@ -841,7 +985,10 @@ def normalize_ttir_for_gate1(ttir: str, artifact: Gate1Artifact) -> NormalizedTT
         active_rules=tuple(active_rules),
         hard_relations=hard_relations,
         representation_anchor_exemptions=representation_anchor_exemptions,
+        normalization_classes=tuple(normalization_classes),
         relation_rows=tuple(relation_rows),
+        address_certificate_proven=address_proven,
+        address_certificate_reason=address_reason,
     )
 
 

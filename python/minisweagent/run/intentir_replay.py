@@ -83,7 +83,7 @@ def create_intentir_replay_model(
     api_base: str,
     api_key: str,
     reasoning_effort: str,
-    timeout_seconds: float,
+    timeout_seconds: float | None,
     prompt_cache_key: str | None = None,
 ) -> LitellmResponseModel:
     config = load_intentir_replay_config()["model"]

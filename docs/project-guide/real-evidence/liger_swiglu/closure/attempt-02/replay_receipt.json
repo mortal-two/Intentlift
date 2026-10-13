@@ -5,18 +5,18 @@
     "replay_input_protocol": "intentir.scrc.replay-input.v3",
     "retrieval_trace": []
   },
-  "elapsed_ms": 26913.381149061024,
+  "elapsed_ms": 15590.503297746181,
   "function_name": "scrc_k0",
-  "model": "gpt-5.6-luna",
+  "model": "gpt-6.1-sol",
   "physical_provider_calls": 1,
   "recorded": true,
-  "response_id": "resp_022e783deb8fd95e016aa17ebb17b087d0aa5790dcbaa53f85",
-  "response_model": "gpt-5.6-luna",
+  "response_id": "resp_0977c29043d1f414016ac6ef6c714887d0b31301bc17fc6e16",
+  "response_model": "gpt-6.1-sol",
   "status": "generated",
   "transport_retries": 0,
   "usage": {
-    "input_tokens": 5548,
-    "output_tokens": 1336,
-    "total_tokens": 6884
+    "input_tokens": 8137,
+    "output_tokens": 556,
+    "total_tokens": 8693
   }
 }

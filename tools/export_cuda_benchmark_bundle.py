@@ -54,6 +54,7 @@ from intentir.backend.measurement_spec import (
 from intentir.backend.portable_workload import encode_workload_recipe
 from intentir.backend.protocol import BackendTarget
 from intentir.backend.workload_cost import derive_j_workload_cost
+from intentir.ir.canonical_j import j_elaboration
 from intentir.ir.production_snapshot import load_production_snapshot
 from intentir.ir.value_dimension import resolve_runtime_output_shapes
 from intentir.verify.gate1._triton_worker import _normalize_deprecated_triton_dot
@@ -112,28 +113,30 @@ def _entry(
     comparison_policy.validate_j(snapshot.j)
     case = suite.cases[0]
     dims = case.refeval.dims_map
+    canonical_outputs = j_elaboration(snapshot.j).output_bindings
+    if not canonical_outputs:
+        raise ValueError("accepted J has no canonical output bindings")
     runtime_inputs = [
         np.asarray(case.values[case.refeval.input_binding_map[item.name]])
         for item in snapshot.j.intent.inputs
     ]
     runtime_output_shapes = resolve_runtime_output_shapes(
         snapshot.j.intent,
-        [item.shape for item in snapshot.j.intent.outputs],
+        [list(item.output_type.shape) for item in canonical_outputs],
         runtime_inputs,
         dims=dims,
+        canonical_output_bindings=canonical_outputs,
     )
     case_output_shapes = {
         argument.output_key or argument.name: tuple(argument.shape or ())
         for argument in case.triton.arguments
         if argument.role.value in {"output", "inout"}
     }
-    for output, shape in zip(
-        snapshot.j.intent.outputs, runtime_output_shapes, strict=True
-    ):
-        output_key = case.refeval.output_binding_map[output.name]
+    for output, shape in zip(canonical_outputs, runtime_output_shapes, strict=True):
+        output_key = case.refeval.output_binding_map[output.output]
         if case_output_shapes.get(output_key) != shape:
             raise ValueError(
-                f"Harness output shape for {output.name!r} differs from the "
+                f"Harness output shape for {output.output!r} differs from the "
                 f"J-derived runtime shape: {case_output_shapes.get(output_key)} != {shape}"
             )
     constexpr_bindings = constexpr_input_bindings(
@@ -504,14 +507,12 @@ def _entry(
             raise RuntimeError(f"canonical J reference failed: {reference.error}")
         else:
             reference_outputs = reference.outputs
-        for output, shape in zip(
-            snapshot.j.intent.outputs, runtime_output_shapes, strict=True
-        ):
-            output_key = case.refeval.output_binding_map[output.name]
+        for output, shape in zip(canonical_outputs, runtime_output_shapes, strict=True):
+            output_key = case.refeval.output_binding_map[output.output]
             actual_shape = tuple(np.asarray(reference_outputs[output_key]).shape)
             if actual_shape != shape:
                 raise RuntimeError(
-                    f"canonical J output shape for {output.name!r} differs from "
+                    f"canonical J output shape for {output.output!r} differs from "
                     f"the J-derived runtime shape: {actual_shape} != {shape}"
                 )
         workload_payload = {
@@ -601,14 +602,12 @@ def _entry(
         ],
         "output_specs": [
             {
-                "name": item.name,
-                "dtype": item.dtype,
+                "name": item.output,
+                "dtype": item.output_type.dtype,
                 "shape": list(shape),
-                "shape_contract": list(item.shape),
+                "shape_contract": list(item.output_type.shape),
             }
-            for item, shape in zip(
-                snapshot.j.intent.outputs, runtime_output_shapes, strict=True
-            )
+            for item, shape in zip(canonical_outputs, runtime_output_shapes, strict=True)
         ],
         "input_bindings": case.refeval.input_binding_map,
         "output_bindings": case.refeval.output_binding_map,

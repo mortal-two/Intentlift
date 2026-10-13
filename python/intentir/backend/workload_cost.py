@@ -14,7 +14,7 @@ from typing import Any, Iterable
 
 from intentir.backend.materialize import MaterializedJ
 from intentir.ir.canonical_j import j_elaboration
-from intentir.ir.model import IntentOp, walk_intent_ops
+from intentir.ir.model import IntentOp
 
 
 J_WORKLOAD_COST_PROTOCOL = "intentir.backend.j-workload-cost.v1"
@@ -210,28 +210,36 @@ def derive_j_workload_cost(materialized: MaterializedJ) -> JWorkloadCost:
     runtime_inputs = set(materialized.runtime_input_names)
     boundary_shape_issues: list[str] = []
 
-    def boundary_bytes(items: Iterable[Any], *, kind: str) -> int | None:
+    def boundary_bytes(
+        items: Iterable[tuple[str, str, Iterable[Any]]], *, kind: str
+    ) -> int | None:
         total = 0
         dynamic = False
-        for item in items:
-            if any(dimension == "?" for dimension in item.shape):
+        for name, dtype, shape in items:
+            if any(dimension == "?" for dimension in shape):
                 boundary_shape_issues.append(
-                    f"dynamic_{kind}_shape:{item.name}"
+                    f"dynamic_{kind}_shape:{name}"
                 )
                 dynamic = True
                 continue
-            total += _tensor_bytes(item.dtype, item.shape, extents)
+            total += _tensor_bytes(dtype, shape, extents)
         return None if dynamic else total
 
     input_bytes = boundary_bytes(
         (
-            item
+            (item.name, item.dtype, item.shape)
             for item in materialized.j.intent.inputs
             if item.name in runtime_inputs
         ),
         kind="input",
     )
-    output_bytes = boundary_bytes(materialized.j.intent.outputs, kind="output")
+    output_bytes = boundary_bytes(
+        (
+            (binding.output, binding.output_type.dtype, binding.output_type.shape)
+            for binding in elaboration.output_bindings
+        ),
+        kind="output",
+    )
     constexpr = dict(materialized.constexpr_bindings)
 
     def result_type(operation: IntentOp) -> Any | None:
@@ -264,10 +272,21 @@ def derive_j_workload_cost(materialized: MaterializedJ) -> JWorkloadCost:
         count a second time turns linear elementwise work into a quadratic cost.
         """
 
+        def walk(body: Iterable[IntentOp]):
+            for operation in body:
+                yield operation
+                if operation.op == "loop":
+                    yield from walk(operation.body)
+                elif operation.op in {"effect_if", "value_if"}:
+                    assert operation.positive is not None
+                    assert operation.negative is not None
+                    yield from walk(operation.positive.body)
+                    yield from walk(operation.negative.body)
+
         return any(
             (value_type := result_type(operation)) is not None
             and axis in value_type.shape
-            for operation in walk_intent_ops(body)
+            for operation in walk(body)
         )
 
     def visit(body: list[IntentOp]) -> _Counts:
@@ -527,7 +546,15 @@ def derive_j_workload_cost(materialized: MaterializedJ) -> JWorkloadCost:
                 )
         return counts
 
-    counts = visit(materialized.j.intent.body)
+    typed_rows = j_elaboration(materialized.j).typed_operation_rows
+    if typed_rows is None:
+        raise ValueError("workload cost requires canonical operation records")
+    canonical_body = tuple(
+        operation
+        for path, operation in typed_rows
+        if "." not in path and path.startswith("body[")
+    )
+    counts = visit(canonical_body)
     return JWorkloadCost(
         boundary_input_bytes=input_bytes,
         boundary_output_bytes=output_bytes,

@@ -23,11 +23,17 @@ OPENAI_BASE_URL_ENV = "OPENAI_BASE_URL"
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 OPENAI_MODEL_ENV = "OPENAI_MODEL"
 
-# The active Gate commands historically select the provider as ``cpa``.  This
-# name is only the process-environment fallback; a real provider file remains
-# authoritative whenever one is supplied.
-DEFAULT_ENV_PROVIDER_NAME = "cpa"
-DEFAULT_ENV_PROVIDER_MODEL = "gpt-5.4"
+# This is only the label for an explicitly environment-backed provider.  A
+# provider file remains authoritative whenever one is supplied.
+DEFAULT_ENV_PROVIDER_NAME = "openai"
+DISABLED_PROVIDER_NAMES = frozenset({"cislc"})
+# The environment-backed provider is used when a managed runner injects only
+# OPENAI_BASE_URL and OPENAI_API_KEY.  The previous fallback model is no
+# longer exposed by that transport.  gpt-6.1-sol has completed repeated real
+# function-call SSE probes and is the current stable environment fallback;
+# callers may still explicitly select a different listed model through
+# OPENAI_MODEL.
+DEFAULT_ENV_PROVIDER_MODEL = "gpt-6.1-sol"
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,10 @@ class ProviderConfig:
     model: str
     wire_api: str = "responses"
     reasoning_effort: str = "high"
+
+    def __post_init__(self) -> None:
+        if self.name.casefold() in DISABLED_PROVIDER_NAMES:
+            raise ValueError(f"provider {self.name!r} is disabled")
 
 
 def _environment_provider() -> ProviderConfig | None:
@@ -64,6 +74,8 @@ def _environment_provider() -> ProviderConfig | None:
     ).strip()
     if not name or not model:
         return None
+    if name.casefold() in DISABLED_PROVIDER_NAMES:
+        raise ValueError(f"provider {name!r} is disabled")
     return ProviderConfig(
         name=name,
         base_url=base_url,
@@ -94,6 +106,8 @@ def load_providers(path: os.PathLike | str | None = None) -> dict[str, ProviderC
     raw = json.loads(p.read_text())
     out: dict[str, ProviderConfig] = {}
     for name, cfg in raw.items():
+        if name.casefold() in DISABLED_PROVIDER_NAMES:
+            continue
         out[name] = ProviderConfig(
             name=name,
             base_url=cfg["base_url"],
@@ -102,18 +116,39 @@ def load_providers(path: os.PathLike | str | None = None) -> dict[str, ProviderC
             wire_api=cfg.get("wire_api", "responses"),
             reasoning_effort=cfg.get("reasoning_effort", "high"),
         )
+    # A repository-local provider file remains the default and is authoritative
+    # when a caller supplied it explicitly.  For the ordinary default lookup,
+    # also expose an environment-injected provider under its own name.  This
+    # lets a runner explicitly select a healthy temporary/managed endpoint via
+    # INTENTIR_PROVIDER_NAME without serializing its credentials into a local
+    # JSON file or silently replacing the configured default transport.
+    if path is None and not configured:
+        env_provider = _environment_provider()
+        if env_provider is not None:
+            out.setdefault(env_provider.name, env_provider)
     return out
 
 
 def get_provider(
     name: str | None = None, path: os.PathLike | str | None = None
 ) -> ProviderConfig:
-    """Return one provider config; defaults to the first configured provider."""
+    """Return one enabled provider, defaulting to environment ``openai``.
+
+    An omitted provider never inherits the first entry of a local credentials
+    file, because file ordering cannot choose the active transport.
+    """
+    if name is not None and name.casefold() in DISABLED_PROVIDER_NAMES:
+        raise ValueError(f"provider {name!r} is disabled")
     providers = load_providers(path)
     if not providers:
         raise ValueError("no providers configured")
     if name is None:
-        name = next(iter(providers))
+        name = (
+            os.environ.get(PROVIDER_NAME_ENV, "").strip()
+            or DEFAULT_ENV_PROVIDER_NAME
+        )
+    if name.casefold() in DISABLED_PROVIDER_NAMES:
+        raise ValueError(f"provider {name!r} is disabled")
     if name not in providers:
         raise KeyError(f"provider {name!r} not in {list(providers)}")
     return providers[name]

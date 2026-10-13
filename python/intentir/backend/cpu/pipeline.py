@@ -12,13 +12,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
 
 from ...frontend.canonical_j import emit_j_module
 from ...frontend.emit_mlir import IndexBoundsProjection
-from ...ir.canonical_j import elaborate_j
+from ...ir.canonical_j import (
+    canonical_top_level_operations,
+    elaborate_j,
+    j_elaboration,
+)
 from ...ir.dimension_relation import resolve_dimension_relations
 from ...ir.layer_c import layer_c_content_digest
 from ...ir.layer_c import (
@@ -54,10 +58,12 @@ from ..protocol import (
     TargetPluginArtifact,
     bind_target,
     deserialize_target_artifact,
-    deserialize_target_plugin,
     serialize_target_artifact,
     serialize_target_plugin,
 )
+
+if TYPE_CHECKING:
+    from ...verify.gate1.model import SemanticArchive
 
 
 CPU_COMPUTE_SYMBOL = "intentir_cpu_compute_v1"
@@ -234,11 +240,6 @@ def validate_cpu_reference_target_plugin(
             "CPU target validation requires canonical SemanticArchive J"
         )
     target_value = target or cpu_reference_target()
-    choice = ImplementationChoice(
-        backend_kind="cpu",
-        candidate_key=CPU_REFERENCE_CANDIDATE_KEY,
-        candidate_digest=cpu_reference_candidate_digest(),
-    )
     if target_value != cpu_reference_target():
         raise CPUBackendUnsupportedError(
             "CPU reference lowering requires the cpu/reference target identity"
@@ -282,10 +283,14 @@ def _walk_ops(body):
     yield from walk_intent_ops(body)
 
 
-def validate_cpu_capability(fn: IntentFunction) -> None:
+def validate_cpu_capability(
+    fn: IntentFunction,
+    *,
+    body: Sequence[Any] | None = None,
+) -> None:
     """Fail closed when ``E_J`` has no complete scalar lowering."""
 
-    operations = tuple(_walk_ops(fn.body))
+    operations = tuple(_walk_ops(fn.body if body is None else body))
     if any(op.op == "loop" for op in operations):
         raise CPUBackendUnsupportedError(
             "scalar CPU execution does not yet lower structured IntentIR loops "
@@ -335,6 +340,9 @@ def _infer_contracts(
     fn: IntentFunction,
     dims: Mapping[str, int],
     broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None,
+    *,
+    output_bindings: Sequence[Any],
+    body: Sequence[Any] | None = None,
 ) -> tuple[
     list[tuple[int, ...]],
     list[str],
@@ -351,29 +359,51 @@ def _infer_contracts(
         tensor.name: list(shape)
         for tensor, shape in zip(fn.inputs, input_shapes, strict=True)
     }
+    if not output_bindings:
+        raise CPUABIValidationError("CPU execution requires canonical output bindings")
+    if len({binding.output for binding in output_bindings}) != len(output_bindings):
+        raise CPUABIValidationError("canonical output bindings must be unique")
+    # Output ABI/type/shape is owned by the canonical construction records.
+    # Keep this snapshot separate from the emitter's internal shape environment:
+    # `_infer_body` may validate a producer, but must not become a second output
+    # shape authority merely because it visits that producer later.
+    canonical_output_shapes = [
+        tuple(_resolve(binding.output_type.shape, extents))
+        for binding in output_bindings
+    ]
     env.update(
         {
-            tensor.name: _resolve(tensor.shape, extents)
-            for tensor in fn.outputs
+            binding.output: list(shape)
+            for binding, shape in zip(
+                output_bindings, canonical_output_shapes, strict=True
+            )
         }
     )
     ragged_types = {}
     _infer_body(
-        fn.body,
+        fn.body if body is None else body,
         env,
         0,
         extents,
         broadcast_axes,
         ragged_types=ragged_types,
     )
-    output_shapes = [tuple(env[tensor.name]) for tensor in fn.outputs]
+    for binding, expected_shape in zip(
+        output_bindings, canonical_output_shapes, strict=True
+    ):
+        inferred_shape = env.get(binding.output)
+        if inferred_shape is None or tuple(inferred_shape) != expected_shape:
+            raise CPUABIValidationError(
+                "CPU internal shape inference disagrees with canonical output "
+                f"binding {binding.output!r}"
+            )
     output_element_types = [
-        mlir_element_type(tensor.dtype) for tensor in fn.outputs
+        mlir_element_type(binding.output_type.dtype) for binding in output_bindings
     ]
     return (
         input_shapes,
         input_element_types,
-        output_shapes,
+        canonical_output_shapes,
         output_element_types,
     )
 
@@ -384,6 +414,7 @@ def resolve_runtime_output_shapes(
     inputs: Sequence[np.ndarray],
     *,
     dims: Mapping[str, int] | None = None,
+    canonical_output_bindings: Sequence[Any] | None = None,
 ) -> list[tuple[int, ...]]:
     """CPU-ABI-compatible wrapper around the backend-neutral J resolver."""
 
@@ -393,6 +424,7 @@ def resolve_runtime_output_shapes(
             declared_shapes,
             inputs,
             dims=dims,
+            canonical_output_bindings=canonical_output_bindings,
         )
     except RuntimeShapeResolutionError as exc:
         raise CPUABIValidationError(str(exc)) from exc
@@ -505,9 +537,11 @@ def emit_cpu_module(
             "CPU reference lowering requires its typed target realization contract"
         )
     fn = j.intent
-    if not fn.outputs:
+    canonical_body = canonical_top_level_operations(j)
+    output_bindings = j_elaboration(j).output_bindings
+    if not output_bindings:
         raise ValueError("CPU execution requires at least one logical output")
-    validate_cpu_capability(fn)
+    validate_cpu_capability(fn, body=canonical_body)
     checked_dims = _checked_dims(dims)
     checked_dims = resolve_dimension_relations(j, checked_dims)
     (
@@ -515,7 +549,13 @@ def emit_cpu_module(
         input_element_types,
         output_shapes,
         output_element_types,
-    ) = _infer_contracts(fn, checked_dims, broadcast_axes)
+    ) = _infer_contracts(
+        fn,
+        checked_dims,
+        broadcast_axes,
+        output_bindings=output_bindings,
+        body=canonical_body,
+    )
     kernel = emit_j_module(
         j,
         checked_dims,
@@ -555,16 +595,18 @@ def execute_on_cpu_outputs(
     target_artifact = _cpu_target_artifact(j, target_plugin)
     plugin = target_artifact.plugin
     fn = j.intent
+    canonical_body = canonical_top_level_operations(j)
+    output_bindings = j_elaboration(j).output_bindings
     if len(inputs) != len(fn.inputs):
         raise CPUABIValidationError(
             "CPU execution input arity mismatch: "
             f"expected {len(fn.inputs)}, got {len(inputs)}"
         )
-    if not fn.outputs:
+    if not output_bindings:
         raise CPUABIValidationError(
             "CPU execution requires at least one logical output"
         )
-    validate_cpu_capability(fn)
+    validate_cpu_capability(fn, body=canonical_body)
     checked_dims = _checked_dims(dims)
     checked_dims = resolve_dimension_relations(j, checked_dims)
     validate_value_dimension_instantiation(
@@ -581,12 +623,19 @@ def execute_on_cpu_outputs(
         _input_element_types,
         output_shapes,
         _output_element_types,
-    ) = _infer_contracts(fn, checked_dims, broadcast_axes)
+    ) = _infer_contracts(
+        fn,
+        checked_dims,
+        broadcast_axes,
+        output_bindings=output_bindings,
+        body=canonical_body,
+    )
     output_shapes = resolve_runtime_output_shapes(
         fn,
         output_shapes,
         inputs,
         dims=checked_dims,
+        canonical_output_bindings=output_bindings,
     )
 
     checked_inputs = [
@@ -601,17 +650,17 @@ def execute_on_cpu_outputs(
         )
     ]
     output_storage = [
-        np.empty(shape, dtype=numpy_dtype(tensor.dtype), order="C")
-        for tensor, shape in zip(fn.outputs, output_shapes, strict=True)
+        np.empty(shape, dtype=numpy_dtype(binding.output_type.dtype), order="C")
+        for binding, shape in zip(output_bindings, output_shapes, strict=True)
     ]
-    for tensor, shape, value in zip(
-        fn.outputs, output_shapes, output_storage, strict=True
+    for binding, shape, value in zip(
+        output_bindings, output_shapes, output_storage, strict=True
     ):
         validate_array(
             value,
             shape=shape,
-            dtype=tensor.dtype,
-            context=f"CPU output {tensor.name!r}",
+            dtype=binding.output_type.dtype,
+            context=f"CPU output {binding.output!r}",
             writable=True,
         )
 
@@ -651,8 +700,8 @@ def execute_on_cpu_outputs(
     finally:
         compiled.shared_object.unlink(missing_ok=True)
     logical_outputs = {
-        tensor.name: value
-        for tensor, value in zip(fn.outputs, runtime.outputs, strict=True)
+        binding.output: value
+        for binding, value in zip(output_bindings, runtime.outputs, strict=True)
     }
     metadata = {
         **compiled.evidence,
@@ -709,7 +758,8 @@ def run_on_cpu(
         raise CPUBackendUnsupportedError(
             "CPU production execution requires canonical SemanticArchive J"
         )
-    if len(j.intent.outputs) != 1:
+    output_names = j_elaboration(j).output_names
+    if len(output_names) != 1:
         raise ValueError(
             "run_on_cpu requires exactly one output; use run_on_cpu_outputs"
         )
@@ -719,7 +769,7 @@ def run_on_cpu(
         inputs,
         broadcast_axes=broadcast_axes,
         target_plugin=target_plugin,
-    )[j.intent.outputs[0].name]
+    )[output_names[0]]
 
 
 __all__ = [

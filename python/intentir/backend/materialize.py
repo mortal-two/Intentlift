@@ -14,7 +14,7 @@ from intentir.frontend.canonical_j import (
     materialize_j_function,
 )
 from intentir.frontend.emit_mlir import emit_module
-from intentir.ir.canonical_j import elaborate_j
+from intentir.ir.canonical_j import elaborate_j, j_elaboration
 from intentir.ir.dense_predicate_materialization import (
     BoundaryMaterializationProjection,
     materialize_dense_load_predicates,
@@ -28,10 +28,8 @@ from intentir.ir.contract_materialization import (
     project_contract_materialization,
 )
 from intentir.ir.layer_c import (
-    LayerCResolutionError,
     canonical_layer_c_json,
     layer_c_content_digest,
-    validate_layer_c_attachments,
 )
 from intentir.ir.model import IntentFunction, IntentOp
 from intentir.ir.paired_rotation import derive_paired_rotation_view
@@ -119,16 +117,12 @@ class CPrior:
     slot: str
     role: str
     value: bool | int | float | str
-    subject_ref: str | None
-    axis_ref: int | str | None
 
     def to_record(self) -> dict[str, Any]:
         return {
             "slot": self.slot,
             "role": self.role,
             "value": self.value,
-            "subject_ref": self.subject_ref,
-            "axis_ref": self.axis_ref,
         }
 
 
@@ -188,6 +182,7 @@ def _specialize_constexpr_inputs(
 ) -> tuple[IntentFunction, tuple[str, ...]]:
     if not bindings:
         return function, ()
+    value_types = j_elaboration(j).value_type_by_name
     tensors = {item.name: item for item in j.intent.inputs}
     allowed = {
         parameter.logical_ref
@@ -263,11 +258,17 @@ def _specialize_constexpr_inputs(
                 )
                 specialized.extend(arm.body)
                 if operation.op == "value_if":
+                    result_type = (
+                        value_types.get(operation.result)
+                        if isinstance(operation.result, str)
+                        else None
+                    )
                     if (
                         not isinstance(operation.result, str)
                         or not isinstance(arm.yield_value, str)
-                        or not isinstance(operation.type, dict)
-                        or not isinstance(operation.type.get("dtype"), str)
+                        or result_type is None
+                        or not result_type.is_tensor
+                        or result_type.dtype is None
                     ):
                         raise MaterializationError(
                             "value_if specialization requires one typed yield"
@@ -279,9 +280,9 @@ def _specialize_constexpr_inputs(
                                 result=operation.result,
                                 operands=[arm.yield_value],
                                 attrs={
-                                    "to_dtype": operation.type["dtype"],
+                                    "to_dtype": result_type.dtype,
                                 },
-                                type=copy.deepcopy(operation.type),
+                                type=result_type.to_json(),
                             )
                         )
                 continue
@@ -344,9 +345,19 @@ def _project_inplace_outputs(
         if item.mode is ParameterMode.INOUT and item.logical_ref is not None
     }
     positions = {item.name: index for index, item in enumerate(function.inputs)}
+    output_by_name = {item.name: item for item in function.outputs}
+    output_bindings = j_elaboration(j).output_bindings
+    if tuple(item.output for item in output_bindings) != tuple(
+        item.name for item in function.outputs
+    ) or set(output_by_name) != {item.output for item in output_bindings}:
+        raise MaterializationError(
+            "canonical output binding order differs from materialized function"
+        )
     projected = tuple(
-        positions.get(output.name, -1) if output.name in inout_refs else -1
-        for output in function.outputs
+        positions.get(binding.output, -1)
+        if binding.output in inout_refs
+        else -1
+        for binding in output_bindings
     )
     return projected if any(index >= 0 for index in projected) else ()
 
@@ -441,12 +452,18 @@ def _materialize_j_impl(
                 paired_rotation_view.sections,
             )
         )
+        output_bindings = j_elaboration(canonical).output_bindings
         mlir = emit_module(
             function,
             extents,
             broadcast_axes=projection.emitter_broadcast_axes(),
             proven_index_bounds=projection.proven_index_bounds,
             value_dimension_equalities=value_dimension_equalities,
+            output_values={
+                binding.output: binding.value
+                for binding in output_bindings
+            },
+            canonical_output_bindings=output_bindings,
             inplace_outputs=inplace_outputs,
             paired_rotation=paired_rotation,
             loop_schedule_tile=logical.loop_schedule_tile,
@@ -585,8 +602,7 @@ def attach_c(
         raise MaterializationError("Attach_C requires canonical Source C")
     try:
         c.validate_complete_values(path="Attach_C.SourceC")
-        validate_layer_c_attachments(base.j, c.slots)
-    except (LayerCResolutionError, TypeError, ValueError) as exc:
+    except (TypeError, ValueError) as exc:
         raise MaterializationError(str(exc)) from exc
     priors: list[CPrior] = []
     ignored: list[tuple[str, str]] = []
@@ -604,8 +620,6 @@ def attach_c(
                 slot=slot.name,
                 role=slot.role,
                 value=value,
-                subject_ref=slot.subject_ref,
-                axis_ref=slot.axis_ref,
             )
         )
     state = BackendSearchState(

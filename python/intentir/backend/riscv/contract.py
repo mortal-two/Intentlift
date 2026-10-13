@@ -11,11 +11,9 @@ from intentir.backend.contract_updates import (
     consume_exact_internal_overwrite_update,
 )
 from intentir.backend.materialize import BackendSearchState
+from intentir.ir.canonical_j import j_elaboration
 from intentir.ir.intent_op_contract import RAGGED_OPS
-from intentir.ir.model import (
-    validate_ragged_region_boundaries,
-    walk_intent_op_paths,
-)
+from intentir.ir.model import validate_ragged_region_boundaries
 from intentir.verify.gate1.model import RefinementKind
 
 
@@ -163,8 +161,25 @@ def _riscv_ragged_facts(
     ragged_ops: set[str] = set()
     consumed: list[str] = []
 
-    for path, operation in walk_intent_op_paths(j.intent.body):
-        node_ref = operation.node_id or path
+    elaboration = j_elaboration(j)
+    typed_by_path = elaboration.typed_operation_by_path
+    if typed_by_path is None:
+        raise RiscvContractError(
+            "RISC-V cannot materialize typed views from canonical operation records"
+        )
+    authored_by_path = elaboration.authored_node_by_path(j.node_ids)
+    for record in elaboration.operation_records:
+        path = record["path"]
+        operation = typed_by_path.get(path)
+        node_ref = record.get("id")
+        if (
+            operation is None
+            or not isinstance(node_ref, str)
+            or authored_by_path.get(path, node_ref) != node_ref
+        ):
+            raise RiscvContractError(
+                f"RISC-V Ragged node record disagrees with authored J at {path!r}"
+            )
         if operation.op in RAGGED_OPS:
             ragged_ops.add(operation.op)
             consumed.append(f"ragged_op:{operation.op}:{node_ref}")
@@ -179,7 +194,18 @@ def derive_riscv_contract_view(
     validate_riscv_target_contract(state)
     j = state.base.j
     try:
-        validate_ragged_region_boundaries(j.intent.body)
+        elaboration = j_elaboration(j)
+        typed_rows = elaboration.typed_operation_rows
+        if typed_rows is None:
+            raise RiscvContractError(
+                "RISC-V Ragged validation requires canonical typed operation records"
+            )
+        top_level_body = [
+            operation
+            for path, operation in typed_rows
+            if "." not in path and path.startswith("body[")
+        ]
+        validate_ragged_region_boundaries(top_level_body)
     except ValueError as exc:
         raise RiscvContractError(str(exc)) from exc
     ragged_ops, ragged_consumed = _riscv_ragged_facts(j)
@@ -241,10 +267,16 @@ def derive_riscv_contract_view(
         f"result_relation:{item.output}:{item.kind.value}"
         for item in j.boundary.result_relations
     )
+    # Output ownership/order is part of the canonical construction output
+    # table.  Reading Boundary.output_mappings here would let a sparse or stale
+    # mapping become a second output authority, unlike CPU/CUDA/Gate2.
     consumed.extend(
-        f"output:{item.output}" for item in j.boundary.output_mappings
+        f"output:{item.output}" for item in elaboration.output_bindings
     )
-    consumed.extend(f"scope:{item.scope_id}" for item in j.scopes)
+    consumed.extend(
+        f"scope:{item['scope_id']}"
+        for item in j_elaboration(j).scope_records
+    )
     consumed.extend(state.base.consumed_structures)
     consumed.extend(ragged_consumed)
     if ragged_ops:

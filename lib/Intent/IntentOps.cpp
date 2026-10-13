@@ -310,9 +310,14 @@ LogicalResult ScanOp::verify() {
   if (getInput().getType() != getResult().getType())
     return emitOpError("result type must equal input type");
   auto inTy = cast<RankedTensorType>(getInput().getType());
-  if (getAxis() < 0 || getAxis() >= inTy.getRank())
+  // The generated accessor for the I64 attribute is unsigned.  A negative
+  // textual attribute is therefore represented outside the valid rank range,
+  // so the upper-bound check rejects it as well without a tautological < 0
+  // comparison.
+  const uint64_t rank = static_cast<uint64_t>(inTy.getRank());
+  if (getAxis() >= rank)
     return emitOpError("axis ")
-           << getAxis() << " out of range for rank-" << inTy.getRank()
+           << getAxis() << " out of range for rank-" << rank
            << " input";
   return success();
 }

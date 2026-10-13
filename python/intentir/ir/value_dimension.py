@@ -805,6 +805,7 @@ def resolve_runtime_output_shapes(
     inputs: Sequence[Any],
     *,
     dims: Mapping[str, int] | None = None,
+    canonical_output_bindings: Sequence[Any] | None = None,
 ) -> list[tuple[int, ...]]:
     """Resolve J output shapes for one finite invocation.
 
@@ -812,7 +813,10 @@ def resolve_runtime_output_shapes(
     only currently closed dynamic result is a direct ``ragged_member`` return;
     its length is derived through :func:`ragged_member_length`, so CPU, CUDA
     host orchestration, and Gate2 workload construction share the same carrier
-    contract.  This module intentionally has no backend imports.
+    contract.  ``canonical_output_bindings`` is required so output/value/ABI
+    ownership comes from the canonical construction record rather than a
+    second scan of ``IntentFunction.returns``.  This module intentionally has
+    no backend imports.
     """
 
     if len(fn.inputs) != len(inputs):
@@ -899,20 +903,71 @@ def resolve_runtime_output_shapes(
             f"{name!r}"
         )
 
-    value_for_output = {item.output: item.value for item in fn.returns}
-    resolved_outputs: list[tuple[int, ...]] = []
-    for output, declared in zip(fn.outputs, declared_shapes, strict=True):
-        shape = list(declared)
-        if len(shape) != len(output.shape):
+    if canonical_output_bindings is None:
+        raise RuntimeShapeResolutionError(
+            "runtime output shape resolution requires the canonical output "
+            "binding sequence"
+        )
+    bindings = tuple(canonical_output_bindings)
+    output_by_name = {
+        item.name: item for item in fn.outputs
+        if isinstance(getattr(item, "name", None), str)
+    }
+    ordered: list[Any] = []
+    value_for_output: dict[str, str] = {}
+    seen_outputs: set[str] = set()
+    previous_abi_index = -1
+    for binding in bindings:
+        output = getattr(binding, "output", None)
+        value = getattr(binding, "value", None)
+        abi_index = getattr(binding, "abi_index", None)
+        output_type = getattr(binding, "output_type", None)
+        output_shape = getattr(output_type, "shape", None)
+        output_dtype = getattr(output_type, "dtype", None)
+        function_output = output_by_name.get(output)
+        if (
+            not isinstance(output, str)
+            or not isinstance(value, str)
+            or output in seen_outputs
+            or isinstance(abi_index, bool)
+            or not isinstance(abi_index, int)
+            or abi_index != previous_abi_index + 1
+            or not isinstance(output_shape, tuple)
+            or not isinstance(output_dtype, str)
+            or function_output is None
+            or tuple(function_output.shape) != output_shape
+            or function_output.dtype != output_dtype
+        ):
             raise RuntimeShapeResolutionError(
-                f"runtime output shape rank differs for {output.name!r}"
+                "runtime output shape resolution received an incomplete "
+                "canonical output binding sequence"
+            )
+        seen_outputs.add(output)
+        previous_abi_index = abi_index
+        ordered.append(binding)
+        value_for_output[output] = value
+    if tuple(item.output for item in ordered) != tuple(
+        item.name for item in fn.outputs
+    ):
+        raise RuntimeShapeResolutionError(
+            "canonical output binding order differs from IntentFunction outputs"
+        )
+    output_order = tuple(ordered)
+    resolved_outputs: list[tuple[int, ...]] = []
+    for output, declared in zip(output_order, declared_shapes, strict=True):
+        shape = list(declared)
+        output_name = output.output
+        output_shape = output.output_type.shape
+        if len(shape) != len(output_shape):
+            raise RuntimeShapeResolutionError(
+                f"runtime output shape rank differs for {output_name!r}"
             )
         has_dynamic_extent = False
         for axis, extent in enumerate(shape):
             resolved = _resolve_runtime_extent(
                 extent,
                 checked_dims,
-                context=f"runtime output {output.name!r} shape[{axis}]",
+                context=f"runtime output {output_name!r} shape[{axis}]",
             )
             if resolved is None:
                 has_dynamic_extent = True
@@ -922,7 +977,7 @@ def resolve_runtime_output_shapes(
             resolved_outputs.append(tuple(int(extent) for extent in shape))
             continue
 
-        value_name = value_for_output.get(output.name)
+        value_name = value_for_output.get(output_name)
         producer = producer_by_result.get(value_name)
         if (
             producer is None
@@ -931,7 +986,7 @@ def resolve_runtime_output_shapes(
         ):
             raise RuntimeShapeResolutionError(
                 "compiled dynamic output is not produced by ragged_member: "
-                f"{output.name!r}"
+                f"{output_name!r}"
             )
         member_bindings = visible_by_operation.get(id(producer), {})
         descriptor = member_bindings.get(producer.operands[0])
@@ -942,7 +997,7 @@ def resolve_runtime_output_shapes(
         ):
             raise RuntimeShapeResolutionError(
                 "compiled dynamic output has no local ragged producer: "
-                f"{output.name!r}"
+                f"{output_name!r}"
             )
         descriptor_bindings = visible_by_operation.get(id(descriptor), {})
         offsets = tensor_value(
@@ -959,7 +1014,7 @@ def resolve_runtime_output_shapes(
                 offsets,
                 indices,
                 selector,
-                context=f"runtime output {output.name!r}",
+                context=f"runtime output {output_name!r}",
             )
         except RaggedRuntimeError as exc:
             raise RuntimeShapeResolutionError(str(exc)) from exc

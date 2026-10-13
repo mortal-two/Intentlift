@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import threading
 import time
 
 
@@ -131,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
         execute_prepared_workload,
         initialize_workload_evidence,
         next_workload_run_dir,
+        safe_workload_failure_diagnostic,
+        safe_workload_failure_metadata,
         save_workload_failure,
         save_workload_execution,
     )
@@ -184,21 +187,108 @@ def main(argv: list[str] | None = None) -> int:
             replay_backend=args.replay_backend,
             max_lift_calls=args.max_lift_calls,
         )
-        execution = execute_prepared_workload(
-            prepared,
-            provider=provider,
-            effort=args.effort,
-            run_masked_j=not args.no_masked_j,
-            lift_backend=args.lift_backend,
-            replay_backend=args.replay_backend,
-            max_lift_calls=args.max_lift_calls,
+        stage_started: dict[tuple[str, int | None, int | None], float] = {}
+        progress_lock = threading.Lock()
+        progress_stop = threading.Event()
+        active_stage: dict[str, object] | None = None
+
+        def progress(
+            stage: str,
+            attempt: int | None,
+            formal_round: int | None,
+            status: str,
+        ) -> None:
+            nonlocal active_stage
+            key = (stage, attempt, formal_round)
+            now = time.monotonic()
+            with progress_lock:
+                if status == "started":
+                    stage_started[key] = now
+                    active_stage = {
+                        "stage": stage,
+                        "attempt": attempt,
+                        "formal_round": formal_round,
+                        "started": now,
+                    }
+                elapsed_ms = (now - stage_started.get(key, now)) * 1000.0
+                print(
+                    json.dumps(
+                        {
+                            "event": "scrc_progress",
+                            "case_id": args.case,
+                            "stage": stage,
+                            "attempt": attempt,
+                            "formal_round": formal_round,
+                            "status": status,
+                            "stage_elapsed_ms": round(elapsed_ms, 3),
+                        },
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if status != "started" and active_stage is not None:
+                    if (
+                        active_stage["stage"],
+                        active_stage["attempt"],
+                        active_stage["formal_round"],
+                    ) == key:
+                        active_stage = None
+
+        def emit_waiting_progress() -> None:
+            while not progress_stop.wait(15.0):
+                with progress_lock:
+                    if active_stage is None:
+                        continue
+                    elapsed_ms = (time.monotonic() - active_stage["started"]) * 1000.0
+                    print(
+                        json.dumps(
+                            {
+                                "event": "scrc_progress",
+                                "case_id": args.case,
+                                "stage": active_stage["stage"],
+                                "attempt": active_stage["attempt"],
+                                "formal_round": active_stage["formal_round"],
+                                "status": "waiting",
+                                "stage_elapsed_ms": round(elapsed_ms, 3),
+                            },
+                            sort_keys=True,
+                            ensure_ascii=False,
+                            allow_nan=False,
+                        ),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+
+        heartbeat = threading.Thread(
+            target=emit_waiting_progress,
+            name="scrc-progress-heartbeat",
+            daemon=True,
         )
+        heartbeat.start()
+        try:
+            execution = execute_prepared_workload(
+                prepared,
+                provider=provider,
+                effort=args.effort,
+                run_masked_j=not args.no_masked_j,
+                lift_backend=args.lift_backend,
+                replay_backend=args.replay_backend,
+                max_lift_calls=args.max_lift_calls,
+                progress_callback=progress,
+            )
+        finally:
+            progress_stop.set()
+            heartbeat.join(timeout=1.0)
         save_workload_execution(run_dir, prepared, execution)
     except Exception as exc:
         runtime_error = exc if isinstance(exc, WorkloadExecutionError) else None
+        safe_diagnostic = safe_workload_failure_diagnostic(exc)
         payload = {
             "failure_class": "workload_infrastructure",
-            "error": f"{type(exc).__name__}: {exc}",
+            **safe_diagnostic,
             "max_lift_calls": args.max_lift_calls,
         }
         if run_dir is not None:
@@ -212,32 +302,33 @@ def main(argv: list[str] | None = None) -> int:
                     runtime=runtime_error,
                 )
             except Exception as save_error:  # pragma: no cover - defensive path
-                (run_dir / "failure_save_error.txt").write_text(
-                    f"{type(save_error).__name__}: {save_error}\n",
-                    encoding="utf-8",
-                )
+                payload["failure_save_error_class"] = type(save_error).__name__
             payload["evidence_path"] = str(run_dir)
             if isinstance(exc, WorkloadExecutionError):
-                payload["evidence"] = exc.evidence
-                payload["stage_metrics"] = {
-                    str(name): dict(value)
-                    for name, value in exc.stage_metrics.items()
-                }
+                payload["evidence"] = safe_workload_failure_metadata(
+                    exc.evidence
+                )
+                payload["stage_metrics"] = safe_workload_failure_metadata(
+                    {"stage_metrics": exc.stage_metrics}
+                ).get("stage_metrics", {})
             (run_dir / "infrastructure_error.json").write_text(
                 json.dumps(payload, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
         elif isinstance(exc, WorkloadExecutionError):
-            payload["evidence"] = exc.evidence
-            payload["stage_metrics"] = {
-                str(name): dict(value)
-                for name, value in exc.stage_metrics.items()
-            }
+            payload["evidence"] = safe_workload_failure_metadata(exc.evidence)
+            payload["stage_metrics"] = safe_workload_failure_metadata(
+                {"stage_metrics": exc.stage_metrics}
+            ).get("stage_metrics", {})
         if args.json:
             _emit(payload, json_mode=True)
         else:
             print(
-                f"SCRC frontend run failed: {type(exc).__name__}: {exc}",
+                "SCRC frontend run failed: "
+                + safe_diagnostic["rule_code"]
+                + " ("
+                + safe_diagnostic["cause_class"]
+                + ")",
                 file=sys.stderr,
             )
         return 2

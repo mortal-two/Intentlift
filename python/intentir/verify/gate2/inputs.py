@@ -21,6 +21,7 @@ from intentir.ir.value_dimension import (
     validate_ragged_runtime_carrier,
     validate_ragged_runtime_invocation,
 )
+from intentir.ir.canonical_j import j_elaboration
 from intentir.ir.model import walk_intent_op_scopes
 from intentir.runtime_dtype import is_numpy_bfloat16, numpy_bfloat16_dtype
 
@@ -307,9 +308,19 @@ def materialize_ragged_input_values(
     result = dict(values)
     j_inputs = {item.name: item for item in j.intent.inputs}
 
+    typed_rows = j_elaboration(j).typed_operation_rows
+    if typed_rows is None:
+        raise ValueError(
+            "Ragged workload input materialization requires canonical operations"
+        )
+    canonical_body = tuple(
+        operation
+        for path, operation in typed_rows
+        if "." not in path and path.startswith("body[")
+    )
     scoped_operations = tuple(
         walk_intent_op_scopes(
-            j.intent.body,
+            canonical_body,
             visible=(item.name for item in j.intent.inputs),
         )
     )

@@ -8,15 +8,25 @@ status rules live here exactly once.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import json
 import re
 import time
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
+from intentir.extraction.lifters.scrc import normalize_scrc_candidate_delta
+from intentir.ir.canonical_construction import (
+    CanonicalConstruction,
+    CanonicalHandleAllocator,
+    SourceFacts,
+)
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
-from .gate1.model import Gate1Artifact, Gate1Status, JNecessityStatus
+from .gate1.model import (
+    Gate1Artifact,
+    Gate1Status,
+    JNecessityStatus,
+)
 from .gate1.orchestrate import (
     Gate1ExecutionResult,
     SOURCE_OBSERVER_UNSUPPORTED_DIAGNOSTIC_PREFIX,
@@ -26,29 +36,87 @@ from .typecheck import TypeCheckReport, TypeCheckStatus, type_check
 
 
 MAX_GATE1_ROUNDS = 3
+# A source-blind Replay response can be rejected before any formal TTIR
+# comparison. Give that same TypeCheck-valid artifact one fresh writer in the
+# same formal round. This is not another Gate1 round and never consumes Lift.
+MAX_REPLAY_GENERATION_RETRIES = 1
 # One logical Lift invocation produces one complete candidate artifact (or one
 # rejected candidate transaction).  This is deliberately separate from the
 # formal Replay/Gate1-round budget and from an adapter's physical provider
 # retry count.  It is the shared temporary cap for every branch lifecycle.
+# A candidate branch is intentionally bounded to three logical Lift
+# invocations. The request, batch, and frontend validators all
+# import this single bound so one Kernel cannot silently fall back to a long
+# trial-and-error search.  Provider-internal transport retries remain separate
+# telemetry and do not create another logical Lift state.
 MAX_LIFT_CALLS = 3
 # Zero means that pre-Replay construction is governed by the Lift owner's
 # terminal resource signal rather than a semantic-attempt count.  A positive
-# value remains available as an explicit legacy/diagnostic override.
+# value remains available as an explicit diagnostic override.
 MAX_PRE_REPLAY_REJECTIONS = 0
 UNRESOLVED_GATE1_DIAGNOSTIC = "unresolved_gate1"
-UNRESOLVED_GATE2_DIAGNOSTIC = "unresolved_gate2"
 MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY = 8
 MAX_GATE1_FEEDBACK_PATTERNS_PER_CATEGORY = 16
 MAX_GATE1_FEEDBACK_NODE_WITNESSES = 10
 MAX_GATE1_FEEDBACK_EDGES_PER_NODE = 6
 MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS = 512
 MAX_GATE1_FEEDBACK_LOCAL_FRONTIER_EXAMPLES = 10
-MAX_GATE1_REPAIR_CHANGED_PATHS = 48
-GATE1_REPAIR_PROGRESS_PROTOCOL = "intentir.gate1-relift-progress.v1"
+MAX_GATE1_FEEDBACK_STRUCTURAL_SUMMARIES = 8
+# A provider exception can contain the complete rejected operation object.  It
+# is useful for a human evidence record, but duplicating that unstructured
+# string in every relift packet overwhelms the structured path/rule diagnostics
+# that carry the actionable information.  Artifact JSON is not passed through
+# this limit; only diagnostic strings are bounded.
+MAX_RELIFT_DIAGNOSTIC_STRING_CHARS = 2048
+MAX_RELIFT_GUIDANCE_ITEMS = 32
 GATE1_LOCAL_FRONTIER_PROTOCOL = "intentir.gate1-local-frontier.v1"
 _OBSERVER_NODE_FINGERPRINT = re.compile(
     r"(?<=[\[:])[0-9a-f]{12,64}(?=\])"
 )
+_GATE1_FEEDBACK_CATEGORIES = (
+    "interface",
+    "op_multiset",
+    "dataflow",
+    "reduction",
+    "predicate_effect",
+)
+
+def _is_replay_response_rejection(
+    gate1: Gate1ExecutionResult,
+) -> bool:
+    """Recognize a writer-issued, source-blind response-rejection receipt.
+
+    The classification deliberately comes from the structured receipt rather
+    than exception text.  Provider transport/auth/runtime failures never issue
+    this receipt and therefore remain infrastructure failures.
+    """
+
+    arms = gate1.normal_candidates or (gate1.normal,)
+    rejected = [
+        arm
+        for arm in arms
+        if arm.generation is None
+        and (arm.diagnostic or "").startswith("generation failed:")
+    ]
+    return bool(rejected) and all(
+        any(
+            item.get("rule_code") == "replay_response_rejected"
+            for item in arm.ingress_diagnostics
+            if isinstance(item, Mapping)
+        )
+        for arm in rejected
+    )
+
+
+def _masked_replay_incomplete(gate1: Gate1ExecutionResult) -> bool:
+    """Identify an enabled masked arm that supplied no comparable evidence.
+
+    This is a Replay-owner failure, not a J/C/pi counterexample.  In
+    particular, feeding it to Relift would make the Lift owner change an
+    artifact that the successful normal arm has already supported.
+    """
+
+    return gate1.masked_j is not None and not gate1.masked_j.comparable
 
 SCRCProgressCallback = Callable[
     [str, int | None, int | None, str],
@@ -96,9 +164,17 @@ def _prune_relift_diagnostics(value: Mapping[str, Any]) -> dict[str, Any]:
     """Retain the current frontier without recursively replaying old envelopes."""
 
     copied = json.loads(json.dumps(dict(value), allow_nan=False))
-    envelope_keys = {UNRESOLVED_GATE1_DIAGNOSTIC, UNRESOLVED_GATE2_DIAGNOSTIC}
+    envelope_keys = {UNRESOLVED_GATE1_DIAGNOSTIC}
 
     def visit(item: Any, depth: int) -> Any:
+        if isinstance(item, str):
+            marker = "...<truncated>"
+            if len(item) <= MAX_RELIFT_DIAGNOSTIC_STRING_CHARS:
+                return item
+            return (
+                item[: MAX_RELIFT_DIAGNOSTIC_STRING_CHARS - len(marker)]
+                + marker
+            )
         if isinstance(item, list):
             return [visit(child, depth + 1) for child in item]
         if not isinstance(item, dict):
@@ -117,65 +193,347 @@ def _prune_relift_diagnostics(value: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _changed_json_paths(
-    before: Any,
-    after: Any,
-) -> tuple[list[str], int]:
-    """Return a bounded mechanical diff between two LLM-authored artifacts."""
+def _guidance_key(item: Mapping[str, Any]) -> tuple[str, str]:
+    return (
+        str(item.get("rule_code", "")),
+        str(item.get("path", "")),
+    )
 
-    paths: list[str] = []
-    total = 0
 
-    def record(path: str) -> None:
-        nonlocal total
-        total += 1
-        if len(paths) < MAX_GATE1_REPAIR_CHANGED_PATHS:
-            paths.append(path or "<root>")
+def _guidance_item(
+    *,
+    source: str,
+    stage: int,
+    rule_code: Any,
+    path: Any,
+) -> dict[str, Any] | None:
+    if not isinstance(rule_code, str) or not rule_code:
+        return None
+    if not isinstance(path, str) or not path:
+        path = "<candidate>"
+    return {
+        "source": source,
+        "stage": stage,
+        "rule_code": rule_code[:MAX_RELIFT_DIAGNOSTIC_STRING_CHARS],
+        "path": path[:MAX_RELIFT_DIAGNOSTIC_STRING_CHARS],
+    }
 
-    def visit(left: Any, right: Any, path: str) -> None:
-        if type(left) is not type(right):
-            record(path)
+
+def _diagnostic_guidance_items(
+    diagnostics: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Extract a bounded, backend-neutral open-guidance frontier.
+
+    This reads diagnostics only.  It never infers a semantic repair or edits a
+    candidate.  The same compact rows are carried by Responses, MiniSWE, and
+    Codex so their transport differences do not change relift meaning.
+    """
+
+    if not isinstance(diagnostics, Mapping):
+        return []
+    rows: list[dict[str, Any]] = []
+
+    def append_rows(
+        payload: Any,
+        *,
+        source: str,
+        stage: int,
+    ) -> None:
+        if not isinstance(payload, Mapping):
             return
-        if isinstance(left, Mapping):
-            left_keys = {str(key) for key in left}
-            right_keys = {str(key) for key in right}
-            for key in sorted(left_keys | right_keys):
-                child = f"{path}.{key}" if path else key
-                if key not in left_keys or key not in right_keys:
-                    record(child)
-                else:
-                    visit(left[key], right[key], child)
+        raw = payload.get("diagnostics")
+        if not isinstance(raw, list):
             return
-        if isinstance(left, list):
-            common = min(len(left), len(right))
-            for index in range(common):
-                visit(left[index], right[index], f"{path}.{index}")
-            for index in range(common, max(len(left), len(right))):
-                record(f"{path}.{index}")
-            return
-        if left != right:
-            record(path)
+        for item in raw:
+            if not isinstance(item, Mapping):
+                continue
+            row = _guidance_item(
+                source=source,
+                stage=stage,
+                rule_code=item.get("rule_code", item.get("code")),
+                path=item.get("path"),
+            )
+            if row is not None:
+                rows.append(row)
 
-    visit(before, after, "")
-    return paths, total
+    append_rows(
+        diagnostics.get("candidate_check"),
+        source="candidate_check",
+        stage=0,
+    )
+    append_rows(
+        diagnostics.get("source_reconcile"),
+        source="source_reconcile",
+        stage=1,
+    )
+    append_rows(
+        diagnostics.get("typecheck"),
+        source="typecheck",
+        stage=1,
+    )
 
-
-def _observer_category_counts(
-    diagnostics: Mapping[str, Any],
-) -> dict[str, int]:
     observer = diagnostics.get("observer_diff")
-    categories = observer.get("categories") if isinstance(observer, Mapping) else None
-    if not isinstance(categories, list):
-        return {}
-    result: dict[str, int] = {}
-    for category in categories:
-        if not isinstance(category, Mapping):
+    categories = (
+        observer.get("categories")
+        if isinstance(observer, Mapping)
+        else None
+    )
+    if isinstance(categories, list):
+        for category in categories:
+            if not isinstance(category, Mapping):
+                continue
+            # A passing Gate1 category is evidence that the corresponding
+            # obligation is no longer open.  It must not be re-emitted as a
+            # fresh repair item on the next relift.
+            if category.get("passed") is True:
+                continue
+            name = category.get("category")
+            if not isinstance(name, str) or not name:
+                continue
+            row = _guidance_item(
+                source="gate1",
+                stage=2,
+                rule_code=f"gate1.{name}",
+                path=f"observer_diff.categories[{name}]",
+            )
+            if row is not None:
+                rows.append(row)
+
+    semantic_probe = diagnostics.get("semantic_probe")
+    if isinstance(semantic_probe, Mapping) and (
+        semantic_probe.get("status") == "diverged"
+        or semantic_probe.get("repairable") is True
+    ):
+        row = _guidance_item(
+            source="semantic_probe",
+            stage=1,
+            rule_code=(
+                semantic_probe.get("rule_code")
+                if semantic_probe.get("repairable") is True
+                else "semantic_probe_diverged"
+            ),
+            path=(
+                semantic_probe.get("path")
+                if semantic_probe.get("repairable") is True
+                else "semantic_probe"
+            ),
+        )
+        if row is not None:
+            rows.append(row)
+
+    if not rows:
+        diagnostic = diagnostics.get("diagnostic")
+        if isinstance(diagnostic, str) and diagnostic:
+            row = _guidance_item(
+                source="lifecycle",
+                stage=0,
+                rule_code=str(diagnostics.get("failure_class", "lift")),
+                path="<candidate>",
+            )
+            if row is not None:
+                rows.append(row)
+
+    unique: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        key = _guidance_key(row)
+        if key in seen:
             continue
-        name = category.get("category")
-        count = category.get("difference_count")
-        if isinstance(name, str) and isinstance(count, int) and not isinstance(count, bool):
-            result[name] = count
-    return dict(sorted(result.items()))
+        seen.add(key)
+        unique.append(row)
+        if len(unique) >= MAX_RELIFT_GUIDANCE_ITEMS:
+            break
+    return unique
+
+
+def _merge_relift_guidance(
+    previous: "LiftFeedback | None",
+    diagnostics: Mapping[str, Any] | None,
+) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+    """Merge a new frontier without forgetting unresolved prior obligations.
+
+    Absence from one diagnostic packet is not proof that an old obligation was
+    repaired.  Resolution is recorded only when the lifecycle has crossed the
+    corresponding successful prerequisite, or when Gate1 explicitly reports
+    that the same category passed.  This keeps one backend from accidentally
+    dropping a still-open Source/J or observer obligation just because a later
+    packet focused on a different failure.
+    """
+
+    current = _diagnostic_guidance_items(diagnostics)
+    previous_open = [
+        dict(item)
+        for item in getattr(previous, "open_guidance", ())
+        if isinstance(item, Mapping)
+    ]
+    previous_resolved = [
+        dict(item)
+        for item in getattr(previous, "resolved_guidance", ())
+        if isinstance(item, Mapping)
+    ]
+    previous_resolved_keys = {
+        _guidance_key(item) for item in previous_resolved
+    }
+    current_with_regressions: list[dict[str, Any]] = []
+    for item in current:
+        key = _guidance_key(item)
+        if key in previous_resolved_keys:
+            # Keep the historical resolved row, but make a real later failure
+            # actionable instead of silently hiding it.  This is a regression
+            # marker, not a replacement of the resolved history.
+            item = dict(item)
+            item["status"] = "regressed"
+            item["regresses"] = {
+                "rule_code": key[0],
+                "path": key[1],
+            }
+        current_with_regressions.append(item)
+    current = current_with_regressions
+    current_by_key = {_guidance_key(item): item for item in current}
+    current_stage = max(
+        (
+            int(item.get("stage"))
+            for item in current
+            if isinstance(item.get("stage"), int)
+        ),
+        default=None,
+    )
+
+    resolved_by_progress: set[tuple[str, str]] = set()
+    if current_stage is not None:
+        # Reaching TypeCheck proves the source-free CandidateCheck boundary;
+        # reaching Gate1 proves both source-aware preflights and TypeCheck.
+        if current_stage >= 1:
+            resolved_by_progress.update(
+                _guidance_key(item)
+                for item in previous_open
+                if item.get("source") == "candidate_check"
+            )
+            resolved_by_progress.update(
+                _guidance_key(item)
+                for item in previous_open
+                if item.get("source") == "source_reconcile"
+            )
+        if current_stage >= 2:
+            resolved_by_progress.update(
+                _guidance_key(item)
+                for item in previous_open
+                if item.get("source") == "typecheck"
+            )
+
+    observer = diagnostics.get("observer_diff") if isinstance(diagnostics, Mapping) else None
+    categories = observer.get("categories") if isinstance(observer, Mapping) else None
+    if isinstance(categories, list):
+        for category in categories:
+            if not isinstance(category, Mapping) or category.get("passed") is not True:
+                continue
+            name = category.get("category")
+            if isinstance(name, str) and name:
+                resolved_by_progress.add(
+                    (f"gate1.{name}", f"observer_diff.categories[{name}]")
+                )
+    semantic_probe = diagnostics.get("semantic_probe") if isinstance(diagnostics, Mapping) else None
+    if isinstance(semantic_probe, Mapping) and semantic_probe.get("status") == "pass":
+        resolved_by_progress.update(
+            _guidance_key(item)
+            for item in previous_open
+            if item.get("source") == "semantic_probe"
+        )
+
+    open_rows: list[dict[str, Any]] = list(current)
+    resolved_rows: list[dict[str, Any]] = list(previous_resolved)
+    resolved_keys = {_guidance_key(item) for item in resolved_rows}
+    open_keys = {_guidance_key(item) for item in open_rows}
+
+    for item in previous_open:
+        key = _guidance_key(item)
+        if key in current_by_key or key in open_keys:
+            continue
+        if key in resolved_by_progress:
+            resolved = dict(item)
+            resolved["status"] = "resolved"
+            resolved["resolution"] = "prerequisite_passed"
+            if current_stage is not None:
+                resolved["resolved_at_stage"] = current_stage
+            if key not in resolved_keys:
+                resolved_rows.append(resolved)
+                resolved_keys.add(key)
+        else:
+            open_rows.append(item)
+            open_keys.add(key)
+
+    def dedupe(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
+        result: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for row in rows:
+            key = _guidance_key(row)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(row)
+            # The lifecycle state is authoritative and must retain every
+            # prior open/resolved obligation across the bounded three-round
+            # search.  Provider-facing projections apply their own compact
+            # limit; truncating here would make a later backend forget work.
+        return tuple(result)
+
+    return dedupe(open_rows), dedupe(resolved_rows)
+
+
+def _gate1_category_node_count(differences: Sequence[Any]) -> int:
+    """Count affected structural nodes/items without exposing observer hashes."""
+
+    fingerprints: set[str] = set()
+    structural_items: set[str] = set()
+    for difference in differences:
+        item = getattr(difference, "item", None)
+        tokens = _observer_fingerprints(item)
+        if tokens:
+            fingerprints.update(tokens)
+            continue
+        try:
+            structural_items.add(
+                json.dumps(
+                    item,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    default=str,
+                )
+            )
+        except (TypeError, ValueError):
+            structural_items.add(repr(item))
+    return len(fingerprints) or len(structural_items)
+
+
+def _gate1_category_summary(comparison: Any) -> list[dict[str, Any]]:
+    """Return the fixed five-category Gate1 diagnostic summary.
+
+    The summary is derived from the existing hard components.  It is a
+    diagnostic projection only: no score, rank, hard verdict, or candidate
+    selection decision is recomputed here.
+    """
+
+    components = {
+        str(component.category): component
+        for component in getattr(comparison, "components", ())
+    }
+    summary: list[dict[str, Any]] = []
+    for category in _GATE1_FEEDBACK_CATEGORIES:
+        component = components.get(category)
+        differences = tuple(getattr(component, "differences", ()))
+        summary.append(
+            {
+                "category": category,
+                "passed": bool(component.passed) if component is not None else False,
+                "applicable": (
+                    bool(component.applicable) if component is not None else False
+                ),
+                "difference_count": len(differences),
+                "node_count": _gate1_category_node_count(differences),
+            }
+        )
+    return summary
 
 
 def _observer_fingerprints(value: Any) -> tuple[str, ...]:
@@ -766,11 +1124,10 @@ def _observer_role_priority(role: str) -> tuple[int, str]:
     return (5, role)
 
 
-def _bounded_observer_examples(
+def _select_bounded_observer_differences(
     differences: list[Mapping[str, Any]],
-    aliases: Mapping[str, str],
-) -> list[dict[str, Any]]:
-    """Choose bounded examples by causal-role coverage, not input accident."""
+) -> list[Mapping[str, Any]]:
+    """Select causal-role-diverse differences for bounded feedback views."""
 
     ordered = sorted(
         enumerate(differences),
@@ -801,6 +1158,16 @@ def _bounded_observer_examples(
             selected.append(difference)
             if len(selected) >= MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY:
                 break
+    return selected
+
+
+def _bounded_observer_examples(
+    differences: list[Mapping[str, Any]],
+    aliases: Mapping[str, str],
+) -> list[dict[str, Any]]:
+    """Choose bounded examples by causal-role coverage, not input accident."""
+
+    selected = _select_bounded_observer_differences(differences)
     return [
         {
             key: _pseudonymize_observer_nodes(difference[key], aliases)
@@ -809,6 +1176,161 @@ def _bounded_observer_examples(
         }
         for difference in selected
     ]
+
+
+def _observer_structural_label(
+    value: Any,
+    *,
+    side: str,
+    diagnostic_signatures: Mapping[str, Mapping[str, str]],
+) -> str:
+    """Render one observer endpoint without recursive hashes or opaque aliases."""
+
+    if not isinstance(value, str):
+        return str(_feedback_item(value))
+    tokens = _observer_fingerprints(value)
+    if len(tokens) == 1:
+        signature = diagnostic_signatures.get(tokens[0], {}).get(side)
+        if isinstance(signature, str) and signature:
+            return signature[:MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS]
+    if value.startswith("region["):
+        return "region"
+    if value.startswith("arg["):
+        return value
+    # A structural family is more useful than ``operation[node]`` when the
+    # observer profile is unavailable.  The bounded generic replacement keeps
+    # the diagnostic hash-free as a fallback.
+    return _OBSERVER_NODE_FINGERPRINT.sub("node", value).split("[", 1)[0]
+
+
+def _observer_structural_payload(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _observer_structural_item(
+    category: str,
+    item: Any,
+    *,
+    side: str,
+    diagnostic_signatures: Mapping[str, Mapping[str, str]],
+) -> str:
+    """Describe one comparison item as an actionable structural fact."""
+
+    if isinstance(item, (list, tuple)) and item:
+        kind = str(item[0])
+        if kind == "edge" and len(item) == 4:
+            source = _observer_structural_label(
+                item[1], side=side, diagnostic_signatures=diagnostic_signatures
+            )
+            target = _observer_structural_label(
+                item[2], side=side, diagnostic_signatures=diagnostic_signatures
+            )
+            return f"edge {source} --{item[3]}--> {target}"
+        if kind == "dot" and len(item) == 2:
+            payload = _observer_structural_payload(item[1])
+            if isinstance(payload, Mapping):
+                operation = payload.get("operation", "dot")
+                signature = payload.get("signature")
+                if isinstance(signature, str) and signature:
+                    return f"{operation}: {signature}"
+                return str(operation)
+        if kind == "reduction" and len(item) == 2:
+            payload = _observer_structural_payload(item[1])
+            if isinstance(payload, Mapping):
+                return (
+                    "reduction "
+                    f"axis={payload.get('axis')} "
+                    f"combiners={payload.get('combiners')} "
+                    f"inputs={payload.get('input_count')} "
+                    f"results={payload.get('result_count')}"
+                )
+        if kind in {"loop", "structured_if", "terminal_fork"} and len(item) == 2:
+            payload = _observer_structural_payload(item[1])
+            if isinstance(payload, Mapping):
+                if kind == "loop":
+                    return (
+                        "loop "
+                        f"block_args={payload.get('block_argument_count')} "
+                        f"init={payload.get('init_values')} "
+                        f"yield={payload.get('yielded_values')}"
+                    )
+                if kind == "structured_if":
+                    return (
+                        "structured_if "
+                        f"predicate={payload.get('predicate')} "
+                        f"positive={payload.get('positive_arm')} "
+                        f"negative={payload.get('negative_arm')}"
+                    )
+                return (
+                    "terminal_fork "
+                    f"predicate={payload.get('predicate')} "
+                    f"true={payload.get('true_arm')} "
+                    f"false={payload.get('false_arm')}"
+                )
+        if kind in {"memory", "mask", "effect"}:
+            if kind == "memory" and len(item) == 2:
+                payload = _observer_structural_payload(item[1])
+                if isinstance(payload, Mapping):
+                    return (
+                        "memory "
+                        f"kind={payload.get('kind')} "
+                        f"masked={payload.get('masked')} "
+                        f"predicate={payload.get('predicate')}"
+                    )
+            return f"{kind} {item[1]}" if len(item) == 2 else kind
+        if category == "interface":
+            if kind == "schema_version" and len(item) == 2:
+                return f"interface schema={item[1]}"
+            if kind == "argument" and len(item) >= 3:
+                return f"interface argument[{item[1]}] {_observer_structural_payload(item[2])}"
+            if kind == "result" and len(item) >= 3:
+                return f"interface result[{item[1]}] {item[2]}"
+        return _feedback_item(item).__repr__()
+    if category == "op_multiset":
+        return f"operation {item}"
+    return _feedback_item(item).__repr__()
+
+
+def _observer_structural_summary(
+    difference: Mapping[str, Any],
+    diagnostic_signatures: Mapping[str, Mapping[str, str]],
+) -> dict[str, Any]:
+    kind = str(difference.get("kind", "unknown"))
+    category = str(difference.get("category", "unknown"))
+    side = "source" if kind == "missing" else "replay"
+    structure = _observer_structural_item(
+        category,
+        difference.get("item"),
+        side=side,
+        diagnostic_signatures=diagnostic_signatures,
+    )
+    expected = difference.get("expected_count")
+    actual = difference.get("actual_count")
+    if kind == "missing":
+        message = (
+            f"Source has {structure}; Replay is missing it "
+            f"(source={expected}, replay={actual})"
+        )
+    elif kind == "unexpected":
+        message = (
+            f"Replay has {structure}; Source is missing it "
+            f"(source={expected}, replay={actual})"
+        )
+    else:
+        message = f"Source/Replay differ in {structure}"
+    return {
+        "kind": kind,
+        "category": category,
+        "structure": structure[:MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS],
+        "expected_count": expected,
+        "actual_count": actual,
+        "message": message[:MAX_GATE1_FEEDBACK_LOCAL_SIGNATURE_CHARS],
+    }
 
 
 def _observer_effect_trace_index(
@@ -895,11 +1417,10 @@ def _compact_gate1_observer_diff(
 ) -> dict[str, Any]:
     """Expose a bounded frontier plus exact, category-local Gate1 evidence.
 
-    The bounded examples remain the cheap first read.  The exact differences are
-    retained in their already-labelled category so a persistent Lift owner can
-    inspect the same counterexample evidence as a human/Codex diagnosis without
-    injecting the bulk object into its prompt.  This function still performs no
-    attribution and proposes no artifact repair.
+    The bounded examples remain the cheap first read.  Exact differences stay in
+    their already-labelled category so the host can derive bounded rule-level
+    guidance for a fresh Lift owner without injecting the bulk object into its
+    prompt.  This function performs no attribution and proposes no artifact repair.
     """
 
     raw = comparison.to_dict()
@@ -952,9 +1473,28 @@ def _compact_gate1_observer_diff(
             category_differences,
             node_aliases,
         )
-        group["differences"] = _pseudonymize_observer_nodes(
-            category_differences,
+        bounded_differences = _pseudonymize_observer_nodes(
+            category_differences[:MAX_GATE1_FEEDBACK_EXAMPLES_PER_CATEGORY],
             node_aliases,
+        )
+        group["differences"] = bounded_differences
+        group["differences_truncated_count"] = max(
+            0,
+            len(category_differences) - len(bounded_differences),
+        )
+        structural_differences = _select_bounded_observer_differences(
+            category_differences
+        )[:MAX_GATE1_FEEDBACK_STRUCTURAL_SUMMARIES]
+        group["structural_summaries"] = [
+            _observer_structural_summary(
+                difference,
+                diagnostic_signatures,
+            )
+            for difference in structural_differences
+        ]
+        group["structural_summaries_truncated_count"] = max(
+            0,
+            len(category_differences) - len(structural_differences),
         )
         raw_patterns = group.pop("_edge_patterns")
         if raw_patterns:
@@ -1018,7 +1558,66 @@ def _compact_gate1_observer_diff(
         "hard_pass": bool(raw.get("hard_pass", False)),
         "hard_passes": _feedback_item(raw.get("hard_passes", {})),
         "primary_difference_category": raw.get("primary_difference_category"),
+        "category_summary": _gate1_category_summary(comparison),
         "categories": categories,
+    }
+
+
+def _gate1_repair_cues(
+    observer_diff: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Attach short, category-local repair cues to Gate1 feedback.
+
+    The full bounded observer frontier remains the only evidence.  These cues
+    do not classify a mismatch as semantic, edit an artifact, or soften Gate1;
+    they keep the next source-aware Lift turn focused on the first causal
+    category instead of rereading all downstream fallout.
+    """
+
+    raw_categories = observer_diff.get("categories")
+    if not isinstance(raw_categories, list):
+        return None
+    present = {
+        item.get("category")
+        for item in raw_categories
+        if isinstance(item, Mapping) and isinstance(item.get("category"), str)
+    }
+    cues: list[dict[str, str]] = []
+    category_cues = (
+        (
+            "interface",
+            "Check the exact J.signature ABI, output bindings, and region/result interfaces first; repair a missing or extra interface edge before changing downstream values.",
+        ),
+        (
+            "predicate_effect",
+            "Check Source-visible predicate, mask, effect_if/value_if arms, and scope effect membership; preserve the complete control/effect construct and its ordering.",
+        ),
+        (
+            "op_multiset",
+            "Check operation and memory-transfer multiplicity in Source order; do not merge, duplicate, or remove an operation merely to match one Replay implementation.",
+        ),
+        (
+            "dataflow",
+            "Start at the first causal missing/extra dataflow edge in the bounded frontier, then re-audit the complete producer/consumer, address-carrier, and effect chain before touching later arithmetic.",
+        ),
+        (
+            "reduction",
+            "Check reduction/scan axes, keepdims, associativity, identity, and loop-carried recurrence together; do not replace an authored recurrence with an algebraically similar final reduction.",
+        ),
+    )
+    for category, cue in category_cues:
+        if category in present:
+            cues.append({"category": category, "cue": cue})
+    if not cues:
+        return None
+    primary = observer_diff.get("primary_difference_category")
+    return {
+        "primary_category": primary if isinstance(primary, str) else None,
+        "ordered": cues,
+        "authority": (
+            "diagnostic-only guidance derived from the bounded Gate1 observer "
+            "frontier; it never edits J/C/pi or turns a hard mismatch into a pass"
+        ),
     }
 
 
@@ -1038,7 +1637,6 @@ class FeedbackKind(str, Enum):
     LIFT = "lift"
     TYPECHECK = "typecheck"
     GATE1 = "gate1"
-    GATE2 = "gate2"
 
 
 class SCRCInfrastructureError(RuntimeError):
@@ -1063,7 +1661,7 @@ class CandidateLiftError(RuntimeError):
         *,
         physical_calls: int = 1,
         terminal: bool = False,
-        candidate_draft: Mapping[str, Any] | None = None,
+        candidate_delta: Mapping[str, Any] | None = None,
     ) -> None:
         self.diagnostics = dict(diagnostics)
         if not isinstance(physical_calls, int) or physical_calls < 0:
@@ -1072,17 +1670,7 @@ class CandidateLiftError(RuntimeError):
             raise TypeError("CandidateLiftError.terminal must be boolean")
         self.physical_calls = physical_calls
         self.terminal = terminal
-        if candidate_draft is not None:
-            if not isinstance(candidate_draft, Mapping):
-                raise TypeError("CandidateLiftError.candidate_draft must be a mapping")
-            draft = json.loads(
-                json.dumps(dict(candidate_draft), sort_keys=True, allow_nan=False)
-            )
-            if not isinstance(draft, dict):
-                raise TypeError("CandidateLiftError.candidate_draft must be an object")
-            self.candidate_draft = draft
-        else:
-            self.candidate_draft = None
+        self.candidate_delta = normalize_scrc_candidate_delta(candidate_delta)
         super().__init__(str(self.diagnostics.get("diagnostic", "Lift rejected")))
 
 
@@ -1113,7 +1701,18 @@ class HarnessBindingInstance:
         if any(not isinstance(name, str) or not name for name in names):
             raise ValueError("Harness c0 slot names must be non-empty strings")
         if slot_order is None:
-            ordered = tuple(c_values.items())
+            # A mapping's insertion order is not an ABI declaration.  Keep
+            # the optional convenience path deterministic as well: it is
+            # valid only for the canonical C namespace and is materialized
+            # through the same allocator order used by SourceFacts/C.
+            ordered_names = CanonicalHandleAllocator.canonical_names(
+                "c", len(names)
+            )
+            if set(names) != set(ordered_names):
+                raise ValueError(
+                    "Harness c0 values require explicit canonical slot_order"
+                )
+            ordered = tuple((name, c_values[name]) for name in ordered_names)
         else:
             if isinstance(slot_order, (str, bytes)):
                 raise TypeError("Harness c0 slot_order must be a sequence of names")
@@ -1223,59 +1822,53 @@ class LiftFeedback:
     kind: FeedbackKind
     diagnostics: Mapping[str, Any]
     formal_round: int | None = None
-    previous_artifact: Gate1Artifact | None = None
-    selection_rank: tuple[int | float, ...] | None = None
-    previous_candidate: Mapping[str, Any] | None = field(default=None, repr=False)
+    open_guidance: tuple[Mapping[str, Any], ...] = ()
+    resolved_guidance: tuple[Mapping[str, Any], ...] = ()
+    candidate_delta: Mapping[str, Any] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        if self.previous_candidate is not None:
-            if self.previous_artifact is not None:
-                raise ValueError(
-                    "LiftFeedback cannot carry both a previous artifact and a "
-                    "rejected candidate"
+        for field_name in ("open_guidance", "resolved_guidance"):
+            value = getattr(self, field_name)
+            if value is None:
+                value = ()
+            if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+                raise TypeError(f"{field_name} must be a sequence")
+            normalized: list[dict[str, Any]] = []
+            for item in value:
+                if not isinstance(item, Mapping):
+                    raise TypeError(f"{field_name} items must be mappings")
+                copied = json.loads(
+                    json.dumps(
+                        dict(item),
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    )
                 )
-            if not isinstance(self.previous_candidate, Mapping):
-                raise TypeError("previous_candidate must be a mapping")
-            candidate = json.loads(
-                json.dumps(
-                    dict(self.previous_candidate),
-                    sort_keys=True,
-                    ensure_ascii=False,
-                    allow_nan=False,
-                )
+                if not isinstance(copied, dict):
+                    raise TypeError(f"{field_name} items must be objects")
+                normalized.append(copied)
+            object.__setattr__(self, field_name, tuple(normalized))
+        if self.candidate_delta is not None:
+            object.__setattr__(
+                self,
+                "candidate_delta",
+                normalize_scrc_candidate_delta(self.candidate_delta),
             )
-            if not isinstance(candidate, dict):
-                raise TypeError("previous_candidate must be an object")
-            object.__setattr__(self, "previous_candidate", candidate)
-        if self.selection_rank is None:
-            return
-        if self.kind is not FeedbackKind.GATE1:
-            raise ValueError("selection_rank is private Gate1 search state")
-        if (
-            len(self.selection_rank) != 6
-            or any(
-                isinstance(item, bool) or not isinstance(item, (int, float))
-                for item in self.selection_rank
-            )
-        ):
-            raise ValueError("selection_rank must be one Gate1 rank tuple")
-
     def to_json(self) -> dict[str, Any]:
         return {
             "kind": self.kind.value,
             "formal_round": self.formal_round,
             "diagnostics": dict(self.diagnostics),
-            "previous_artifact": (
-                self.previous_artifact.to_json()
-                if self.previous_artifact is not None else None
-            ),
-            "selection_rank": (
-                list(self.selection_rank)
-                if self.selection_rank is not None else None
-            ),
-            "previous_candidate": (
-                dict(self.previous_candidate)
-                if self.previous_candidate is not None else None
+            "open_guidance": [
+                dict(item) for item in self.open_guidance
+            ],
+            "resolved_guidance": [
+                dict(item) for item in self.resolved_guidance
+            ],
+            "candidate_delta": (
+                dict(self.candidate_delta)
+                if self.candidate_delta is not None else None
             ),
         }
 
@@ -1311,6 +1904,8 @@ class SCRCRunRequest:
     source: SourceProgram
     binding: HarnessBindingInstance
     frontend: str
+    source_facts: SourceFacts
+    construction: CanonicalConstruction
     max_gate1_rounds: int = MAX_GATE1_ROUNDS
     max_lift_calls: int = MAX_LIFT_CALLS
     max_pre_replay_rejections: int = MAX_PRE_REPLAY_REJECTIONS
@@ -1322,6 +1917,21 @@ class SCRCRunRequest:
             raise TypeError("SCRC request requires one SourceProgram")
         if not isinstance(self.binding, HarnessBindingInstance):
             raise TypeError("SCRC request requires one HarnessBindingInstance")
+        if not isinstance(self.source_facts, SourceFacts):
+            raise TypeError("SCRC request requires one canonical SourceFacts record")
+        if not isinstance(self.construction, CanonicalConstruction):
+            raise TypeError("SCRC request requires one canonical construction")
+        if self.construction.source_facts.digest != self.source_facts.digest:
+            raise ValueError("SCRC request construction differs from SourceFacts")
+        if self.source_facts.frontend != self.frontend:
+            raise ValueError("SCRC request SourceFacts frontend differs from request")
+        if self.source_facts.source_kind != self.source.lift_source_kind:
+            raise ValueError("SCRC request SourceFacts source kind differs from SourceProgram")
+        if (
+            self.source.lift_source_symbol is not None
+            and self.source_facts.source_symbol != self.source.lift_source_symbol
+        ):
+            raise ValueError("SCRC request SourceFacts symbol differs from SourceProgram")
         if not isinstance(self.max_gate1_rounds, int) or self.max_gate1_rounds < 1:
             raise ValueError("max_gate1_rounds must be positive")
         if (
@@ -1504,6 +2114,7 @@ class SCRCGateRunner:
 
     def __init__(self, dependencies: SCRCRunDependencies) -> None:
         self.dependencies = dependencies
+        self._owned_closed_searches: set[int] = set()
 
     @staticmethod
     def _run_semantic_probe(
@@ -1539,7 +2150,6 @@ class SCRCGateRunner:
         cls,
         result: Gate1ExecutionResult,
         formal_round: int,
-        artifact: Gate1Artifact,
         prior_feedback: LiftFeedback | None = None,
     ) -> LiftFeedback:
         normal = result.normal
@@ -1548,137 +2158,28 @@ class SCRCGateRunner:
             "diagnostic": normal.diagnostic,
         }
         if normal.comparison is not None:
-            diagnostics["observer_diff"] = _compact_gate1_observer_diff(
+            observer_diff = _compact_gate1_observer_diff(
                 normal.comparison,
                 source_fingerprint=result.source_fingerprint,
                 replay_fingerprint=normal.fingerprint,
             )
-        progress = cls._gate1_repair_progress(
-            artifact,
-            diagnostics,
-            cls._failed_gate1_rank(result),
-            prior_feedback,
-        )
-        if progress is not None:
-            diagnostics["repair_progress"] = progress
-        unresolved_gate2 = cls._unresolved_gate2(prior_feedback)
-        if unresolved_gate2 is not None:
-            diagnostics[UNRESOLVED_GATE2_DIAGNOSTIC] = unresolved_gate2
+            diagnostics["observer_diff"] = observer_diff
+            diagnostics["category_summary"] = observer_diff["category_summary"]
+            repair_cues = _gate1_repair_cues(observer_diff)
+            if repair_cues is not None:
+                diagnostics["repair_cues"] = repair_cues
         diagnostics = _prune_relift_diagnostics(diagnostics)
-        return LiftFeedback(
-            FeedbackKind.GATE1,
+        open_guidance, resolved_guidance = _merge_relift_guidance(
+            prior_feedback,
             diagnostics,
-            formal_round,
-            artifact,
-            cls._failed_gate1_rank(result),
         )
-
-    @classmethod
-    def _gate1_repair_progress(
-        cls,
-        artifact: Gate1Artifact,
-        diagnostics: Mapping[str, Any],
-        current_rank: tuple[int | float, ...] | None,
-        prior_feedback: LiftFeedback | None,
-    ) -> dict[str, Any] | None:
-        """Describe repair progress without constructing or editing semantics."""
-
-        if prior_feedback is None or prior_feedback.previous_artifact is None:
-            return None
-        parent = prior_feedback.previous_artifact
-        parent_payload = parent.to_json()
-        current_payload = artifact.to_json()
-        changed_paths, changed_path_count = _changed_json_paths(
-            parent_payload,
-            current_payload,
+        return LiftFeedback(
+            kind=FeedbackKind.GATE1,
+            diagnostics=diagnostics,
+            formal_round=formal_round,
+            open_guidance=open_guidance,
+            resolved_guidance=resolved_guidance,
         )
-        component_changed = {
-            component: parent_payload[component] != current_payload[component]
-            for component in ("j", "c", "pi")
-        }
-        parent_counts = _observer_category_counts(prior_feedback.diagnostics)
-        current_counts = _observer_category_counts(diagnostics)
-        category_delta = {
-            category: current_counts.get(category, 0) - parent_counts.get(category, 0)
-            for category in sorted(set(parent_counts) | set(current_counts))
-        }
-        parent_rank = prior_feedback.selection_rank
-        rank_relation = "not_comparable"
-        if current_rank is not None and parent_rank is not None:
-            rank_relation = (
-                "improved"
-                if current_rank > parent_rank
-                else "unchanged"
-                if current_rank == parent_rank
-                else "regressed"
-            )
-        if not any(component_changed.values()):
-            diagnostic = (
-                "The canonical J/C/pi artifact is unchanged, so the prior "
-                "Gate1 counterexample remains unresolved. Re-read the bounded "
-                "observer evidence and author a Source-justified semantic or "
-                "realization change before resubmitting."
-            )
-        elif rank_relation in {"regressed", "unchanged"}:
-            diagnostic = (
-                "The authored artifact changed, but the Gate1 diagnostic rank "
-                "did not improve. Use the component/path and category deltas to "
-                "choose a different Source-justified repair hypothesis."
-            )
-        else:
-            diagnostic = (
-                "The authored artifact changed. Continue from the selected "
-                "parent and use the remaining Gate1 categories as open "
-                "obligations; fixed code has not prescribed a repair."
-            )
-        return {
-            "protocol": GATE1_REPAIR_PROGRESS_PROTOCOL,
-            "parent_formal_round": prior_feedback.formal_round,
-            "component_changed": component_changed,
-            "artifact_changed": bool(changed_path_count),
-            "changed_path_count": changed_path_count,
-            "changed_paths": changed_paths,
-            "changed_paths_omitted": max(0, changed_path_count - len(changed_paths)),
-            "parent_category_counts": parent_counts,
-            "current_category_counts": current_counts,
-            "category_count_delta": category_delta,
-            "rank_relation": rank_relation,
-            "diagnostic": diagnostic,
-            "authority": (
-                "diagnostic-only comparison of LLM-authored artifacts and Gate1 "
-                "evidence; it never edits J/C/pi or certifies a candidate"
-            ),
-        }
-
-    @staticmethod
-    def _failed_gate1_rank(
-        result: Gate1ExecutionResult,
-    ) -> tuple[int | float, ...] | None:
-        """Return Gate1's diagnostic-only failed-candidate ordering.
-
-        The rank never accepts a candidate.  It only chooses which complete,
-        already TypeChecked LLM artifact and its exact counterexample become
-        the parent of the next Lift call.  A result without a comparable
-        observer verdict keeps the ordinary latest-candidate repair path.
-        """
-
-        comparison = result.normal.comparison
-        if comparison is None:
-            return None
-        rank = getattr(comparison, "rank_tuple", None)
-        if rank is None:
-            raw = comparison.to_dict()
-            rank = raw.get("rank_tuple") if isinstance(raw, Mapping) else None
-        if (
-            not isinstance(rank, (list, tuple))
-            or len(rank) != 6
-            or any(
-                isinstance(item, bool) or not isinstance(item, (int, float))
-                for item in rank
-            )
-        ):
-            return None
-        return tuple(rank)
 
     @staticmethod
     def _unresolved_gate1(
@@ -1707,22 +2208,6 @@ class SCRCGateRunner:
             "diagnostics": _prune_relift_diagnostics(dict(diagnostics)),
         }
 
-    @staticmethod
-    def _unresolved_gate2(
-        feedback: LiftFeedback | None,
-    ) -> dict[str, Any] | None:
-        if feedback is None:
-            return None
-        if feedback.kind is FeedbackKind.GATE2:
-            return {"diagnostics": dict(feedback.diagnostics)}
-        retained = feedback.diagnostics.get(UNRESOLVED_GATE2_DIAGNOSTIC)
-        if not isinstance(retained, Mapping):
-            return None
-        diagnostics = retained.get("diagnostics")
-        if not isinstance(diagnostics, Mapping):
-            return None
-        return {"diagnostics": _prune_relift_diagnostics(dict(diagnostics))}
-
     @classmethod
     def _retain_gate1_diagnostic(
         cls,
@@ -1730,31 +2215,52 @@ class SCRCGateRunner:
         feedback: LiftFeedback | None,
     ) -> dict[str, Any]:
         combined = dict(diagnostics)
+        # CandidateCheck/Decode failures often happen before the new response
+        # reaches SourceReconcile. Keep only the immutable Source frontier and
+        # the current bounded CandidateCheck diagnostics. Rejected candidate
+        # history is deliberately not carried across relift turns; the compact
+        # guidance frontier is the only cumulative provider context.
+        if feedback is not None:
+            for key in ("source_reconcile",):
+                if key not in combined and key in feedback.diagnostics:
+                    combined[key] = feedback.diagnostics[key]
         unresolved = cls._unresolved_gate1(feedback)
         if unresolved is not None:
             combined[UNRESOLVED_GATE1_DIAGNOSTIC] = unresolved
-        unresolved_gate2 = cls._unresolved_gate2(feedback)
-        if unresolved_gate2 is not None:
-            combined[UNRESOLVED_GATE2_DIAGNOSTIC] = unresolved_gate2
         return _prune_relift_diagnostics(combined)
 
     def search_gate1(
         self,
         request: SCRCRunRequest,
         *,
-        initial_feedback: LiftFeedback | None = None,
-        retry_initial_artifact: bool = False,
         stop_requested: Callable[[], int | None] | None = None,
         progress_callback: SCRCProgressCallback | None = None,
     ) -> SCRCGate1SearchReport:
-        """Search one isolated branch through TypeCheck and Gate1 only.
+        """Search one fresh isolated branch through TypeCheck and Gate1."""
 
-        ``initial_feedback`` resumes from an externally preserved TypeCheck,
-        Gate1, or J-side Gate2 failure.  By default it is context for the first
-        new Lift call only.  ``retry_initial_artifact`` may first run current
-        TypeCheck and one fresh formal Gate1 round over an exact TypeCheck- or
-        Gate1-backed parent; it never edits the artifact, and all new
-        Replay/Gate work is counted in this search.
+        report = self._search_gate1_transaction(
+            request,
+            stop_requested=stop_requested,
+            progress_callback=progress_callback,
+        )
+        if report.closed:
+            self._owned_closed_searches.add(id(report))
+        return report
+
+    def _search_gate1_transaction(
+        self,
+        request: SCRCRunRequest,
+        *,
+        replay_retry_artifact: Gate1Artifact | None = None,
+        stop_requested: Callable[[], int | None] | None = None,
+        progress_callback: SCRCProgressCallback | None = None,
+    ) -> SCRCGate1SearchReport:
+        """Execute one branch-local Gate1 search transaction.
+
+        The private artifact path is used only by the owning runner to
+        generate another source-blind Replay for the artifact that its current
+        search just closed.  Public callers cannot inject persisted feedback or
+        an artifact from another run/root.
         """
 
         search_started = time.monotonic()
@@ -1792,53 +2298,14 @@ class SCRCGateRunner:
             }
             return result
 
-        if initial_feedback is not None:
-            if not isinstance(initial_feedback, LiftFeedback):
-                raise TypeError("initial_feedback must be LiftFeedback")
-            if initial_feedback.kind not in {
-                FeedbackKind.TYPECHECK,
-                FeedbackKind.GATE1,
-                FeedbackKind.GATE2,
-            }:
-                raise ValueError(
-                    "initial_feedback must describe a TypeCheck, Gate1, or "
-                    "J-side Gate2 failure"
-                )
-            if initial_feedback.kind is FeedbackKind.GATE1:
-                if (
-                    not isinstance(initial_feedback.formal_round, int)
-                    or initial_feedback.formal_round < 1
-                ):
-                    raise ValueError(
-                        "initial Gate1 feedback requires a positive formal_round"
-                    )
-            elif initial_feedback.formal_round is not None:
-                raise ValueError(
-                    "initial TypeCheck/Gate2 feedback has no formal Gate1 round"
-                )
-            if initial_feedback.previous_artifact is None:
-                raise ValueError(
-                    "initial Gate1 feedback requires the exact previous artifact"
-                )
-            request.binding.validate_artifact(
-                initial_feedback.previous_artifact
+        if replay_retry_artifact is not None:
+            replay_retry_artifact = canonicalize_gate1_artifact(
+                replay_retry_artifact
             )
-        if retry_initial_artifact and (
-            initial_feedback is None
-            or initial_feedback.kind
-            not in {FeedbackKind.TYPECHECK, FeedbackKind.GATE1}
-        ):
-            raise ValueError(
-                "retry_initial_artifact requires exact TypeCheck or Gate1 "
-                "initial feedback"
-            )
+            request.binding.validate_artifact(replay_retry_artifact)
 
         attempts: list[CandidateAttemptReport] = []
-        feedback = initial_feedback
-        last_artifact = (
-            initial_feedback.previous_artifact
-            if initial_feedback is not None else None
-        )
+        feedback: LiftFeedback | None = None
         lift_calls = 0
         lift_physical_calls = 0
         typecheck_calls = 0
@@ -1850,11 +2317,7 @@ class SCRCGateRunner:
         terminal_stop_reason: str | None = None
         terminal_stop_observed_at: str | None = None
         gate1_adapters: list[Gate1AttemptAdapter] = []
-        pending_initial_artifact = (
-            initial_feedback.previous_artifact
-            if retry_initial_artifact and initial_feedback is not None
-            else None
-        )
+        pending_replay_artifact = replay_retry_artifact
 
         def budget() -> CallBudget:
             return CallBudget(
@@ -1892,28 +2355,27 @@ class SCRCGateRunner:
             if stopped is not None:
                 return stopped
             if (
-                pending_initial_artifact is None
+                pending_replay_artifact is None
                 and lift_calls >= request.max_lift_calls
             ):
                 terminal_stop_reason = "lift_call_cap"
                 terminal_stop_observed_at = "before_lift"
                 break
             lift_started = time.monotonic()
-            if pending_initial_artifact is not None:
+            if pending_replay_artifact is not None:
                 artifact = canonicalize_gate1_artifact(
-                    pending_initial_artifact
+                    pending_replay_artifact
                 )
-                pending_initial_artifact = None
+                pending_replay_artifact = None
                 attempt_lift_call = 0
                 lift_metadata: Mapping[str, Any] = {
-                    "initial_artifact_gate1_retry": True,
+                    "current_artifact_gate1_retry": True,
                     "model_calls": 0,
                 }
-                last_artifact = artifact
                 record_stage(
                     "lift",
                     lift_started,
-                    "initial_artifact_retry",
+                    "current_artifact_retry",
                     attempt=0,
                 )
             else:
@@ -1944,18 +2406,23 @@ class SCRCGateRunner:
                         None,
                         "rejected",
                     )
-                    previous_candidate = exc.candidate_draft
-                    if previous_candidate is None and (
-                        feedback is not None
-                        and feedback.kind is FeedbackKind.LIFT
-                    ):
-                        previous_candidate = feedback.previous_candidate
+                    # A decoded candidate rejected before the structural
+                    # boundary is diagnostic-only and never becomes authoring
+                    # state for the next fresh lifecycle.
+                    merged_diagnostics = self._retain_gate1_diagnostic(
+                        exc.diagnostics,
+                        feedback,
+                    )
+                    open_guidance, resolved_guidance = _merge_relift_guidance(
+                        feedback,
+                        merged_diagnostics,
+                    )
                     feedback = LiftFeedback(
-                        FeedbackKind.LIFT,
-                        self._retain_gate1_diagnostic(exc.diagnostics, feedback),
-                        None,
-                        None if previous_candidate is not None else last_artifact,
-                        previous_candidate=previous_candidate,
+                        kind=FeedbackKind.LIFT,
+                        diagnostics=merged_diagnostics,
+                        open_guidance=open_guidance,
+                        resolved_guidance=resolved_guidance,
+                        candidate_delta=exc.candidate_delta,
                     )
                     attempts.append(
                         CandidateAttemptReport(
@@ -2005,7 +2472,6 @@ class SCRCGateRunner:
                 artifact = canonicalize_gate1_artifact(lift_result.artifact)
                 attempt_lift_call = lift_calls
                 lift_metadata = lift_result.metadata
-                last_artifact = artifact
             stopped = superseded("after_lift")
             if stopped is not None:
                 attempts.append(
@@ -2056,13 +2522,21 @@ class SCRCGateRunner:
             )
             if not report.passed:
                 pre_replay_rejections += 1
+                typecheck_diagnostics = {"typecheck": report.to_json()}
+                open_guidance, resolved_guidance = _merge_relift_guidance(
+                    feedback,
+                    typecheck_diagnostics,
+                )
+                # TypeCheck rejects this candidate. Expose only its structural
+                # delta and diagnostics to the next fresh lifecycle.
                 feedback = LiftFeedback(
-                    FeedbackKind.TYPECHECK,
-                    self._retain_gate1_diagnostic(
-                        {"typecheck": report.to_json()}, feedback
+                    kind=FeedbackKind.TYPECHECK,
+                    diagnostics=self._retain_gate1_diagnostic(
+                        typecheck_diagnostics,
+                        feedback,
                     ),
-                    None,
-                    artifact,
+                    open_guidance=open_guidance,
+                    resolved_guidance=resolved_guidance,
                 )
                 attempts.append(
                     CandidateAttemptReport(
@@ -2116,27 +2590,42 @@ class SCRCGateRunner:
                     str(probe_result.get("status", "unavailable")),
                     attempt=attempt_lift_call,
                 )
-                if probe_result.get("status") == "diverged":
+                probe_status = probe_result.get("status")
+                repairable_probe = probe_result.get("repairable") is True
+                if probe_status == "diverged" or repairable_probe:
                     pre_replay_rejections += 1
+                    if repairable_probe:
+                        diagnostic = (
+                            "public Source-vs-J semantic probe found an incomplete, "
+                            "directly expressible J reference domain"
+                        )
+                        failure_class = "lift_semantic_probe_repairable_unsupported"
+                    else:
+                        diagnostic = (
+                            "public Source-vs-J semantic probe found a divergence"
+                        )
+                        failure_class = "lift_semantic_probe_diverged"
+                    probe_diagnostics = {
+                        "diagnostic": diagnostic,
+                        "failure_class": failure_class,
+                        "semantic_probe": probe_result,
+                        "authority": (
+                            "diagnostic-only public Source-vs-J comparison; "
+                            "it never edits or certifies the artifact"
+                        ),
+                    }
+                    open_guidance, resolved_guidance = _merge_relift_guidance(
+                        feedback,
+                        probe_diagnostics,
+                    )
                     feedback = LiftFeedback(
-                        FeedbackKind.LIFT,
-                        self._retain_gate1_diagnostic(
-                            {
-                                "diagnostic": (
-                                    "public Source-vs-J semantic probe found a "
-                                    "divergence"
-                                ),
-                                "failure_class": "lift_semantic_probe_diverged",
-                                "semantic_probe": probe_result,
-                                "authority": (
-                                    "diagnostic-only public Source-vs-J comparison; "
-                                    "it never edits or certifies the artifact"
-                                ),
-                            },
+                        kind=FeedbackKind.LIFT,
+                        diagnostics=self._retain_gate1_diagnostic(
+                            probe_diagnostics,
                             feedback,
                         ),
-                        None,
-                        artifact,
+                        open_guidance=open_guidance,
+                        resolved_guidance=resolved_guidance,
                     )
                     attempts.append(
                         CandidateAttemptReport(
@@ -2149,7 +2638,6 @@ class SCRCGateRunner:
                             lift_metadata=lift_metadata,
                         )
                     )
-                    last_artifact = artifact
                     stopped = superseded("after_semantic_probe")
                     if stopped is not None:
                         return stopped
@@ -2185,81 +2673,189 @@ class SCRCGateRunner:
                 next_formal_round,
                 "started",
             )
-            gate1_adapter = self.dependencies.gate1_factory(next_formal_round)
-            if any(gate1_adapter is previous for previous in gate1_adapters):
-                raise SCRCInfrastructureError(
-                    "gate1_factory reused an attempt adapter; Replay must be fresh"
+            replay_generation_retries = 0
+            replay_response_rejected_before_formal = False
+            while True:
+                gate1_adapter = self.dependencies.gate1_factory(
+                    next_formal_round
                 )
-            gate1_adapters.append(gate1_adapter)
-            replay_gate1_started = time.monotonic()
-            gate1 = gate1_adapter.run(artifact, request)
-            record_stage(
-                "replay_gate1",
-                replay_gate1_started,
-                gate1.status.value,
-                formal_round=next_formal_round,
-            )
-            normal_arms_for_progress = (
-                gate1.normal_candidates
-                if gate1.normal_candidates
-                else (gate1.normal,)
-            )
-            replay_was_generated = any(
-                arm.generation is not None for arm in normal_arms_for_progress
-            )
-            replay_generation_failed = (
-                not replay_was_generated
-                and any(
-                    (arm.diagnostic or "").startswith("generation failed:")
-                    for arm in normal_arms_for_progress
+                if any(gate1_adapter is previous for previous in gate1_adapters):
+                    raise SCRCInfrastructureError(
+                        "gate1_factory reused an attempt adapter; Replay must be fresh"
+                    )
+                gate1_adapters.append(gate1_adapter)
+                replay_gate1_started = time.monotonic()
+                gate1 = gate1_adapter.run(artifact, request)
+                record_stage(
+                    "replay_gate1",
+                    replay_gate1_started,
+                    gate1.status.value,
+                    formal_round=next_formal_round,
                 )
-            )
-            # If every authored Replay failed before a TTIR comparison, Gate1 has
-            # learned nothing about J/C/pi.  A fresh source-blind Replay should retry
-            # the same TypeCheck-valid artifact; sending this compiler-only failure
-            # through Lift would waste a semantic rewrite and can corrupt a correct J.
-            replay_compile_failed_before_comparison = (
-                replay_was_generated
-                and not any(
-                    arm.comparison is not None for arm in normal_arms_for_progress
+                normal_arms_for_progress = (
+                    gate1.normal_candidates
+                    if gate1.normal_candidates
+                    else (gate1.normal,)
                 )
-                and any(
+                replay_was_generated = any(
                     arm.generation is not None
-                    and arm.compile_result is not None
-                    and not arm.compile_result.ok
                     for arm in normal_arms_for_progress
                 )
-                and not any(
-                    arm.compile_result is not None and arm.compile_result.ok
-                    for arm in normal_arms_for_progress
+                replay_generation_failed = (
+                    not replay_was_generated
+                    and any(
+                        (arm.diagnostic or "").startswith("generation failed:")
+                        for arm in normal_arms_for_progress
+                    )
                 )
-            )
-            if replay_generation_failed:
-                _notify_progress(
-                    progress_callback,
-                    "replay",
-                    None,
-                    next_formal_round,
-                    "not_run",
+                # Count every actual writer invocation, including a response
+                # rejected before formal K. Formal rounds remain unchanged.
+                replay_normal_calls += gate1.normal_calls
+                replay_masked_calls += gate1.masked_j_calls
+                for arm in (*normal_arms_for_progress, gate1.masked_j):
+                    if arm is None:
+                        continue
+                    replay_physical_calls += (
+                        arm.physical_calls
+                        if arm.physical_calls
+                        else (
+                            arm.generation.attempts
+                            if arm.generation is not None
+                            else 0
+                        )
+                    )
+                # If every authored Replay failed before a TTIR comparison,
+                # Gate1 learned nothing about J/C/pi. Retry the same exact
+                # artifact with one fresh source-blind writer. This retry is
+                # not a formal round and never falls through to Lift.
+                if replay_generation_failed:
+                    if replay_generation_retries < MAX_REPLAY_GENERATION_RETRIES:
+                        replay_generation_retries += 1
+                        _notify_progress(
+                            progress_callback,
+                            "replay",
+                            None,
+                            next_formal_round,
+                            "retrying",
+                        )
+                        _notify_progress(
+                            progress_callback,
+                            "gate1",
+                            None,
+                            next_formal_round,
+                            "retrying",
+                        )
+                        continue
+                    _notify_progress(
+                        progress_callback,
+                        "replay",
+                        None,
+                        next_formal_round,
+                        "not_run",
+                    )
+                    if _is_replay_response_rejection(gate1):
+                        _notify_progress(
+                            progress_callback,
+                            "gate1",
+                            None,
+                            next_formal_round,
+                            "replay_response_rejected",
+                        )
+                        attempts.append(
+                            CandidateAttemptReport(
+                                lift_call=attempt_lift_call,
+                                formal_round=None,
+                                typecheck_status=TypeCheckStatus.PASS,
+                                artifact=artifact,
+                                typecheck=report,
+                                gate1=gate1,
+                                feedback=None,
+                                lift_metadata=lift_metadata,
+                            )
+                        )
+                        stopped = superseded("after_replay_generation")
+                        if stopped is not None:
+                            return stopped
+                        # A rejected Replay response never consumed formal K
+                        # and supplies neither a repair base nor candidate
+                        # feedback.  It must not, however, terminate a
+                        # fresh-Lift budget early: the next loop iteration
+                        # invokes a new Lift lifecycle with no inherited
+                        # candidate, Replay source, or trajectory.
+                        replay_response_rejected_before_formal = True
+                        break
+                    _notify_progress(
+                        progress_callback,
+                        "gate1",
+                        None,
+                        next_formal_round,
+                        "infrastructure_failed",
+                    )
+                    raise SCRCInfrastructureError(
+                        "Gate1 Replay generation failed before a formal comparison; "
+                        "formal K was not consumed",
+                        evidence={
+                            "attempted_formal_round": next_formal_round,
+                            "formal_gate1_rounds_consumed": formal_rounds,
+                            "replay_normal_calls": replay_normal_calls,
+                            "replay_masked_calls": replay_masked_calls,
+                            "replay_physical_calls": replay_physical_calls,
+                            "replay_generation_failures": [
+                                {
+                                    key: value
+                                    for diagnostic in arm.ingress_diagnostics
+                                    if isinstance(diagnostic, Mapping)
+                                    for key, value in diagnostic.items()
+                                    if key
+                                    in {
+                                        "rule_code",
+                                        "path",
+                                        "provider_failure_class",
+                                        "physical_provider_calls",
+                                        "exception_type",
+                                    }
+                                    and (
+                                        isinstance(value, str)
+                                        or (
+                                            isinstance(value, int)
+                                            and not isinstance(value, bool)
+                                        )
+                                    )
+                                }
+                                for arm in normal_arms_for_progress
+                                if arm.generation is None
+                            ],
+                            "artifact": artifact.to_json(),
+                            "typecheck": report.to_json(),
+                            "gate1": gate1.to_json(),
+                        },
+                    )
+                # The final non-generation-failure result below is the only
+                # result that can consume this formal Gate1 round.
+                replay_compile_failed_before_comparison = (
+                    replay_was_generated
+                    and not any(
+                        arm.comparison is not None
+                        for arm in normal_arms_for_progress
+                    )
+                    and any(
+                        arm.generation is not None
+                        and arm.compile_result is not None
+                        and not arm.compile_result.ok
+                        for arm in normal_arms_for_progress
+                    )
+                    and not any(
+                        arm.compile_result is not None and arm.compile_result.ok
+                        for arm in normal_arms_for_progress
+                    )
                 )
-                _notify_progress(
-                    progress_callback,
-                    "gate1",
-                    None,
-                    next_formal_round,
-                    "infrastructure_failed",
-                )
-                raise SCRCInfrastructureError(
-                    "Gate1 Replay generation failed before a formal comparison; "
-                    "formal K was not consumed",
-                    evidence={
-                        "attempted_formal_round": next_formal_round,
-                        "formal_gate1_rounds_consumed": formal_rounds,
-                        "artifact": artifact.to_json(),
-                        "typecheck": report.to_json(),
-                        "gate1": gate1.to_json(),
-                    },
-                )
+                break
+            if replay_response_rejected_before_formal:
+                # The ``break`` above leaves the generation-retry loop.  This
+                # ``continue`` belongs to the outer Lift search loop: formal K
+                # remains unconsumed and the next candidate starts from a new
+                # legal Lift lifecycle.
+                continue
             formal_rounds = next_formal_round
             _notify_progress(
                 progress_callback,
@@ -2275,21 +2871,6 @@ class SCRCGateRunner:
                 formal_rounds,
                 gate1.status.value,
             )
-            replay_normal_calls += gate1.normal_calls
-            replay_masked_calls += gate1.masked_j_calls
-            normal_arms = normal_arms_for_progress
-            for arm in (*normal_arms, gate1.masked_j):
-                if arm is None:
-                    continue
-                replay_physical_calls += (
-                    arm.physical_calls
-                    if arm.physical_calls
-                    else (
-                        arm.generation.attempts
-                        if arm.generation is not None
-                        else 0
-                    )
-                )
             if gate1.status is Gate1Status.COMPILE_FAILED:
                 raise SCRCInfrastructureError(
                     "Gate1 source compilation failed; it is not a closure verdict",
@@ -2299,6 +2880,46 @@ class SCRCGateRunner:
                         "typecheck": report.to_json(),
                         "gate1": gate1.to_json(),
                     },
+                )
+            if _masked_replay_incomplete(gate1):
+                _notify_progress(
+                    progress_callback,
+                    "replay",
+                    None,
+                    formal_rounds,
+                    "masked_incomplete",
+                )
+                _notify_progress(
+                    progress_callback,
+                    "gate1",
+                    None,
+                    formal_rounds,
+                    "masked_replay_incomplete",
+                )
+                attempts.append(
+                    CandidateAttemptReport(
+                        lift_call=attempt_lift_call,
+                        formal_round=formal_rounds,
+                        typecheck_status=TypeCheckStatus.PASS,
+                        artifact=artifact,
+                        typecheck=report,
+                        gate1=gate1,
+                        feedback=None,
+                        lift_metadata=lift_metadata,
+                    )
+                )
+                stopped = superseded("after_gate1")
+                if stopped is not None:
+                    return stopped
+                return SCRCGate1SearchReport(
+                    status=Gate1SearchStatus.NO_CLOSURE,
+                    attempts=tuple(attempts),
+                    accepted_attempt=None,
+                    j_necessity_status=None,
+                    call_budget=budget(),
+                    stop_reason="masked_replay_incomplete",
+                    stop_observed_at="after_gate1",
+                    stage_metrics=completed_metrics("no_closure"),
                 )
             if gate1.status is not Gate1Status.REPLAY_CLOSED:
                 source_observer_unsupported = (
@@ -2334,7 +2955,6 @@ class SCRCGateRunner:
                 candidate_feedback = self._gate1_feedback(
                     gate1,
                     formal_rounds,
-                    artifact,
                     feedback,
                 )
                 attempts.append(
@@ -2349,14 +2969,12 @@ class SCRCGateRunner:
                         lift_metadata=lift_metadata,
                     )
                 )
-                # The same branch-local Lift owner continues from the exact
-                # candidate it just authored. Comparator rank remains diagnostic
-                # evidence only; fixed code never substitutes an older "best"
-                # parent behind the owner's conversation.
+                # The next Lift call receives only sanitized rule-level
+                # guidance. The current artifact remains evidence for this
+                # attempt and is never a new authoring base.
                 feedback = candidate_feedback
-                last_artifact = artifact
                 if replay_compile_failed_before_comparison:
-                    pending_initial_artifact = artifact
+                    pending_replay_artifact = artifact
                 stopped = superseded("after_gate1")
                 if stopped is not None:
                     return stopped
@@ -2406,6 +3024,45 @@ class SCRCGateRunner:
             stop_observed_at=terminal_stop_observed_at,
             stage_metrics=completed_metrics("no_closure"),
         )
+
+    def retry_current_gate1_replay(
+        self,
+        request: SCRCRunRequest,
+        search: SCRCGate1SearchReport,
+        *,
+        progress_callback: SCRCProgressCallback | None = None,
+    ) -> SCRCGate1SearchReport:
+        """Run one fresh Replay/Gate1 round for this runner's closed search.
+
+        This is an in-memory continuation of the current Kernel lifecycle, not
+        a persisted-parent API.  It accepts the closed search report rather
+        than an artifact so callers cannot select an older candidate or use a
+        rejected draft as the Replay base.  No Lift call is permitted.
+        """
+
+        if id(search) not in self._owned_closed_searches:
+            raise ValueError(
+                "Replay retry requires a Gate1-closed report produced by this "
+                "current runner"
+            )
+        accepted = self._accepted_search_attempt(search)
+        artifact = accepted.artifact
+        assert artifact is not None
+        retry_request = replace(
+            request,
+            max_gate1_rounds=1,
+            max_pre_replay_rejections=1,
+        )
+        retried = self._search_gate1_transaction(
+            retry_request,
+            replay_retry_artifact=artifact,
+            progress_callback=progress_callback,
+        )
+        if retried.call_budget.lift_calls != 0:
+            raise SCRCInfrastructureError(
+                "current-artifact Replay retry unexpectedly invoked Lift"
+            )
+        return retried
 
     @staticmethod
     def _accepted_search_attempt(

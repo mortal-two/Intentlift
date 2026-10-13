@@ -5,6 +5,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Mapping
 
+from intentir.ir.canonical_j import j_elaboration
+
 from .cuda_compiler import (
     CudaCompileCase,
     CudaCompileResult,
@@ -25,6 +27,7 @@ from .orchestrate import (
     Gate1ExecutionResult,
     canonical_artifact_digest,
 )
+from .pi import canonical_program_coordinate_projection
 from .profile import CUDA_OBSERVER_PROFILE, TILELANG_OBSERVER_PROFILE
 from .ptx import PTXComparator, PTXFingerprint, fingerprint_ptx
 from .replay import ReplayWriter
@@ -47,6 +50,7 @@ def _identity_normalization(
     not select, erase, or rewrite one of them.
     """
 
+    program_projection = canonical_program_coordinate_projection(artifact.pi)
     return {
         "protocol": NORMALIZER_PROTOCOL,
         "profile_ok": True,
@@ -57,7 +61,7 @@ def _identity_normalization(
         "transformed_occurrences": 0,
         "active_rules": [],
         "hard_relations": (
-            ["program_axes"] if artifact.pi.program_axes else []
+            [program_projection.family] if program_projection.has_mapping else []
         ),
         "hard_preservation_check": "passed",
         "idempotence_check": "passed",
@@ -211,8 +215,15 @@ def _validate_compiled_interface(
     signature = artifact.j.signature.parameters
     if len(raw_parameters) != len(signature):
         raise ValueError(f"{frontend} compiled parameter count differs from J.signature")
+    # The native compiler interface may validate input declarations directly,
+    # but output dtype/rank must come from the one canonical output/return/ABI
+    # record rather than a second ``intent.outputs`` projection.
     tensors = {
-        item.name: item for item in (*artifact.j.intent.inputs, *artifact.j.intent.outputs)
+        **{item.name: item for item in artifact.j.intent.inputs},
+        **{
+            binding.output: binding.output_type
+            for binding in j_elaboration(artifact.j).output_bindings
+        },
     }
     expected_kind = {
         ParameterKind.POINTER: "pointer",
@@ -564,8 +575,14 @@ class CudaGate1Runner:
                 source_case,
                 masked=True,
             )
+        status = (
+            Gate1Status.REPLAY_CLOSED
+            if not self.config.run_masked_j
+            or (masked_evidence is not None and masked_evidence.comparable)
+            else Gate1Status.NO_CLOSURE
+        )
         return Gate1ExecutionResult(
-            Gate1Status.REPLAY_CLOSED,
+            status,
             digest,
             source_compile,
             source_fingerprint,
@@ -772,8 +789,14 @@ class TileLangGate1Runner:
                 source_case,
                 masked=True,
             )
+        status = (
+            Gate1Status.REPLAY_CLOSED
+            if not self.config.run_masked_j
+            or (masked_evidence is not None and masked_evidence.comparable)
+            else Gate1Status.NO_CLOSURE
+        )
         return Gate1ExecutionResult(
-            Gate1Status.REPLAY_CLOSED,
+            status,
             digest,
             source_compile,
             source_fingerprint,

@@ -54,6 +54,12 @@ from intentir.verify.gate1.tilelang_compiler import (
     TileLangKernelSource,
 )
 from intentir.ir.value_dimension import resolve_runtime_output_shapes
+from intentir.ir.canonical_j import j_elaboration
+from intentir.ir.canonical_construction import (
+    CanonicalConstruction,
+    CanonicalHandleAllocator,
+    SourceFacts,
+)
 from intentir.verify.gate2.native import (
     NativeArgument,
     NativeArgumentRole,
@@ -1048,10 +1054,27 @@ class PreparedFrontendDatasetWorkload:
             lift_constexpr_parameters=projection.constexpr_parameters,
             lift_source_to_opaque=lift_mapping,
         )
+        source_facts = SourceFacts.from_compiler_view(
+            prepared.compiler_view,
+            frontend=prepared.request.frontend,
+            source_kind=request_source.lift_source_kind,
+            source_symbol=projection.function,
+            source_to_opaque=prepared.source_to_opaque,
+            source_digest=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            source_slice_digest=hashlib.sha256(
+                projection.code.encode("utf-8")
+            ).hexdigest(),
+        )
+        construction = CanonicalConstruction.from_source_facts(
+            source_facts,
+            source_text=projection.code,
+        )
         request = SCRCRunRequest(
             request_source,
             prepared.request.binding,
             prepared.request.frontend,
+            source_facts,
+            construction,
             max_gate1_rounds=prepared.request.max_gate1_rounds,
             max_lift_calls=prepared.request.max_lift_calls,
             max_pre_replay_rejections=prepared.request.max_pre_replay_rejections,
@@ -2071,10 +2094,9 @@ def _stable_dataset_source_mapping(
             "Dataset source parameters and compiler slots overlap: "
             + ", ".join(sorted(overlap))
         )
-    result = {name: f"p{index}" for index, name in enumerate(source_parameters)}
-    for index, name in enumerate(compiler_slots):
-        result[name] = f"c{index}"
-    return result
+    return dict(
+        CanonicalHandleAllocator.abi_mapping(source_parameters, compiler_slots)
+    )
 
 
 def _dataset_manifest_arguments(
@@ -2373,10 +2395,6 @@ def prepare_frontend_dataset_workload(
         for axis, extent in zip(("x", "y", "z"), adapter.block, strict=True)
         if extent != 1
     }
-    opaque_schedule = {
-        f"c{index}": value
-        for index, value in enumerate(source_schedule.values())
-    }
     if adapter.frontend == "tilelang":
         metadata_kernel = _generated_companion(kernel, catalog.kernels)
         projection = _materialize_tilelang_projection(
@@ -2415,12 +2433,6 @@ def prepare_frontend_dataset_workload(
             kernel.symbol,
             factory_kwargs=adapter.factory_kwarg_map,
         )
-        gate_case: Any = TileLangCompileCase(
-            tuple(item.frontend_parameter() for item in gate_parameters),
-            adapter.grid,
-            adapter.block,
-            opaque_schedule,
-        )
         metadata = metadata_kernel.metadata
     else:
         metadata = _runtime_metadata(kernel)
@@ -2449,17 +2461,6 @@ def prepare_frontend_dataset_workload(
             kernel.location,
         )
         gate_source = CudaKernelSource.from_file(kernel.path, kernel.symbol)
-        gate_case = CudaCompileCase(
-            tuple(item.frontend_parameter() for item in gate_parameters),
-            adapter.grid,
-            adapter.block,
-            opaque_schedule,
-            adapter.cuda_arch,
-            include_dirs=resolve_cuda_include_dirs(kernel),
-            physical_parameters=tuple(
-                item.frontend_parameter() for item in parameters
-            ),
-        )
     if (
         adapter.descriptor_sha256
         and _descriptor_sha256(metadata) != adapter.descriptor_sha256.lower()
@@ -2500,6 +2501,30 @@ def prepare_frontend_dataset_workload(
         projection.parameters,
         tuple(compiler_view.compiler_slots),
     )
+    # Harness execution receives the same c* bindings declared by SourceFacts;
+    # it must not independently allocate a schedule namespace.
+    opaque_schedule = {
+        source_to_opaque[name]: value for name, value in source_schedule.items()
+    }
+    if adapter.frontend == "tilelang":
+        gate_case: Any = TileLangCompileCase(
+            tuple(item.frontend_parameter() for item in gate_parameters),
+            adapter.grid,
+            adapter.block,
+            opaque_schedule,
+        )
+    else:
+        gate_case = CudaCompileCase(
+            tuple(item.frontend_parameter() for item in gate_parameters),
+            adapter.grid,
+            adapter.block,
+            opaque_schedule,
+            adapter.cuda_arch,
+            include_dirs=resolve_cuda_include_dirs(kernel),
+            physical_parameters=tuple(
+                item.frontend_parameter() for item in parameters
+            ),
+        )
     if adapter.frontend == "tilelang":
         _anonymous, _binding, python_mapping = anonymize_source(
             projection.code,
@@ -2555,18 +2580,32 @@ def prepare_frontend_dataset_workload(
         f"{profile.profile_id}@{profile.profile_version}",
         adapter.gate2_policy,
     )
+    request_source = SourceProgram(
+        lift_source,
+        gate_source,
+        lift_source_kind=lift_source_kind,
+        lift_source_symbol=projection.function,
+        lift_parameter_order=projection.parameters,
+        lift_constexpr_parameters=projection.constexpr_parameters,
+        lift_source_to_opaque=tuple(source_to_opaque.items())
+        if lift_source_kind == "cuda"
+        else (),
+    )
+    source_facts = SourceFacts.from_compiler_view(
+        compiler_view,
+        frontend=adapter.frontend,
+        source_kind=lift_source_kind,
+        source_symbol=projection.function,
+        source_to_opaque=source_to_opaque,
+        source_digest=hashlib.sha256(source_code.encode("utf-8")).hexdigest(),
+        source_slice_digest=hashlib.sha256(lift_source.encode("utf-8")).hexdigest(),
+    )
+    construction = CanonicalConstruction.from_source_facts(
+        source_facts,
+        source_text=lift_source,
+    )
     request = SCRCRunRequest(
-        SourceProgram(
-            lift_source,
-            gate_source,
-            lift_source_kind=lift_source_kind,
-            lift_source_symbol=projection.function,
-            lift_parameter_order=projection.parameters,
-            lift_constexpr_parameters=projection.constexpr_parameters,
-            lift_source_to_opaque=tuple(source_to_opaque.items())
-            if lift_source_kind == "cuda"
-            else (),
-        ),
+        request_source,
         HarnessBindingInstance.create(
             opaque_schedule,
             gate1_case=gate_case,
@@ -2579,6 +2618,8 @@ def prepare_frontend_dataset_workload(
             },
         ),
         adapter.frontend,
+        source_facts,
+        construction,
     )
     return PreparedFrontendDatasetWorkload(
         adapter,
@@ -2685,6 +2726,9 @@ def build_frontend_dataset_gate2_suite(
     input_bindings: dict[str, str] = {}
     output_bindings: dict[str, str] = {}
     observed_output_shapes: dict[str, tuple[int, ...]] = {}
+    elaboration = j_elaboration(artifact.j)
+    canonical_outputs = elaboration.output_bindings
+    canonical_output_by_name = elaboration.output_by_name
     # ``arguments`` is the logical ABI consumed by Replay.  Source arguments
     # may replace selected logical inputs with physical CUtensorMap values.
     arguments: list[NativeArgument] = []
@@ -2794,10 +2838,12 @@ def build_frontend_dataset_gate2_suite(
         )
         if tensor is None:
             raise ValueError("Dataset pointer must anchor a J input/output tensor")
-        if tensor.dtype != binding.dtype:
+        output_binding = canonical_output_by_name.get(logical_ref)
+        binding_type = output_binding.output_type if output_binding is not None else tensor
+        if binding_type.dtype != binding.dtype:
             raise ValueError("accepted J tensor dtype differs from Dataset ABI")
         _bind_shape(
-            tensor.shape,
+            binding_type.shape,
             binding.shape,
             dimensions,
             dynamic_output=parameter.mode is ParameterMode.OUTPUT,
@@ -2869,6 +2915,12 @@ def build_frontend_dataset_gate2_suite(
         raise ValueError("Dataset Harness input bindings differ from accepted J")
     if set(output_bindings) != set(j_outputs):
         raise ValueError("Dataset Harness output bindings differ from accepted J")
+    if tuple(item.output for item in canonical_outputs) != tuple(
+        item.name for item in artifact.j.intent.outputs
+    ):
+        raise ValueError(
+            "J output declarations differ from canonical output ABI order"
+        )
     values = materialize_ragged_input_values(
         artifact.j,
         values,
@@ -2880,12 +2932,15 @@ def build_frontend_dataset_gate2_suite(
     ]
     resolved_output_shapes = resolve_runtime_output_shapes(
         artifact.j.intent,
-        [item.shape for item in artifact.j.intent.outputs],
+        [list(item.output_type.shape) for item in canonical_outputs],
         runtime_inputs,
         dims=dimensions,
+        canonical_output_bindings=canonical_outputs,
     )
     for output, resolved_shape in zip(
-        artifact.j.intent.outputs, resolved_output_shapes, strict=True
+        (j_outputs[item.output] for item in canonical_outputs),
+        resolved_output_shapes,
+        strict=True,
     ):
         observed_shape = observed_output_shapes.get(output.name)
         if observed_shape is None:
@@ -2932,7 +2987,7 @@ def build_frontend_dataset_gate2_suite(
             else None
         ),
     )
-    output_keys = tuple(output_bindings[item.name] for item in artifact.j.intent.outputs)
+    output_keys = tuple(output_bindings[item.output] for item in canonical_outputs)
     case = Gate2Case(
         case_id,
         refeval.j,

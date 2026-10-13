@@ -1,6 +1,8 @@
-# 真实 Kernel 示例
+# 真实 Kernel 语义示例与闭包证据
 
-示例为一个已经完成真实 Source、Replay、Gate1 和 Gate2 闭环的例子，便于理解 `J/C/π` 的边界。例子是 `high_performance:liger_softmax`，不是 mock、单元、测试或合成 canary。
+本页使用 `high_performance:liger_softmax` 说明 `J/C/π` 的语义边界；它是真实
+Dataset Kernel，不是 mock、单元测试或合成 canary。但该 softmax 示例不是当前
+`docs/project-guide/real-evidence` 保留的闭包证据，也不能用来替代当前 fresh 重测结果。
 
 ## Source
 
@@ -118,10 +120,18 @@ a1 <- p1, axis_ref = x0, relation = address_recomputed
                          Source–Replay ∧ Source–J ∧ Replay–J
 ```
 
-本例的实际运行证据目录是：
+按当前证据保留约束，仓库内只保留一个真实 Kernel 闭包证据：
 
 ```text
-real-evidence/retry-02/liger_softmax/run-001/
+real-evidence/liger_swiglu/closure/
 ```
 
-完整计时和三条比较边见 [真实运行结果与 evidence](run-results.md)。
+该目录对应 `high_performance:liger_swiglu`，权威摘要为
+`classification=scrc_certified`、`main_status=SCRC_CERTIFIED`、
+`j_necessity_status=proved`、TypeCheck 实际调用 `1` 次、Gate2 `gate2_pass=1`，且
+Source–Replay、Source–J、Replay–J 三条比较边已完成。这些是 swiglu 的证据事实，
+不应倒灌为上文 softmax 语义示例的当前闭包结论。
+
+当前全局闭包数、阶段结果与后续重测状态仅在
+[唯一最终任务](../final-task.md) 维护；未经用户再次明确要求，后续 Kernel 结果不再
+写入 `real-evidence` 目录。

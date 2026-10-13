@@ -16,24 +16,27 @@ from __future__ import annotations
 import ast
 import copy
 import json
-import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, Mapping, Sequence, TYPE_CHECKING
+from typing import Any, Mapping, Sequence, TYPE_CHECKING
 
+from .canonical_construction import (
+    CanonicalConstructionRecords,
+    canonical_boundary_records,
+    canonical_operation_records,
+)
 from .model import (
     IntentFunction,
     IntentOp,
     ValueType,
     validate_loop_wiring,
     validate_ragged_region_boundaries,
-    walk_intent_op_paths,
     walk_intent_op_scopes,
-    walk_intent_ops,
 )
 from .intent_op_contract import (
     IntentOpContractError,
     RAGGED_OPS,
+    _broadcast_projection,
     is_non_boolean_integer_dtype,
     is_ragged_carrier_dtype,
     validate_const_literal,
@@ -488,8 +491,32 @@ class CanonicalBoundaryAccess:
 @dataclass(frozen=True)
 class CanonicalOutputBinding:
     output: str
+    output_type: CanonicalValueType
     value: str
     node_ref: str | None
+    abi_index: int
+    abi_parameter_index: int
+    return_index: int
+    mapping_index: int | None
+    abi_parameter_name: str
+    abi_parameter_mode: str
+    mapping_value: str | None
+    authored_node_ref: str | None
+    producer_record: Mapping[str, Any] | None
+
+    @property
+    def store_node_ref(self) -> str | None:
+        """Return the canonical physical store anchor for this output.
+
+        ``node_ref`` is the SSA producer of ``value``.  An explicit sparse
+        output mapping may additionally name the store/scatter that writes
+        the ABI output; that anchor is kept in ``authored_node_ref``.  A
+        consumer that validates a physical output access must use this
+        projection instead of comparing the producer directly with the store
+        operation.
+        """
+
+        return self.authored_node_ref or self.node_ref
 
 
 @dataclass(frozen=True)
@@ -500,7 +527,10 @@ class JElaboration:
     accesses: tuple[CanonicalBoundaryAccess, ...]
     value_types: tuple[tuple[str, CanonicalValueType], ...]
     output_bindings: tuple[CanonicalOutputBinding, ...]
+    operation_records: tuple[Mapping[str, Any], ...]
+    scope_records: tuple[Mapping[str, Any], ...]
     _snapshot: str
+    construction_records: CanonicalConstructionRecords
 
     @property
     def access_by_id(self) -> dict[str, CanonicalBoundaryAccess]:
@@ -514,10 +544,139 @@ class JElaboration:
     def value_type_by_name(self) -> dict[str, CanonicalValueType]:
         return dict(self.value_types)
 
+    @property
+    def output_by_name(self) -> dict[str, CanonicalOutputBinding]:
+        """Index the canonical output records without changing their order."""
+
+        return {binding.output: binding for binding in self.output_bindings}
+
+    @property
+    def output_names(self) -> tuple[str, ...]:
+        """Logical output names in the canonical ABI sequence."""
+
+        return self.construction_records.output_names
+
+    @property
+    def scope_by_id(self) -> dict[str, Mapping[str, Any]]:
+        """Index the lexical scope records from the same construction pass."""
+
+        return {
+            str(scope["scope_id"]): scope
+            for scope in self.scope_records
+            if isinstance(scope, Mapping) and isinstance(scope.get("scope_id"), str)
+        }
+
+    @property
+    def boundary_record(self) -> Mapping[str, Any]:
+        """The boundary projection built together with all other records."""
+
+        record = self.construction_records.boundary_record
+        if record is None:
+            raise ValueError("canonical boundary construction record is unavailable")
+        return record
+
+    def boundary_rows(self, name: str) -> tuple[Mapping[str, Any], ...]:
+        """Return a construction-owned boundary collection."""
+
+        rows = self.construction_records.boundary_rows(name)
+        if rows is None:
+            raise ValueError(
+                f"canonical boundary construction collection {name!r} is unavailable"
+            )
+        return rows
+
+    @property
+    def boundary_domains(self) -> Mapping[str, Any]:
+        """Return the construction-owned logical domain map."""
+
+        domains = self.construction_records.boundary_domains
+        if domains is None:
+            raise ValueError("canonical boundary domain record is unavailable")
+        return domains
+
+    @property
+    def typed_operation_rows(self) -> tuple[tuple[str, Any], ...]:
+        """Materialize the one typed operation tree from canonical records."""
+
+        rows = self.construction_records.typed_operation_rows
+        if rows is None:
+            raise ValueError("canonical operation records have no typed operation view")
+        return rows
+
+    @property
+    def operation_by_path(self) -> dict[str, Mapping[str, Any]]:
+        """Canonical operation records indexed by lexical path."""
+
+        return self.construction_records.operation_by_path
+
+    @property
+    def operation_by_id(self) -> dict[str, Mapping[str, Any]]:
+        """Canonical operation records indexed by opaque node id."""
+
+        return self.construction_records.operation_by_id
+
+    def operation_record_by_ref(
+        self,
+        node_ids: Mapping[str, str] | None = None,
+    ) -> dict[str, Mapping[str, Any]]:
+        """Raw operation records indexed by canonical path and node id."""
+
+        result = self.construction_records.operation_record_by_ref(node_ids)
+        if result is None:
+            raise ValueError("canonical operation references are not closed")
+        return result
+
+    def authored_node_by_path(
+        self,
+        node_ids: Mapping[str, str],
+    ) -> dict[str, str]:
+        """Return the construction-validated authored path-to-node map."""
+
+        result = self.construction_records.authored_node_by_path(node_ids)
+        if result is None:
+            raise ValueError("canonical authored node references are not closed")
+        return result
+
+    @property
+    def typed_operation_by_path(self) -> dict[str, Any]:
+        """Typed operations indexed by the construction-owned lexical path."""
+
+        result = self.construction_records.typed_operation_by_path
+        if result is None:
+            raise ValueError("canonical operation records have no typed operation view")
+        return result
+
+    @property
+    def typed_operation_by_id(self) -> dict[str, Any]:
+        """Typed operations indexed by the construction-owned node id."""
+
+        result = self.construction_records.typed_operation_by_id
+        if result is None:
+            raise ValueError("canonical operation records have no typed operation view")
+        return result
+
+    def typed_operation_by_ref(
+        self,
+        node_ids: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Return the shared path/id operation view used by boundary consumers."""
+
+        result = self.construction_records.typed_operation_by_ref(node_ids)
+        if result is None:
+            raise ValueError("canonical operation references are not closed")
+        return result
+
+    @property
+    def output_values(self) -> dict[str, str]:
+        """Logical output to returned SSA value, in canonical ABI ownership."""
+
+        return self.construction_records.output_values
+
     def structured_boundary_json(self) -> dict[str, Any]:
         """Diagnostic typed view; it is not an additional persisted artifact."""
 
         return {
+            "boundary": copy.deepcopy(dict(self.boundary_record)),
             "domains": {
                 name: expression.to_json() for name, expression in self.domains
             },
@@ -535,10 +694,56 @@ class JElaboration:
             "output_bindings": [
                 {
                     "output": binding.output,
+                    "output_type": binding.output_type.to_json(),
                     "value": binding.value,
                     "node_ref": binding.node_ref,
+                    "abi_index": binding.abi_index,
+                    "abi_parameter_index": binding.abi_parameter_index,
+                    "abi_parameter_name": binding.abi_parameter_name,
+                    "abi_parameter_mode": binding.abi_parameter_mode,
+                    "return_index": binding.return_index,
+                    "mapping_index": binding.mapping_index,
+                    "mapping_value": binding.mapping_value,
+                    "authored_node_ref": binding.authored_node_ref,
+                    "producer_record": copy.deepcopy(
+                        dict(binding.producer_record)
+                    )
+                    if binding.producer_record is not None
+                    else None,
                 }
                 for binding in self.output_bindings
+            ],
+            "operations": [
+                {
+                    "path": record["path"],
+                    "id": record["id"],
+                    "op": record["op"],
+                    "parent_id": record["parent_id"],
+                    "lexical_role": record["lexical_role"],
+                    "depth": record["depth"],
+                    "region_scope_id": record["region_scope_id"],
+                    "is_final": record["is_final"],
+                    "operands": list(record["operands"]),
+                    "results": list(record["results"]),
+                    "type": copy.deepcopy(record["type"]),
+                    "attrs": copy.deepcopy(record["attrs"]),
+                    "operand_types": copy.deepcopy(
+                        record.get("operand_types", [])
+                    ),
+                    "result_types": copy.deepcopy(
+                        record.get("result_types", [])
+                    ),
+                }
+                for record in self.operation_records
+            ],
+            "scopes": [copy.deepcopy(dict(scope)) for scope in self.scope_records],
+            "dimension_relations": [
+                copy.deepcopy(dict(row))
+                for row in self.construction_records.dimension_records
+            ],
+            "value_dimension_relations": [
+                copy.deepcopy(dict(row))
+                for row in self.construction_records.value_dimension_records
             ],
         }
 
@@ -549,10 +754,6 @@ def _result_names(op: IntentOp) -> tuple[str, ...]:
     if isinstance(op.result, list):
         return tuple(item for item in op.result if isinstance(item, str))
     return ()
-
-
-def _walk_ops(body: Sequence[IntentOp]) -> Iterable[IntentOp]:
-    yield from walk_intent_ops(body)
 
 
 def _broadcast_shape(shapes: Sequence[tuple[Any, ...]]) -> tuple[Any, ...] | None:
@@ -582,8 +783,6 @@ def _project_explicit_broadcast_shape(
     unit_dimensions: frozenset[str] = frozenset(),
 ) -> tuple[Any, ...]:
     """Project one operand using only broadcast axes explicitly present in J."""
-
-    from intentir.frontend.emit_mlir import _broadcast_projection
 
     try:
         projected, _inserted = _broadcast_projection(
@@ -754,6 +953,28 @@ def _infer_shape(
         field = op.attrs.get("field")
         if record is not None and record.is_record and isinstance(field, str):
             return record.field(field).shape
+    if op.op == "value_if":
+        result = known.get(op.result) if isinstance(op.result, str) else None
+        arm_shapes = [
+            known.get(arm.yield_value).shape
+            for arm in (op.positive, op.negative)
+            if arm is not None
+            and known.get(arm.yield_value) is not None
+            and known.get(arm.yield_value).is_tensor
+        ]
+        if any(shape != arm_shapes[0] for shape in arm_shapes[1:]):
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op} value_if arm yields have "
+                "different tensor shapes"
+            )
+        if result is not None and result.is_tensor:
+            if arm_shapes and result.shape != arm_shapes[0]:
+                raise CanonicalJError(
+                    f"IntentOp {op.node_id or op.op} result shape differs from "
+                    "its arm yield shape"
+                )
+            return result.shape
+        return arm_shapes[0] if arm_shapes else None
     operand_shapes = [known[name].shape for name in op.operands if name in known]
     if op.op in {"map_unary", "cast", "scan", "flip"} and operand_shapes:
         return operand_shapes[0]
@@ -881,7 +1102,104 @@ def _infer_shape(
         # still reject rank/axis/non-concat contradictions; an explicit closed
         # result type remains authoritative for the unresolved concat extent.
         return None
-    if op.op in {"reduce", "arg_reduce"} and operand_shapes:
+    if op.op == "pool" and len(operand_shapes) == len(op.operands):
+        source = operand_shapes[0]
+        if len(source) != 4:
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op} pool requires an NCHW rank-4 operand"
+            )
+        values: dict[str, int] = {}
+        for name in ("kH", "kW", "sH", "sW", "padH", "padW"):
+            value = op.attrs.get(name)
+            minimum = 0 if name.startswith("pad") else 1
+            if type(value) is not int or value < minimum:
+                raise CanonicalJError(
+                    f"IntentOp {op.node_id or op.op} pool attr {name} must be "
+                    f"an integer >= {minimum}"
+                )
+            values[name] = value
+        if type(source[2]) is not int or type(source[3]) is not int:
+            return None
+        height = (
+            source[2] + 2 * values["padH"] - values["kH"]
+        ) // values["sH"] + 1
+        width = (
+            source[3] + 2 * values["padW"] - values["kW"]
+        ) // values["sW"] + 1
+        if height < 0 or width < 0:
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op} pool window produces a negative extent"
+            )
+        return (source[0], source[1], height, width)
+    if op.op == "upsample" and len(operand_shapes) == len(op.operands):
+        source = operand_shapes[0]
+        scale = op.attrs.get("scale")
+        if len(source) != 4:
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op} upsample requires an NCHW rank-4 operand"
+            )
+        if (
+            not isinstance(scale, list)
+            or len(scale) != 2
+            or any(type(value) is not int or value < 1 for value in scale)
+        ):
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op} upsample scale must be two positive integers"
+            )
+        if type(source[2]) is not int or type(source[3]) is not int:
+            return None
+        return (source[0], source[1], source[2] * scale[0], source[3] * scale[1])
+    if op.op == "polar" and len(operand_shapes) == len(op.operands):
+        if operand_shapes[0] != operand_shapes[1]:
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op} polar inputs must have one identical shape"
+            )
+        return operand_shapes[0]
+    if op.op == "conv" and len(operand_shapes) == len(op.operands):
+        input_shape, weight_shape = operand_shapes[:2]
+        spatial_rank = len(input_shape) - 2
+        if spatial_rank not in {1, 2, 3} or len(weight_shape) != len(input_shape):
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op} conv input and weight must have "
+                "matching rank 3, 4, or 5 shapes"
+            )
+        sequences: dict[str, list[int]] = {}
+        for name, minimum in (("stride", 1), ("padding", 0), ("dilation", 1)):
+            values = op.attrs.get(name)
+            if (
+                not isinstance(values, list)
+                or len(values) != spatial_rank
+                or any(type(value) is not int or value < minimum for value in values)
+            ):
+                raise CanonicalJError(
+                    f"IntentOp {op.node_id or op.op} conv {name} must have "
+                    f"{spatial_rank} integers >= {minimum}"
+                )
+            sequences[name] = values
+        groups = op.attrs.get("groups")
+        if type(groups) is not int or groups < 1:
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op} conv groups must be a positive integer"
+            )
+        spatial: list[int] = []
+        for index in range(spatial_rank):
+            input_extent = input_shape[2 + index]
+            kernel_extent = weight_shape[2 + index]
+            if type(input_extent) is not int or type(kernel_extent) is not int:
+                return None
+            extent = (
+                input_extent
+                + 2 * sequences["padding"][index]
+                - sequences["dilation"][index] * (kernel_extent - 1)
+                - 1
+            ) // sequences["stride"][index] + 1
+            if extent < 0:
+                raise CanonicalJError(
+                    f"IntentOp {op.node_id or op.op} conv produces a negative spatial extent"
+                )
+            spatial.append(extent)
+        return (input_shape[0], weight_shape[0], *spatial)
+    if op.op == "reduce" and operand_shapes:
         axes_value = op.attrs.get("axes", [op.attrs.get("axis")])
         if isinstance(axes_value, list) and all(
             isinstance(axis, int) and not isinstance(axis, bool)
@@ -891,9 +1209,58 @@ def _infer_shape(
             axes = {axis if axis >= 0 else len(source) + axis for axis in axes_value}
             if any(axis < 0 or axis >= len(source) for axis in axes):
                 return None
-            if op.attrs.get("keepdims") is True:
-                return tuple(1 if index in axes else dim for index, dim in enumerate(source))
-            return tuple(dim for index, dim in enumerate(source) if index not in axes)
+            keepdims_shape = tuple(
+                1 if index in axes else dim
+                for index, dim in enumerate(source)
+            )
+            collapsed_shape = tuple(
+                dim for index, dim in enumerate(source) if index not in axes
+            )
+            keepdims = op.attrs.get("keepdims")
+            if keepdims is not None and type(keepdims) is not bool:
+                raise CanonicalJError(
+                    f"IntentOp {op.node_id or op.op} reduce keepdims must be a boolean"
+                )
+            if keepdims is True:
+                selected = keepdims_shape
+            elif keepdims is False:
+                selected = collapsed_shape
+            else:
+                # The result declaration/output binding is the only valid
+                # disambiguator for an intermediate reduction.  This mirrors
+                # emit_mlir: a non-full reduction otherwise keeps dimensions
+                # for broadcast consumers, while a full reduction defaults to
+                # a genuine rank-0 value.
+                declared = (
+                    known.get(op.result)
+                    if isinstance(op.result, str)
+                    else None
+                )
+                declared_shape = (
+                    declared.shape
+                    if declared is not None and declared.is_tensor
+                    else None
+                )
+                if declared_shape is not None:
+                    if declared_shape not in (keepdims_shape, collapsed_shape):
+                        raise CanonicalJError(
+                            f"IntentOp {op.node_id or op.op} reduce result shape "
+                            f"{declared_shape!r} is neither keepdims "
+                            f"{keepdims_shape!r} nor collapsed {collapsed_shape!r}"
+                        )
+                    selected = tuple(declared_shape)
+                elif axes == set(range(len(source))):
+                    selected = collapsed_shape
+                else:
+                    selected = keepdims_shape
+            return selected
+    if op.op == "arg_reduce" and operand_shapes:
+        axes_value = [op.attrs.get("axis")]
+        if isinstance(axes_value[0], int) and not isinstance(axes_value[0], bool):
+            source = operand_shapes[0]
+            axis = axes_value[0] if axes_value[0] >= 0 else len(source) + axes_value[0]
+            if 0 <= axis < len(source):
+                return tuple(dim for index, dim in enumerate(source) if index != axis)
     if op.op == "sort" and operand_shapes:
         shape = list(operand_shapes[0])
         width = op.attrs.get("k")
@@ -941,6 +1308,27 @@ def _infer_dtypes(
             if field_type.is_tensor and field_type.dtype is not None:
                 return {op.result: field_type.dtype}
         return {}
+    if op.op == "cast":
+        # Keep malformed cast attributes at the J contract boundary. Without
+        # this guard the shared MLIR dtype helper receives ``None`` and emits
+        # an implementation-level error before CandidateCheck/TypeCheck can
+        # explain the authored contract violation.
+        attrs = op.attrs
+        if set(attrs) != {"to_dtype"}:
+            raise CanonicalJError(
+                f"IntentOp {op.node_id or op.op!r} cast requires exactly one "
+                "attrs.to_dtype"
+            )
+        target = attrs["to_dtype"]
+        from .intent_op_contract import canonicalize_dtype
+
+        try:
+            canonicalize_dtype(
+                target,
+                context=f"IntentOp {op.node_id or op.op}.attrs.to_dtype",
+            )
+        except (TypeError, ValueError) as exc:
+            raise CanonicalJError(str(exc)) from exc
     # Keep one source of truth with the MLIR emitter's closed operation table.
     from intentir.frontend.emit_mlir import _infer_op_dtypes
 
@@ -1098,7 +1486,9 @@ def _validate_gather_operation(
             raise CanonicalJError(
                 f"IntentOp {op.node_id or op.op!r} along_axis gather index "
                 f"shape {index.shape!r} must match non-axis data shape "
-                f"{expected_index_shape!r}"
+                f"{expected_index_shape!r}; if Source supplies a selected-axis "
+                "vector shared across an outer domain, author an explicit J "
+                "broadcast to the data rank before gather"
             )
         expected_shape = index.shape
     else:
@@ -1445,19 +1835,32 @@ def _elaborate_function_types(
 
 
 def _node_results(j: Any) -> dict[str, tuple[str, ...]]:
+    records = canonical_operation_records(j.intent.to_json())
+    if records is None:
+        return {}
     by_path = {
-        path: _result_names(operation)
-        for path, operation in walk_intent_op_paths(j.intent.body)
+        record["path"]: tuple(record["results"])
+        for record in records
     }
     result = dict(by_path)
     for node_id, path in j.node_ids.items():
-        if path in by_path:
-            result[node_id] = by_path[path]
+        record = next(
+            (item for item in records if item.get("path") == path),
+            None,
+        )
+        if record is None or record.get("id") != node_id:
+            raise CanonicalJError(
+                f"J node id disagrees with canonical operation record at {path!r}"
+            )
+        result[node_id] = by_path[path]
     return result
 
 
 def _declared_broadcast_axes(
     j: Any,
+    *,
+    operation_records: Sequence[Mapping[str, Any]] | None = None,
+    boundary_record: Mapping[str, Any] | None = None,
 ) -> dict[str, dict[str, tuple[int, ...]]]:
     """Resolve only broadcast facts explicitly serialized in canonical J.
 
@@ -1466,75 +1869,127 @@ def _declared_broadcast_axes(
     second ``boundary.broadcasts`` declaration.
     """
 
-    by_path = dict(walk_intent_op_paths(j.intent.body))
+    # Before the accepted construction exists, the initial operation table is
+    # necessarily built from the strict J wire.  Once elaboration has closed,
+    # callers must pass that same construction-owned table instead of making a
+    # second walk over ``intent.body``.
+    records = (
+        tuple(operation_records)
+        if operation_records is not None
+        else canonical_operation_records(j.intent.to_json())
+    )
+    if records is None:
+        raise CanonicalJError(
+            "J broadcast projection has no complete operation construction record"
+        )
+    by_path = {
+        record["path"]: record["wire"]
+        for record in records
+        if isinstance(record.get("wire"), Mapping)
+    }
     nodes = dict(by_path)
     for node_id, path in j.node_ids.items():
         operation = by_path.get(path)
-        if operation is not None:
-            nodes[node_id] = operation
+        record = next(
+            (item for item in records if item.get("path") == path),
+            None,
+        )
+        if operation is None or record is None or record.get("id") != node_id:
+            raise CanonicalJError(
+                f"J node id disagrees with canonical operation record at {path!r}"
+            )
+        nodes[node_id] = operation
+
+    if boundary_record is not None:
+        boundary = boundary_record
+    else:
+        boundary_records = canonical_boundary_records(j.boundary.to_json())
+        boundary = boundary_records[0] if boundary_records is not None else None
+    if boundary is None:
+        raise CanonicalJError(
+            "J broadcast projection has no complete boundary construction record"
+        )
 
     result: dict[str, dict[str, tuple[int, ...]]] = {}
     guard_projection_keys: set[tuple[str, str]] = set()
     accesses = {
-        access.access_id: access for access in j.boundary.accesses
+        access.get("access_id"): access
+        for access in boundary.get("accesses", [])
+        if isinstance(access, Mapping)
     }
-    for relation in j.boundary.access_guard_relations:
-        access = accesses.get(relation.access_ref)
+    for relation in boundary.get("access_guard_relations", []):
+        if not isinstance(relation, Mapping):
+            raise CanonicalJError(
+                "J boundary guard relation is not a construction record"
+            )
+        access = accesses.get(relation.get("access_ref"))
         operation = (
-            nodes.get(access.node_ref)
-            if access is not None and access.node_ref is not None
+            nodes.get(access.get("node_ref"))
+            if isinstance(access, Mapping)
+            and isinstance(access.get("node_ref"), str)
             else None
         )
         if (
             operation is None
-            or operation.op != "select"
-            or not isinstance(operation.result, str)
-            or len(operation.operands) != 3
-            or operation.operands[0] != relation.value_ref
+            or operation.get("op") != "select"
+            or not isinstance(operation.get("result"), str)
+            or not isinstance(operation.get("operands"), list)
+            or len(operation["operands"]) != 3
+            or operation["operands"][0] != relation.get("value_ref")
         ):
             continue
-        axes = tuple(relation.axes)
-        key = (operation.result, relation.value_ref)
+        axes = tuple(relation.get("axes", ()))
+        result_ref = operation["result"]
+        value_ref = relation.get("value_ref")
+        if not isinstance(value_ref, str):
+            continue
+        key = (result_ref, value_ref)
         guard_projection_keys.add(key)
-        result.setdefault(operation.result, {}).setdefault(
-            relation.value_ref, axes
+        result.setdefault(result_ref, {}).setdefault(
+            value_ref, axes
         )
 
-    for projection in j.boundary.broadcasts:
-        operation = nodes.get(projection.node_ref)
-        if operation is None or not isinstance(operation.result, str):
+    for projection in boundary.get("broadcasts", []):
+        if not isinstance(projection, Mapping):
+            raise CanonicalJError(
+                "J boundary broadcast is not a construction record"
+            )
+        operation = nodes.get(projection.get("node_ref"))
+        result_ref = operation.get("result") if isinstance(operation, Mapping) else None
+        if operation is None or not isinstance(result_ref, str):
             raise CanonicalJError(
                 "J boundary broadcast references an unknown single-result node"
             )
-        if operation.op not in {"map_binary", "select"}:
+        if operation.get("op") not in {"map_binary", "select"}:
             raise CanonicalJError(
                 "J boundary broadcast must target map_binary or select"
             )
-        if projection.operand not in operation.operands:
+        operands = operation.get("operands")
+        operand = projection.get("operand")
+        if not isinstance(operands, list) or operand not in operands:
             raise CanonicalJError(
                 "J boundary broadcast operand is not consumed by its node"
             )
-        if any(
+        axes_value = projection.get("axes")
+        if not isinstance(axes_value, list) or any(
             isinstance(axis, bool) or not isinstance(axis, int)
-            for axis in projection.axes
+            for axis in axes_value
         ):
             raise CanonicalJError(
                 "canonical value typing requires integer broadcast axes"
             )
-        axes = tuple(int(axis) for axis in projection.axes)
-        if (operation.result, projection.operand) in guard_projection_keys:
+        axes = tuple(int(axis) for axis in axes_value)
+        if (result_ref, operand) in guard_projection_keys:
             # TypeCheck rejects this double authority.  Keep the relation as
             # the sole typing input so the diagnostic is not pre-empted by a
             # conflicting legacy broadcast spelling.
             continue
-        previous = result.setdefault(operation.result, {}).get(
-            projection.operand
-        )
+        previous = result.setdefault(result_ref, {}).get(operand)
         if previous is not None and previous != axes:
             raise CanonicalJError(
                 "J boundary contains conflicting broadcast projections"
             )
-        result[operation.result][projection.operand] = axes
+        result[result_ref][operand] = axes
     return result
 
 
@@ -1738,36 +2193,32 @@ def _snapshot(value: Mapping[str, Any]) -> str:
     )
 
 
-def _build_output_bindings(j: Any) -> tuple[CanonicalOutputBinding, ...]:
-    returns = {item.output: item.value for item in j.intent.returns}
-    mappings = {item.output: item for item in j.boundary.output_mappings}
-    node_results = _node_results(j)
-    result_nodes: dict[str, list[str]] = {}
-    for node_ref, results in node_results.items():
-        if not node_ref.startswith("n"):
-            continue
-        for result in results:
-            result_nodes.setdefault(result, []).append(node_ref)
-    bindings: list[CanonicalOutputBinding] = []
-    for output in j.intent.outputs:
-        mapping = mappings.get(output.name)
-        try:
-            returned = returns[output.name]
-        except KeyError as exc:
-            raise CanonicalJError(
-                f"output {output.name!r} has no complete IntentFunction return"
-            ) from exc
-        if mapping is not None and mapping.value != returned:
-            raise CanonicalJError(
-                f"output {output.name!r} has conflicting return and boundary mapping"
-            )
-        node_ref = mapping.node_ref if mapping is not None else None
-        if node_ref is None:
-            candidates = sorted(set(result_nodes.get(returned, [])))
-            if len(candidates) == 1:
-                node_ref = candidates[0]
-        bindings.append(CanonicalOutputBinding(output.name, returned, node_ref))
-    return tuple(bindings)
+def _build_output_bindings(
+    output_records: Sequence[Mapping[str, Any]],
+) -> tuple[CanonicalOutputBinding, ...]:
+    return tuple(
+        CanonicalOutputBinding(
+            record["output"],
+            CanonicalValueType.from_json(
+                dict(record["output_type"]),
+                context=f"canonical output {record['output']}",
+            ),
+            record["return_value"],
+            record["node_ref"],
+            record["abi_index"],
+            record["abi_parameter_index"],
+            record["return_index"],
+            record["mapping_index"],
+            record["abi_parameter_name"],
+            record["abi_parameter_mode"],
+            record["mapping_value"],
+            record["authored_node_ref"],
+            copy.deepcopy(dict(record["producer_record"]))
+            if record["producer_record"] is not None
+            else None,
+        )
+        for record in output_records
+    )
 
 
 def _elaborate_j(j: "SemanticArchive") -> tuple["SemanticArchive", JElaboration]:
@@ -1838,6 +2289,33 @@ def _elaborate_j(j: "SemanticArchive") -> tuple["SemanticArchive", JElaboration]
     canonical_payload = canonical_archive.to_json()
     canonical_snapshot = _snapshot(canonical_payload)
 
+    # Build the structural bundle before any parsed boundary view is exposed.
+    # Domains and accesses below are projections of this same boundary record,
+    # not a second walk over ``SemanticArchive.boundary``.
+    operation_records = canonical_operation_records(
+        canonical_archive.intent.to_json()
+    )
+    construction_records = CanonicalConstructionRecords.build(
+        canonical_archive.intent.to_json(),
+        canonical_archive.boundary.to_json(),
+        [scope.to_json() for scope in canonical_archive.scopes],
+        canonical_archive.node_ids,
+        operation_records=operation_records,
+        signature=canonical_archive.signature.to_json(),
+        dimension_relations=[
+            item.to_json() for item in canonical_archive.dimension_relations
+        ],
+        value_dimension_relations=[
+            item.to_json()
+            for item in canonical_archive.value_dimension_relations
+        ],
+    )
+    if construction_records is None or construction_records.boundary_record is None:
+        raise CanonicalJError(
+            "canonical J has no complete construction record"
+        )
+    boundary_record = construction_records.boundary_record
+
     domains = tuple(
         (
             name,
@@ -1847,44 +2325,114 @@ def _elaborate_j(j: "SemanticArchive") -> tuple["SemanticArchive", JElaboration]
                 context=f"J.boundary.domains.{name}",
             ),
         )
-        for name, expression in canonical_archive.boundary.domains.items()
+        for name, expression in boundary_record["domains"].items()
     )
     accesses = tuple(
         CanonicalBoundaryAccess(
-            access.access_id,
+            access["access_id"],
             parse_index_expression(
-                access.index_expression,
-                context=f"J.boundary.accesses.{access.access_id}.index_expression",
+                access["index_expression"],
+                context=f"J.boundary.accesses.{access['access_id']}.index_expression",
             ),
             (
                 parse_contract_expr(
-                    access.predicate,
+                    access["predicate"],
                     expected=ContractSort.BOOLEAN,
-                    context=f"J.boundary.accesses.{access.access_id}.predicate",
+                    context=f"J.boundary.accesses.{access['access_id']}.predicate",
                 )
-                if access.predicate is not None else None
+                if access.get("predicate") is not None else None
             ),
         )
-        for access in canonical_archive.boundary.accesses
+        for access in boundary_record["accesses"]
     )
     typed_function = copy.deepcopy(canonical_archive.intent)
     value_types = tuple(
         sorted(
             _elaborate_function_types(
                 typed_function,
-                _declared_broadcast_axes(canonical_archive),
+                _declared_broadcast_axes(
+                    canonical_archive,
+                    operation_records=construction_records.operation_records,
+                    boundary_record=boundary_record,
+                ),
                 direct_unit_dimension_refs(
                     canonical_archive.dimension_constraints
                 ),
             ).items()
         )
     )
+    elaborated_by_name = dict(value_types)
+    construction_records = construction_records.with_elaborated_value_types(
+        {
+            name: value.to_json()
+            for name, value in elaborated_by_name.items()
+        }
+    )
+    if construction_records is None:
+        raise CanonicalJError(
+            "canonical construction value types disagree with elaborated J"
+        )
+    for operation in construction_records.operation_records:
+        for result in operation.get("results", ()):
+            if result not in elaborated_by_name:
+                raise CanonicalJError(
+                    f"canonical operation result {result!r} has no elaborated value type"
+                )
+    for name, declared in construction_records.value_type_records.items():
+        if not isinstance(name, str) or not isinstance(declared, Mapping):
+            raise CanonicalJError(
+                "canonical construction contains an invalid value-type record"
+            )
+        try:
+            declared_type = CanonicalValueType.from_json(
+                dict(declared),
+                context=f"canonical construction value type {name}",
+            )
+        except (TypeError, ValueError) as exc:
+            raise CanonicalJError(str(exc)) from exc
+        elaborated_type = elaborated_by_name.get(name)
+        if elaborated_type is None or elaborated_type != declared_type:
+            raise CanonicalJError(
+                f"canonical construction value type for {name!r} disagrees "
+                "with elaborated J type"
+            )
+    # An operation may omit its local ``type`` when canonical elaboration can
+    # derive it from the closed operation contract.  The output record still
+    # has to close that inferred SSA value against the declared output ABI;
+    # otherwise output_mapping/return could expose a value whose inferred
+    # dtype or shape differs from the output tensor while all explicit type
+    # rows above appear consistent.
+    for output in construction_records.output_records:
+        value = output.get("return_value")
+        expected = output.get("output_type")
+        actual = elaborated_by_name.get(value)
+        if not isinstance(expected, Mapping) or actual is None:
+            raise CanonicalJError(
+                "canonical output record has no complete elaborated value type"
+            )
+        try:
+            expected_type = CanonicalValueType.from_json(
+                dict(expected),
+                context=f"canonical output {output.get('output')}",
+            )
+        except (TypeError, ValueError) as exc:
+            raise CanonicalJError(str(exc)) from exc
+        if actual != expected_type:
+            raise CanonicalJError(
+                f"canonical output value {value!r} type disagrees with output "
+                f"{output.get('output')!r} ABI type"
+            )
     record = JElaboration(
         domains,
         accesses,
         value_types,
-        _build_output_bindings(canonical_archive),
+        _build_output_bindings(
+            construction_records.output_records,
+        ),
+        construction_records.operation_records,
+        construction_records.scope_records,
         canonical_snapshot,
+        construction_records,
     )
     setattr(canonical_archive, "_intentir_j_elaboration", record)
     if canonical_archive is not j:
@@ -1913,15 +2461,65 @@ def j_elaboration(j: "SemanticArchive") -> JElaboration:
     return record
 
 
+def canonical_top_level_operations(
+    j: "SemanticArchive",
+) -> tuple[IntentOp, ...]:
+    """Return the top-level execution sequence from the shared typed table.
+
+    This is the common execution view for target-neutral consumers.  It keeps
+    the lexical operation order and nested-region object identity supplied by
+    ``CanonicalConstructionRecords``; callers must not rebuild the sequence
+    from ``SemanticArchive.intent.body`` independently.
+    """
+
+    rows = j_elaboration(j).typed_operation_rows
+    return tuple(
+        operation
+        for path, operation in rows
+        if path.startswith("body[") and "." not in path
+    )
+
+
+def canonical_output_bindings(
+    j: "SemanticArchive",
+) -> tuple[CanonicalOutputBinding, ...]:
+    """Return the accepted J output sequence owned by one output record.
+
+    Consumers must not reconstruct output order from ``intent.outputs``,
+    ``returns`` or ``boundary.output_mappings`` independently.  Canonical
+    construction has already proved that these rows agree with the physical
+    output/inout ABI subsequence; this accessor exposes that one sequence.
+    """
+
+    # ``CanonicalConstructionRecords.output_records`` is already emitted in
+    # physical ABI order.  Preserve that sequence verbatim; sorting here
+    # would create a second output-order authority and could hide a malformed
+    # construction bundle.
+    return tuple(j_elaboration(j).output_bindings)
+
+
+def canonical_output_names(
+    j: "SemanticArchive",
+) -> tuple[str, ...]:
+    """Return logical output names in canonical physical ABI order."""
+
+    return tuple(item.output for item in canonical_output_bindings(j))
+
+
 def canonical_broadcast_axes(
     j: "SemanticArchive",
 ) -> dict[str, dict[str, tuple[int, ...]]]:
     """Return only J-authored broadcast projections in canonical value form."""
 
     canonical = elaborate_j(j)
+    elaboration = j_elaboration(canonical)
     return {
         result: dict(operands)
-        for result, operands in _declared_broadcast_axes(canonical).items()
+        for result, operands in _declared_broadcast_axes(
+            canonical,
+            operation_records=elaboration.construction_records.operation_records,
+            boundary_record=elaboration.boundary_record,
+        ).items()
     }
 
 
@@ -1955,6 +2553,9 @@ __all__ = [
     "ContractSort",
     "JElaboration",
     "canonical_broadcast_axes",
+    "canonical_top_level_operations",
+    "canonical_output_bindings",
+    "canonical_output_names",
     "canonicalize_gate1_artifact",
     "canonicalize_semantic_archive",
     "direct_dimension_lower_bounds",

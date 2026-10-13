@@ -95,7 +95,17 @@ def _load_module(
     filename: str | None = None,
     trusted_source: bool = False,
     source_identity_code: str | None = None,
+    import_roots: tuple[str, ...] = (),
 ) -> ModuleType:
+    if trusted_source:
+        for raw_root in import_roots:
+            root = Path(raw_root).expanduser().resolve()
+            if not root.is_dir():
+                raise ValueError(
+                    f"trusted Source import root is not a directory: {root}"
+                )
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
     digest = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
     path: Path
     package_name: str | None = None
@@ -346,6 +356,7 @@ def _compile(request: Mapping[str, Any]) -> dict[str, Any]:
             ),
             trusted_source=source.get("trust_role") == "trusted_source",
             source_identity_code=source_code,
+            import_roots=tuple(source.get("import_roots", ())),
         )
         kernel = getattr(module, function_name, None)
         if kernel is None:

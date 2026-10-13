@@ -6,8 +6,13 @@ import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Mapping, Sequence
 
-from intentir.ir.canonical_j import elaborate_j, j_elaboration
+from intentir.ir.canonical_j import (
+    canonical_top_level_operations,
+    elaborate_j,
+    j_elaboration,
+)
 from intentir.ir.dimension_relation import resolve_dimension_relations
+from intentir.ir.intent_op_contract import is_scalar_literal
 from intentir.ir.model import (
     IntentFunction,
     IntentOp,
@@ -53,6 +58,12 @@ class JFunctionMaterialization:
 
 def _walk(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
     return tuple(walk_intent_ops(body))
+
+
+def _canonical_top_level_body(j: SemanticArchive) -> tuple[IntentOp, ...]:
+    """Return top-level operations from the accepted construction record."""
+
+    return canonical_top_level_operations(j)
 
 
 def _value_handle_names(function: IntentFunction) -> set[str]:
@@ -109,12 +120,12 @@ def _value_handle_names(function: IntentFunction) -> set[str]:
     return names
 
 
-def _fresh_ssa_handle(occupied: set[str]) -> str:
-    """Allocate the lowest unused canonical ``v*`` handle."""
+def _fresh_materialization_handle(occupied: set[str]) -> str:
+    """Allocate one MLIR-only temporary outside every authored namespace."""
 
     index = 0
     while True:
-        candidate = f"v{index}"
+        candidate = f"__mlir_init{index}"
         if candidate not in occupied:
             occupied.add(candidate)
             return candidate
@@ -128,43 +139,25 @@ def _canonical_return_function(
 
     bindings = j_elaboration(j).output_bindings
     inputs = {item.name: item for item in j.intent.inputs}
-    outputs = {item.name: item for item in j.intent.outputs}
-    body = list(j.intent.body)
+    body = list(_canonical_top_level_body(j))
     returns: list[IntentReturn] = []
     consumed: list[str] = []
-    used_names = _value_handle_names(
-        IntentFunction(
-            name=j.intent.name,
-            inputs=list(j.intent.inputs),
-            outputs=list(j.intent.outputs),
-            body=body,
-            returns=[],
-        )
-    )
     for binding in bindings:
         value = binding.value
         if value in inputs:
-            output = outputs[binding.output]
             if (
-                inputs[value].dtype != output.dtype
-                or inputs[value].shape != output.shape
+                inputs[value].dtype != binding.output_type.dtype
+                or tuple(inputs[value].shape) != tuple(binding.output_type.shape)
             ):
                 raise ValueError(
                     "direct input/output binding requires identical logical types"
                 )
-            result = _fresh_ssa_handle(used_names)
-            body.append(
-                IntentOp(
-                    op="map_unary",
-                    result=result,
-                    operands=[value],
-                    attrs={"fn": "identity"},
-                    type={"dtype": output.dtype, "shape": list(output.shape)},
-                )
-            )
-            returns.append(IntentReturn(binding.output, result))
+            # The construction record already proves this input/output alias.
+            # Returning the established input SSA directly avoids creating an
+            # emitter-only v* node that would be a second handle allocator.
+            returns.append(IntentReturn(binding.output, value))
             consumed.append(
-                f"output_binding:{binding.output}:{value}:identity_materialized"
+                f"output_binding:{binding.output}:{value}:direct_input_return"
             )
         else:
             returns.append(IntentReturn(binding.output, value))
@@ -198,20 +191,21 @@ def _logical_full_axis_step_function(
     represented without inventing an initializer or schedule.
     """
 
+    canonical_body = _canonical_top_level_body(j)
     loop_indices = [
-        index for index, operation in enumerate(j.intent.body) if operation.op == "loop"
+        index for index, operation in enumerate(canonical_body) if operation.op == "loop"
     ]
     if len(loop_indices) != 1:
         return None
     loop_index = loop_indices[0]
-    outer_prefix = j.intent.body[:loop_index]
-    outer_suffix = j.intent.body[loop_index + 1 :]
+    outer_prefix = canonical_body[:loop_index]
+    outer_suffix = canonical_body[loop_index + 1 :]
     if any(
         operation.op == "loop"
         for operation in _walk([*outer_prefix, *outer_suffix])
     ):
         return None
-    loop = j.intent.body[loop_index]
+    loop = canonical_body[loop_index]
     if loop.trip is None or loop.trip.is_dynamic or loop.trip.axis not in dims:
         raise ValueError("materialize J loop requires a resolved logical trip extent")
     extent = dims[loop.trip.axis]
@@ -250,9 +244,23 @@ def _logical_full_axis_step_function(
         for operation in _walk(loop.body)
         for operand in operation.operands
     }
-    dominating_types: dict[str, tuple[str, list[object]]] = {
-        name: (tensor.dtype, list(tensor.shape)) for name, tensor in inputs.items()
-    }
+    # The accepted construction record owns value typing.  Do not rebuild
+    # this table from the authored operation.type spelling: canonical J may
+    # prove a result type from its operands and deliberately omit a redundant
+    # single-result wire type.  Keeping the loop projection on the same
+    # elaborated table as output/materialization consumers prevents a raw-type
+    # side channel from rejecting an otherwise complete J.
+    value_types = j_elaboration(j).value_type_by_name
+    dominating_types: dict[str, tuple[str, list[object]]] = {}
+    for name in inputs:
+        value_type = value_types.get(name)
+        if (
+            value_type is None
+            or not value_type.is_tensor
+            or value_type.dtype is None
+        ):
+            return None
+        dominating_types[name] = (value_type.dtype, list(value_type.shape))
     for operation in _walk(outer_prefix):
         results = (
             operation.result
@@ -260,18 +268,21 @@ def _logical_full_axis_step_function(
             else [operation.result]
         )
         if any(isinstance(result, str) for result in results):
-            if (
-                operation.type is None
-                or len(results) != 1
-                or operation.type.get("kind") in {"record", "ragged"}
-            ):
+            if len(results) != 1:
                 return None
             result = results[0]
             if not isinstance(result, str):
                 return None
+            value_type = value_types.get(result)
+            if (
+                value_type is None
+                or not value_type.is_tensor
+                or value_type.dtype is None
+            ):
+                return None
             dominating_types[result] = (
-                operation.type["dtype"],
-                list(operation.type.get("shape", [])),
+                value_type.dtype,
+                list(value_type.shape),
             )
 
     carry_prefix: list[IntentOp] = []
@@ -406,8 +417,9 @@ def materialize_j_function(
     """
 
     j = elaborate_j(j)
-    if any(op.op == "loop" for op in j.intent.body):
-        loops = [op for op in j.intent.body if op.op == "loop"]
+    canonical_body = _canonical_top_level_body(j)
+    if any(op.op == "loop" for op in canonical_body):
+        loops = [op for op in canonical_body if op.op == "loop"]
         if len(loops) != 1:
             raise NotImplementedError(
                 "canonical materializer requires exactly one top-level loop"
@@ -430,7 +442,7 @@ def materialize_j_function(
                 name=j.intent.name,
                 inputs=list(j.intent.inputs),
                 outputs=list(j.intent.outputs),
-                body=copy.deepcopy(j.intent.body),
+                body=copy.deepcopy(canonical_body),
                 returns=[
                     IntentReturn(binding.output, binding.value)
                     for binding in j_elaboration(j).output_bindings
@@ -459,14 +471,14 @@ def materialize_j_function(
 
             def fresh_initializer(body_argument: str) -> str:
                 del body_argument
-                candidate = _fresh_ssa_handle(occupied)
+                candidate = _fresh_materialization_handle(occupied)
                 dominating_names.add(candidate)
                 return candidate
 
             initializers: list[IntentOp] = []
             for state in loop.carry:
                 initializer = state.init_value
-                if isinstance(initializer, (bool, int, float)):
+                if is_scalar_literal(initializer):
                     if (
                         state.type is None
                         or state.type.kind != "tensor"
@@ -535,7 +547,7 @@ def materialize_j_function(
                 name=j.intent.name,
                 inputs=list(j.intent.inputs),
                 outputs=list(j.intent.outputs),
-                body=copy.deepcopy(j.intent.body),
+                body=copy.deepcopy(canonical_body),
                 returns=[
                     IntentReturn(binding.output, binding.value)
                     for binding in j_elaboration(j).output_bindings
@@ -585,6 +597,10 @@ def materialize_j_module(
         j, resolved_dims
     )
     logical = materialize_j_function(j, resolved_dims)
+    output_bindings = j_elaboration(j).output_bindings
+    canonical_output_values = {
+        binding.output: binding.value for binding in output_bindings
+    }
     mlir = emit_module(
         logical.function,
         resolved_dims,
@@ -593,6 +609,8 @@ def materialize_j_module(
         broadcast_axes=broadcast_axes,
         proven_index_bounds=proven_index_bounds,
         value_dimension_equalities=value_dimension_equalities,
+        output_values=canonical_output_values,
+        canonical_output_bindings=output_bindings,
         loop_schedule_tile=logical.loop_schedule_tile,
     )
     return JModuleMaterialization(

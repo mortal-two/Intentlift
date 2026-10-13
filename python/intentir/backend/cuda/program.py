@@ -34,6 +34,7 @@ from intentir.ir.dense_predicate_materialization import (
 )
 from intentir.ir.canonical_j import elaborate_j, j_elaboration
 from intentir.ir.layer_c import (
+    LayerCInterface,
     binding_interface_digest,
     canonical_layer_c_json,
     layer_c_content_digest,
@@ -45,7 +46,7 @@ from intentir.ir.contract_materialization import (
 from intentir.ir.typed_boundary_materialization import (
     TypedBoundaryMaterializationProjection,
 )
-from intentir.ir.model import IntentOp, intent_op_regions, walk_intent_op_paths, walk_intent_ops
+from intentir.ir.model import IntentOp, intent_op_regions
 from intentir.ir.value_dimension import (
     validate_ragged_runtime_invocation,
     validate_value_dimension_instantiation,
@@ -146,16 +147,13 @@ def _child_regions(op: IntentOp) -> tuple[Sequence[IntentOp], ...]:
     return tuple(region for _suffix, region in intent_op_regions(op))
 
 
-def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
-    return tuple(walk_intent_ops(body))
-
-
 def _nodes(j: SemanticArchive) -> dict[str, IntentOp]:
-    by_path = dict(walk_intent_op_paths(j.intent.body))
-    result = dict(by_path)
-    for node_id, path in j.node_ids.items():
-        if path in by_path:
-            result[node_id] = by_path[path]
+    elaboration = j_elaboration(j)
+    result = elaboration.construction_records.typed_operation_by_ref(j.node_ids)
+    if result is None:
+        raise CudaJLoweringError(
+            "CUDA cannot materialize canonical operation references"
+        )
     return result
 
 
@@ -242,18 +240,29 @@ def analyze_j_for_cuda(
         else:
             unsupported.append(f"general_mutable_storage:{item.storage_id}")
 
-    operations = _walk_ops(j.intent.body)
+    typed_rows = j_elaboration(j).typed_operation_rows
+    if typed_rows is None:
+        raise CudaJLoweringError(
+            "CUDA operation view is unavailable from canonical records"
+        )
+    operations = tuple(operation for _path, operation in typed_rows)
     op_names = {op.op for op in operations}
     if "masked_scatter" in op_names:
         unsupported.append("masked_scatter_logical_index_relation")
 
     nodes = _nodes(j)
+    elaboration = j_elaboration(j)
+    # Boundary update type/rank checks consume the construction-owned value
+    # type table.  Rebuilding this map from input/output declarations would
+    # give CUDA a second output type authority beside the output record.
     tensor_by_name = {
-        item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
+        name: value_type
+        for name, value_type in elaboration.value_type_by_name.items()
+        if name.startswith("t")
     }
     observable_values = {
         item.output: item.value
-        for item in j_elaboration(j).output_bindings
+        for item in elaboration.output_bindings
     }
     relation_by_output = {
         item.output: item for item in j.boundary.result_relations
@@ -375,13 +384,15 @@ def analyze_j_for_cuda(
         else:
             consumed.append(f"reduction:{item.node_ref}")
 
-    if set(observable_values) != {
-        item.name for item in j.intent.outputs
-    }:
+    canonical_output_order = j_elaboration(j).output_names
+    if tuple(observable_values) != canonical_output_order:
         unsupported.append("output_destination_relation")
     else:
         consumed.extend(f"output:{name}" for name in observable_values)
-    consumed.extend(f"scope:{item.scope_id}" for item in j.scopes)
+    consumed.extend(
+        f"scope:{item['scope_id']}"
+        for item in j_elaboration(j).scope_records
+    )
     return {
         "supported": not unsupported,
         "consumed": sorted(set(consumed)),
@@ -788,7 +799,7 @@ def execute_j_cuda(
     )
     if not isinstance(runtime_outputs, Mapping):
         raise CudaJExecutionError("CUDA runtime did not return an output mapping")
-    logical_outputs = tuple(item.name for item in lowering.request.j.intent.outputs)
+    logical_outputs = j_elaboration(lowering.request.j).output_names
     runtime_keys = tuple(f"out{index}" for index in range(len(logical_outputs)))
     if set(runtime_outputs) != set(runtime_keys):
         raise CudaJExecutionError(

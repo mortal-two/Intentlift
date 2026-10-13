@@ -26,7 +26,9 @@ PYTHONPATH=python python tools/scrc_batch.py --run \
 
 ## 2. 精确 artifact 的复核
 
-复核只能使用活动工具明确支持的真实 parent artifact、精确 Replay 和 lineage。复核不得调用模拟 Source，不得绕过当前 Gate1/Gate2，也不得把 TypeCheck 或单边比较当作闭包证据。若需要继续 Gate1，使用 `tools/scrc_gate1_continue.py` 并指定原始 evidence 根目录；它创建的新 Replay 仍属于正式 provider/Lift 预算。
+复核不得从历史 parent artifact、rejected candidate、draft、trajectory、session 或 repair base 继续 Gate1。需要重跑时必须建立新的独立 run root，从新的合法 Lift lifecycle 开始，并按正式 provider/Lift 预算依次通过 CandidateCheck、TypeCheck、Replay、Gate1 和 Gate2；不得调用模拟 Source、绕过当前 Gate，或把 TypeCheck 和单边比较当作闭包证据。
+
+唯一允许的精确 artifact Replay 重试发生在尚未落盘的同一 Kernel 生命周期内：当前 runner 已取得 Gate1 闭包、Gate2 明确显示 Source–J 通过而两个 Replay 边同时失败、且仍有正式 Gate1 轮次时，runner 可对自己刚闭合的 TypeCheck-valid artifact 创建新的 Source-blind Replay。该入口不接受 artifact 路径、历史证据或外部 feedback，不调用 Lift，也不能替换候选；跨 root 重跑仍必须从 fresh Lift 开始。
 
 ## 3. 多前端工作流
 

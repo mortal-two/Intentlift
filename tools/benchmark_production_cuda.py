@@ -57,6 +57,7 @@ from intentir.ir.production_snapshot import (
     ProductionSnapshot,
     load_production_snapshot,
 )
+from intentir.ir.canonical_j import j_elaboration
 from intentir.verify.gate2.compare import compare_outputs
 from intentir.verify.gate2.policy import DEFAULT_GATE2_POLICY
 from intentir.verify.gate2.scalar import ScalarLoweringRunner
@@ -131,13 +132,16 @@ def _tensor_outputs(
     snapshot: ProductionSnapshot,
     dims: Mapping[str, int],
 ) -> list[Any]:
+    output_bindings = j_elaboration(snapshot.j).output_bindings
+    if not output_bindings:
+        raise ValueError("accepted J has no canonical output bindings")
     return [
         torch.empty(
-            _shape(tensor.shape, dims),
-            dtype=_torch_dtype(torch, tensor.dtype),
+            _shape(binding.output_type.shape, dims),
+            dtype=_torch_dtype(torch, binding.output_type.dtype),
             device="cuda",
         )
-        for tensor in snapshot.j.intent.outputs
+        for binding in output_bindings
     ]
 
 

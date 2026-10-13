@@ -6,7 +6,6 @@ import ast
 import hashlib
 import json
 import os
-import re
 import shlex
 import stat
 import struct
@@ -20,7 +19,7 @@ from typing import Any, Callable, Mapping
 
 from pydantic import BaseModel, ConfigDict
 
-from minisweagent.exceptions import Submitted
+from minisweagent.exceptions import ReplayOrchestrationExceeded, Submitted
 from intentir.verify.gate1.replay_semantic_core import (
     materialize_replay_compiler_index,
     materialize_replay_semantics,
@@ -169,6 +168,14 @@ MAX_CHECK_RESULT_BYTES = 128 * 1024
 MAX_PACKET_QUERY_OUTPUT_BYTES = 10_000
 MAX_REPLAY_INSPECT_OUTPUT_BYTES = 10_000
 _SANDBOX_START_MARKER = b"__INTENTIR_REPLAY_SANDBOX_STARTED__\n"
+# Orientation is deliberately brief: the provider receives two bounded
+# source-blind reads, then must author a complete first Replay source through
+# the explicit transaction tool.  Once source exists, at most three unchanged
+# source inspections/queries may precede the next explicit patch or submit.
+# These are orchestration bounds only; ReplayCheck, compile-check, Gate1 and
+# Gate2 retain their existing acceptance criteria.
+_REPLAY_ORIENTATION_ACTION_LIMIT = 2
+_REPLAY_REPAIR_READ_ONLY_ACTION_LIMIT = 3
 
 
 def _packet_json_chars(value: Any) -> int:
@@ -1039,6 +1046,7 @@ class IntentIRReplayEnvironmentConfig(BaseModel):
     replay_submission_check_limit: int = 0
     replay_compile_check_limit: int = 0
     replay_source_inspect_limit: int = 0
+    same_preflight_repair_limit: int = 0
 
 
 class IntentIRReplayEnvironment:
@@ -1061,6 +1069,8 @@ class IntentIRReplayEnvironment:
             raise ValueError("replay_compile_check_limit must be non-negative")
         if self.config.replay_source_inspect_limit < 0:
             raise ValueError("replay_source_inspect_limit must be non-negative")
+        if self.config.same_preflight_repair_limit < 0:
+            raise ValueError("same_preflight_repair_limit must be non-negative")
         self._replay_checker = replay_checker
         self._replay_compile_checker = replay_compile_checker
         self._check_calls = 0
@@ -1085,8 +1095,184 @@ class IntentIRReplayEnvironment:
         self._direct_submit_audit: list[dict[str, Any]] = []
         self._multi_action_rejections = 0
         self._validate_paths()
+        self._orientation_actions = 0
+        self._read_only_actions_since_source_change = 0
+        self._source_bytes_at_last_action = self._current_replay_source_bytes()
+        # A submission preflight rejection is a construction diagnostic, not
+        # permission to discard the current source and start another blind
+        # full-source attempt.  The next mutation must be one exact authored
+        # patch of these rejected bytes; only that changed source may reopen
+        # bounded own-source inspection and a later explicit submission.
+        self._submission_repair_required = False
+        self._preflight_repair_fingerprint: str | None = None
+        self._consecutive_preflight_repairs = 0
+        self._preflight_repair_exhausted = False
         self._read_closed_packet()
         self._probe()
+
+    def _current_replay_source_bytes(self) -> bytes | None:
+        """Return the exact owned source bytes, or ``None`` before construction."""
+
+        path = self.config.output_dir / "replay.source"
+        if not path.exists():
+            return None
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("replay.source must be a regular file")
+        data = path.read_bytes()
+        if not 1 <= len(data) <= MAX_REPLAY_BYTES:
+            raise ValueError("replay.source size is outside the allowed range")
+        return data
+
+    def _restore_replay_source_bytes(self, source_bytes: bytes | None) -> None:
+        """Undo a shell-side source mutation; only explicit tools may author it."""
+
+        path = self.config.output_dir / "replay.source"
+        if source_bytes is None:
+            if path.exists() or path.is_symlink():
+                _remove_path_iterative(path)
+            return
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".replay-orchestration-restore-", dir=self.config.output_dir
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(source_bytes)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _replay_orchestration_phase(self) -> str:
+        """Return the single next action phase without judging source semantics."""
+
+        if self._current_replay_source_bytes() is None:
+            return (
+                "orientation"
+                if self._orientation_actions < _REPLAY_ORIENTATION_ACTION_LIMIT
+                else "construction_required"
+            )
+        if self._submission_repair_required:
+            return "submission_repair_required"
+        return (
+            "repair_required"
+            if self._read_only_actions_since_source_change
+            >= _REPLAY_REPAIR_READ_ONLY_ACTION_LIMIT
+            else "repair"
+        )
+
+    def response_tools(self) -> list[dict[str, Any]]:
+        """Expose only tools that can advance the current Replay phase."""
+
+        from minisweagent.models.utils.actions_toolcall_response import (
+            APPLY_REPLAY_PATCH_TOOL_RESPONSE_API,
+            BASH_TOOL_RESPONSE_API,
+            SUBMIT_REPLAY_TOOL_RESPONSE_API,
+        )
+
+        phase = self._replay_orchestration_phase()
+        if phase == "orientation":
+            return [BASH_TOOL_RESPONSE_API]
+        if phase == "construction_required":
+            return [SUBMIT_REPLAY_TOOL_RESPONSE_API]
+        if phase == "submission_repair_required":
+            return [APPLY_REPLAY_PATCH_TOOL_RESPONSE_API]
+        if phase == "repair_required":
+            return [APPLY_REPLAY_PATCH_TOOL_RESPONSE_API, SUBMIT_REPLAY_TOOL_RESPONSE_API]
+        return [
+            BASH_TOOL_RESPONSE_API,
+            APPLY_REPLAY_PATCH_TOOL_RESPONSE_API,
+            SUBMIT_REPLAY_TOOL_RESPONSE_API,
+        ]
+
+    def _orchestration_rejection(self, detail: str) -> dict[str, Any]:
+        return self._transaction_output(
+            action="orchestration",
+            status="fail",
+            diagnostic=detail,
+        )
+
+    def _record_explicit_source_action(self) -> None:
+        current = self._current_replay_source_bytes()
+        if current != self._source_bytes_at_last_action:
+            self._source_bytes_at_last_action = current
+            self._read_only_actions_since_source_change = 0
+
+    def _record_read_only_action(self) -> None:
+        if self._current_replay_source_bytes() != self._source_bytes_at_last_action:
+            raise RuntimeError("Replay source changed outside an explicit transaction")
+        if self._source_bytes_at_last_action is None:
+            self._orientation_actions += 1
+        else:
+            self._read_only_actions_since_source_change += 1
+
+    def _note_submission_preflight_rejection(
+        self, *, kind: str, diagnostic: str
+    ) -> None:
+        """Bound one unchanged source plus one diagnostic without retaining either."""
+
+        source = self._current_replay_source_bytes()
+        if source is None:
+            raise RuntimeError("submission preflight has no replay.source")
+        source_sha256 = hashlib.sha256(source).hexdigest()
+        fingerprint = hashlib.sha256(
+            (kind + "\0" + source_sha256 + "\0" + diagnostic).encode(
+                "utf-8", errors="replace"
+            )
+        ).hexdigest()
+        if fingerprint == self._preflight_repair_fingerprint:
+            self._consecutive_preflight_repairs += 1
+        else:
+            self._preflight_repair_fingerprint = fingerprint
+            self._consecutive_preflight_repairs = 1
+        limit = self.config.same_preflight_repair_limit
+        self._preflight_repair_exhausted = bool(
+            limit and self._consecutive_preflight_repairs > limit
+        )
+
+    def _raise_if_preflight_repair_exhausted(self) -> None:
+        if not self._preflight_repair_exhausted:
+            return
+        raise ReplayOrchestrationExceeded(
+            {
+                "role": "exit",
+                "content": "ReplayPreflightRepairLimitExceeded",
+                "extra": {
+                    "exit_status": "ReplayPreflightRepairLimitExceeded",
+                    "submission": "",
+                    "same_preflight_repair_limit": (
+                        self.config.same_preflight_repair_limit
+                    ),
+                    "consecutive_preflight_repairs": (
+                        self._consecutive_preflight_repairs
+                    ),
+                    "preflight_repair_fingerprint": self._preflight_repair_fingerprint,
+                },
+            }
+        )
+
+    def _finish_read_only_action(
+        self,
+        source_before: bytes | None,
+        output: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Reject and undo any source mutation performed through the shell."""
+
+        try:
+            source_after = self._current_replay_source_bytes()
+        except Exception:
+            self._restore_replay_source_bytes(source_before)
+            return self._orchestration_rejection(
+                "Replay source mutations must use submit_replay or apply_replay_patch"
+            )
+        if source_after != source_before:
+            self._restore_replay_source_bytes(source_before)
+            return self._orchestration_rejection(
+                "Replay source mutations must use submit_replay or apply_replay_patch"
+            )
+        self._record_read_only_action()
+        return output
 
     def validate_actions(self, actions: list[dict[str, Any]]) -> str | None:
         """Permit a batch only for independent immutable-input queries."""
@@ -1409,6 +1595,8 @@ class IntentIRReplayEnvironment:
 
         if terminal_status not in {
             "LimitsExceeded",
+            "AgentStepLimitExceeded",
+            "AgentCostLimitExceeded",
             "TimeExceeded",
             "RepeatedFormatError",
             "OrchestrationStall",
@@ -2026,11 +2214,45 @@ class IntentIRReplayEnvironment:
     def execute(self, action: dict, cwd: str = "", *, timeout: int | None = None) -> dict[str, Any]:
         if cwd not in {"", "/work"}:
             raise ValueError("IntentIR Replay cwd is fixed at /work")
+        phase = self._replay_orchestration_phase()
+        source_before = self._current_replay_source_bytes()
         command = action.get("command", "")
         if action.get("tool_name") == "apply_replay_patch":
-            return self._execute_replay_patch(action)
+            if phase not in {
+                "repair",
+                "repair_required",
+                "submission_repair_required",
+            }:
+                return self._orchestration_rejection(
+                    "apply_replay_patch is available only after an explicit first Replay source submission"
+                )
+            output = self._execute_replay_patch(action)
+            self._record_explicit_source_action()
+            self._submission_repair_required = output.get("returncode") == 2
+            self._raise_if_preflight_repair_exhausted()
+            return output
         if action.get("tool_name") == "submit_replay":
-            return self._execute_submit_replay(action)
+            if phase == "orientation":
+                return self._orchestration_rejection(
+                    "complete the bounded Replay orientation before the first source submission"
+                )
+            if phase == "submission_repair_required":
+                return self._orchestration_rejection(
+                    "the latest Replay submission was rejected; apply one exact patch before submitting again"
+                )
+            output = self._execute_submit_replay(action)
+            self._record_explicit_source_action()
+            self._submission_repair_required = output.get("returncode") == 2
+            self._raise_if_preflight_repair_exhausted()
+            return output
+        if phase in {
+            "construction_required",
+            "repair_required",
+            "submission_repair_required",
+        }:
+            return self._orchestration_rejection(
+                "Replay construction is due; use the currently exposed source transaction instead of another read-only command"
+            )
         if not isinstance(command, str):
             raise TypeError("Replay shell command must be a string")
         try:
@@ -2038,54 +2260,36 @@ class IntentIRReplayEnvironment:
         except ValueError:
             check_arguments = []
         if check_arguments and check_arguments[0] == INTENTIR_PACKET_QUERY:
-            return self._execute_packet_query(check_arguments)
+            return self._finish_read_only_action(
+                source_before, self._execute_packet_query(check_arguments)
+            )
         if check_arguments and check_arguments[0] == INTENTIR_SEMANTIC_QUERY:
-            return self._execute_semantic_query(check_arguments)
+            return self._finish_read_only_action(
+                source_before, self._execute_semantic_query(check_arguments)
+            )
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_INSPECT:
-            return self._execute_replay_inspect(check_arguments)
+            return self._finish_read_only_action(
+                source_before, self._execute_replay_inspect(check_arguments)
+            )
         if check_arguments and check_arguments[0] == INTENTIR_REPLAY_CHECK:
-            return self._execute_replay_check(check_arguments)
-        if check_arguments and check_arguments[0] == INTENTIR_REPLAY_COMMIT:
-            return self._execute_replay_commit(check_arguments)
-        if check_arguments and check_arguments[0] == INTENTIR_REPLAY_ROLLBACK:
-            return self._execute_replay_rollback(check_arguments)
-        if check_arguments and check_arguments[0] == INTENTIR_REPLAY_SUBMIT_COMMAND:
-            if check_arguments == [INTENTIR_REPLAY_SUBMIT_COMMAND, "--committed"]:
-                try:
-                    self._restore_committed_source()
-                except Exception as exc:
-                    return self._transaction_output(
-                        action="submit",
-                        status="fail",
-                        diagnostic=(
-                            "committed submission unavailable: "
-                            f"{type(exc).__name__}: {exc}"
-                        ),
-                    )
-            elif check_arguments != [
-                INTENTIR_REPLAY_SUBMIT_COMMAND,
-                "/output/replay.source",
-            ]:
-                return self._transaction_output(
-                    action="submit",
-                    status="fail",
-                    diagnostic=(
-                        "usage: intentir_replay_submit /output/replay.source | "
-                        "intentir_replay_submit --committed"
-                    ),
-                )
-            output = {
-                "output": INTENTIR_REPLAY_SUBMIT + "\n",
-                "returncode": 0,
-                "exception_info": "",
-            }
-            self._check_submission(output)
-            return output
+            return self._finish_read_only_action(
+                source_before, self._execute_replay_check(check_arguments)
+            )
+        if check_arguments and check_arguments[0] in {
+            INTENTIR_REPLAY_COMMIT,
+            INTENTIR_REPLAY_ROLLBACK,
+            INTENTIR_REPLAY_SUBMIT_COMMAND,
+        }:
+            return self._orchestration_rejection(
+                "use submit_replay or apply_replay_patch for every Replay source transaction"
+            )
         if (
             check_arguments
             and check_arguments[0] == INTENTIR_REPLAY_COMPILE_CHECK
         ):
-            return self._execute_replay_compile_check(check_arguments)
+            return self._finish_read_only_action(
+                source_before, self._execute_replay_compile_check(check_arguments)
+            )
         bounded_shell = (
             f"printf '{_SANDBOX_START_MARKER.decode()}'; "
             "ulimit -t 60 -f 8192 -n 64 -p 128 -v 524288; "
@@ -2168,8 +2372,7 @@ class IntentIRReplayEnvironment:
             raise RuntimeError(
                 f"IntentIR Replay sandbox action failed: {type(exc).__name__}: {exc}"
             ) from exc
-        self._check_submission(output)
-        return output
+        return self._finish_read_only_action(source_before, output)
 
     def _check_submission(self, output: dict[str, Any]) -> None:
         lines = str(output.get("output", "")).lstrip().splitlines()
@@ -2187,6 +2390,9 @@ class IntentIRReplayEnvironment:
         except Exception as exc:
             output["returncode"] = 2
             output["output"] += f"\nSubmission rejected by output policy: {type(exc).__name__}\n"
+            self._note_submission_preflight_rejection(
+                kind="output_policy", diagnostic=type(exc).__name__
+            )
             return
         source_bytes = source_text.encode("utf-8")
         if self._replay_checker is not None and source_bytes != self._passed_bytes:
@@ -2199,6 +2405,9 @@ class IntentIRReplayEnvironment:
                 output["output"] += (
                     "\nSubmission preflight rejected the current Replay source. "
                     "Edit it and submit again.\n" + str(preflight["output"])
+                )
+                self._note_submission_preflight_rejection(
+                    kind="replay_check", diagnostic=str(preflight["output"])
                 )
                 return
         if (
@@ -2215,18 +2424,28 @@ class IntentIRReplayEnvironment:
                     "Replay source. Edit it and submit again.\n"
                     + str(compile_preflight["output"])
                 )
+                self._note_submission_preflight_rejection(
+                    kind="compile_check",
+                    diagnostic=str(compile_preflight["output"]),
+                )
                 return
         try:
             final_source = workspace.read_replay()
         except Exception as exc:
             output["returncode"] = 2
             output["output"] += f"\nSubmission changed after checking: {type(exc).__name__}\n"
+            self._note_submission_preflight_rejection(
+                kind="post_check_read", diagnostic=type(exc).__name__
+            )
             return
         if final_source.encode("utf-8") != source_bytes:
             output["returncode"] = 2
             output["output"] += (
                 "\nSubmission rejected because replay.source changed after "
                 "the exact bytes were checked.\n"
+            )
+            self._note_submission_preflight_rejection(
+                kind="post_check_bytes", diagnostic="source_changed"
             )
             return
         raise Submitted(
@@ -2263,6 +2482,9 @@ class IntentIRReplayEnvironment:
                         ),
                         "replay_source_inspect_limit": (
                             self.config.replay_source_inspect_limit
+                        ),
+                        "same_preflight_repair_limit": (
+                            self.config.same_preflight_repair_limit
                         ),
                     },
                     "environment_type": f"{self.__class__.__module__}.{self.__class__.__name__}",
@@ -2306,6 +2528,16 @@ class IntentIRReplayEnvironment:
                     "evaluations": self._compile_check_evaluations,
                     "limit": self.config.replay_compile_check_limit,
                     "results": list(self._compile_check_audit),
+                },
+                "replay_preflight_repair_budget": {
+                    "authority": (
+                        "orchestration-only repeated diagnostic cap; no "
+                        "semantic acceptance or repair authority"
+                    ),
+                    "limit": self.config.same_preflight_repair_limit,
+                    "consecutive": self._consecutive_preflight_repairs,
+                    "source_and_diagnostic_sha256": self._preflight_repair_fingerprint,
+                    "exhausted": self._preflight_repair_exhausted,
                 },
                 "replay_source_inspect": {
                     "protocol": "intentir.replay-own-source-inventory.v1",

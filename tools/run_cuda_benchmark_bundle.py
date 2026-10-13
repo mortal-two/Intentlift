@@ -43,6 +43,7 @@ from intentir.backend.roofline import (
 )
 from intentir.verify.gate1.compiler import KernelSource
 from intentir.ir.value_dimension import resolve_runtime_output_shapes
+from intentir.ir.canonical_j import j_elaboration
 from intentir.verify.gate2.compare import compare_outputs, validate_j_inputs
 from intentir.verify.gate2.model import OutputAgreement, PairwiseAgreement
 from intentir.verify.gate2.policy import ComparisonPolicy, DEFAULT_GATE2_POLICY
@@ -353,18 +354,19 @@ def _compare_cuda_outputs(
 ) -> PairwiseAgreement:
     """Compare candidate outputs to the selected target-side reference."""
 
-    expected_outputs = {item.name for item in j.intent.outputs}
+    output_bindings = j_elaboration(j).output_bindings
+    expected_outputs = set(j_elaboration(j).output_names)
     if set(entry["output_bindings"]) != expected_outputs:
         raise ValueError("Gate2 output bindings differ from canonical J outputs")
     explicit = {item.output: item for item in j.boundary.result_relations}
     observations: list[OutputAgreement] = []
-    for output in j.intent.outputs:
-        runtime_key = entry["output_bindings"][output.name]
+    for binding in output_bindings:
+        runtime_key = entry["output_bindings"][binding.output]
         relation = explicit.get(
-            output.name,
-            ResultRelationSpec(output.name, ResultRelationKind.EXACT),
+            binding.output,
+            ResultRelationSpec(binding.output, ResultRelationKind.EXACT),
         )
-        rule = policy.rule_for(relation.kind, output.dtype)
+        rule = policy.rule_for(relation.kind, binding.output_type.dtype)
         tolerance = rule.tolerance
         if runtime_key not in actual or runtime_key not in reference:
             observations.append(
@@ -384,7 +386,7 @@ def _compare_cuda_outputs(
             continue
         lhs = actual[runtime_key]
         rhs = reference[runtime_key]
-        expected_dtype = _torch_dtype(torch, output.dtype)
+        expected_dtype = _torch_dtype(torch, binding.output_type.dtype)
         if lhs.dtype != expected_dtype or rhs.dtype != expected_dtype:
             observations.append(
                 OutputAgreement(
@@ -481,6 +483,9 @@ def _one_kernel(
     import torch
 
     j = SemanticArchive.from_json(entry["j"])
+    canonical_outputs = j_elaboration(j).output_bindings
+    if not canonical_outputs:
+        raise ValueError("accepted J has no canonical output bindings")
     policy = ComparisonPolicy.from_json(
         entry.get("comparison_policy", DEFAULT_GATE2_POLICY.to_json())
     )
@@ -556,26 +561,27 @@ def _one_kernel(
     }
     runtime_output_shapes = resolve_runtime_output_shapes(
         j.intent,
-        [item.shape for item in j.intent.outputs],
+        [list(item.output_type.shape) for item in canonical_outputs],
         runtime_input_arrays,
         dims=entry["extents"],
+        canonical_output_bindings=canonical_outputs,
     )
     specs_by_name = {
         str(item["name"]): item for item in entry["output_specs"]
     }
     runtime_output_specs: list[dict[str, Any]] = []
-    for output, shape in zip(j.intent.outputs, runtime_output_shapes, strict=True):
-        raw_spec = specs_by_name.get(output.name)
+    for output, shape in zip(canonical_outputs, runtime_output_shapes, strict=True):
+        raw_spec = specs_by_name.get(output.output)
         if raw_spec is None:
-            raise ValueError(f"bundled output {output.name!r} is absent from its ABI")
+            raise ValueError(f"bundled output {output.output!r} is absent from its ABI")
         declared_shape = raw_spec.get("shape")
         if not isinstance(declared_shape, list) or len(declared_shape) != len(shape):
-            raise ValueError(f"bundled output {output.name!r} has an invalid shape")
+            raise ValueError(f"bundled output {output.output!r} has an invalid shape")
         if all(item != "?" for item in declared_shape):
             try:
                 if tuple(int(item) for item in declared_shape) != shape:
                     raise ValueError(
-                        f"bundled output {output.name!r} shape differs from the "
+                        f"bundled output {output.output!r} shape differs from the "
                         f"J-derived runtime shape: {declared_shape} != {list(shape)}"
                     )
             except (TypeError, ValueError) as exc:
@@ -588,14 +594,14 @@ def _one_kernel(
         runtime_spec["shape"] = list(shape)
         runtime_output_specs.append(runtime_spec)
     entry = {**entry, "output_specs": runtime_output_specs}
-    for output, spec in zip(j.intent.outputs, runtime_output_specs, strict=True):
-        output_key = entry["output_bindings"][output.name]
+    for output, spec in zip(canonical_outputs, runtime_output_specs, strict=True):
+        output_key = entry["output_bindings"][output.output]
         if output_key not in reference:
-            raise ValueError(f"canonical reference omitted output {output.name!r}")
+            raise ValueError(f"canonical reference omitted output {output.output!r}")
         actual_shape = tuple(np.asarray(reference[output_key]).shape)
         if actual_shape != tuple(spec["shape"]):
             raise ValueError(
-                f"canonical reference output shape for {output.name!r} differs "
+                f"canonical reference output shape for {output.output!r} differs "
                 f"from the J-derived runtime shape: {actual_shape} != {spec['shape']}"
             )
     inputs = []

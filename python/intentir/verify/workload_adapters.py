@@ -17,6 +17,11 @@ import re
 from typing import Any, Iterable, Mapping, Sequence
 
 from intentir.ir.canonical_j import elaborate_j
+from intentir.ir.canonical_construction import (
+    CanonicalConstruction,
+    CanonicalHandleAllocator,
+    SourceFacts,
+)
 from intentir.ir.contract_ir import project_contract_ir
 from intentir.ir.layer_c import (
     LayerCInterface,
@@ -56,6 +61,7 @@ from intentir.verify.triton_source_slice import (
 )
 from intentir.verify.workload_manifest import (
     SCRCWorkloadEntry,
+    _configured_external_source_roots,
     build_workload_manifest,
 )
 
@@ -1309,7 +1315,7 @@ def _validate_source_j_relation_closure(
         for name in source_parameter_order
         if re.fullmatch(r"p[0-9]+", mapping[name])
     )
-    if expected_p != tuple(f"p{index}" for index in range(len(expected_p))):
+    if expected_p != CanonicalHandleAllocator.canonical_names("p", len(expected_p)):
         raise ValueError("source/J relation closure requires dense p* ABI handles")
     signature_parameters = tuple(canonical.signature.parameters)
     if tuple(parameter.name for parameter in signature_parameters) != expected_p:
@@ -3660,12 +3666,6 @@ def build_generated_source_manifest(
         for item in arguments
         if item.category == "runtime_scalar" and item.value is not None
     )
-    semantic_constexpr_shape_coordinates = {
-        item.name: item.shape_coordinate
-        for item in arguments
-        if item.category == "semantic_constexpr"
-        and item.shape_coordinate is not None
-    }
     for name in source_order:
         argument = next(item for item in arguments if item.name == name)
         if name in runtime_order:
@@ -3887,6 +3887,260 @@ def _build_generated_source_manifest(
     )
 
 
+def _source_c_schedule_roles(
+    source: str,
+    *,
+    function_name: str,
+    c_names: tuple[str, ...],
+    shape_coordinate_names: Mapping[str, str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Classify only Source-proven vector tile constexprs.
+
+    A C value is a tile carrier only when the selected entry uses that exact
+    parameter as the direct upper bound of ``arange``. A reduction role further
+    requires a closed local def-use path from every such range to a reduction
+    value operand. Mixed, indirect, multiply-defined, helper-mediated, or
+    otherwise ambiguous uses retain the default ``constexpr_parameter`` role.
+    Names and equal concrete values are never classification evidence.
+    """
+
+    if not c_names:
+        return {}, {}
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, TypeError):
+        return {}, {}
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    ]
+    if len(functions) != 1:
+        return {}, {}
+    function = functions[0]
+    triton_language_aliases: set[str] = set()
+    triton_language_members: dict[str, str] = {}
+    helper_names = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node is not function
+    }
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "triton.language":
+                    triton_language_aliases.add(alias.asname or "triton.language")
+        elif isinstance(node, ast.ImportFrom) and node.module == "triton":
+            for alias in node.names:
+                if alias.name == "language":
+                    triton_language_aliases.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom) and node.module == "triton.language":
+            for alias in node.names:
+                triton_language_members[alias.asname or alias.name] = alias.name
+
+    parent_by_node: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(function):
+        if isinstance(
+            parent,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ) and parent is not function:
+            continue
+        for child in ast.iter_child_nodes(parent):
+            parent_by_node[child] = parent
+
+    control_flow_nodes = (
+        ast.If,
+        ast.For,
+        ast.AsyncFor,
+        ast.While,
+        ast.Try,
+        ast.With,
+        ast.AsyncWith,
+        ast.Match,
+        ast.comprehension,
+        ast.IfExp,
+        ast.BoolOp,
+    )
+
+    def is_straight_line(node: ast.AST) -> bool:
+        """Require a definition to execute on the entry's direct path."""
+
+        parent = parent_by_node.get(node)
+        while parent is not None and parent is not function:
+            if isinstance(parent, control_flow_nodes):
+                return False
+            parent = parent_by_node.get(parent)
+        return parent is function
+
+    def scope_nodes() -> Iterable[ast.AST]:
+        pending: list[ast.AST] = list(reversed(function.body))
+        while pending:
+            node = pending.pop()
+            yield node
+            if isinstance(
+                node,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+            ):
+                continue
+            pending.extend(reversed(list(ast.iter_child_nodes(node))))
+
+    def triton_call_name(node: ast.Call) -> str | None:
+        if (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in triton_language_aliases
+        ):
+            return node.func.attr
+        if isinstance(node.func, ast.Name):
+            return triton_language_members.get(node.func.id)
+        return None
+
+    definitions: dict[str, list[ast.AST]] = {}
+    assigned_names = {
+        node.id
+        for node in scope_nodes()
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    for node in scope_nodes():
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(
+            node.targets[0], ast.Name
+        ):
+            definitions.setdefault(node.targets[0].id, []).append(node.value)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            definitions.setdefault(node.target.id, []).append(node.value)
+        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            # An in-place definition has an implicit prior value and is not a
+            # closed one-expression source for this local dependency proof.
+            definitions.setdefault(node.target.id, []).extend(
+                (node.target, node.value)
+            )
+    unique_definitions = {
+        name: values[0]
+        for name, values in definitions.items()
+        if len(values) == 1 and is_straight_line(values[0])
+    }
+    shadowed_names = assigned_names | set(definitions)
+
+    aranges_by_c: dict[str, list[ast.Call]] = {name: [] for name in c_names}
+    reductions: list[ast.AST] = []
+    reduction_calls = {"sum", "mean", "max", "min", "prod", "any", "all"}
+    for node in scope_nodes():
+        if not isinstance(node, ast.Call):
+            continue
+        leaf = triton_call_name(node)
+        if leaf == "arange":
+            upper = node.args[1] if len(node.args) >= 2 else next(
+                (
+                    keyword.value
+                    for keyword in node.keywords
+                    if keyword.arg in {"end", "stop"}
+                ),
+                None,
+            )
+            if (
+                isinstance(upper, ast.Name)
+                and upper.id in aranges_by_c
+                and upper.id not in shadowed_names
+                and is_straight_line(node)
+            ):
+                aranges_by_c[upper.id].append(node)
+        if leaf in reduction_calls and is_straight_line(node):
+            operand = node.args[0] if node.args else next(
+                (
+                    keyword.value
+                    for keyword in node.keywords
+                    if keyword.arg in {"input", "x"}
+                ),
+                None,
+            )
+            if isinstance(operand, ast.AST):
+                reductions.append(operand)
+
+    def depends_on(
+        node: ast.AST,
+        target: ast.AST,
+        active_names: frozenset[str] = frozenset(),
+    ) -> bool:
+        if node is target:
+            return True
+        if isinstance(node, ast.Call):
+            callee = node.func.id if isinstance(node.func, ast.Name) else None
+            if callee in helper_names:
+                return False
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id in active_names:
+                return False
+            definition = unique_definitions.get(node.id)
+            if definition is not None and depends_on(
+                definition, target, active_names | {node.id}
+            ):
+                return True
+        return any(
+            depends_on(child, target, active_names)
+            for child in ast.iter_child_nodes(node)
+        )
+
+    result: dict[str, str] = {}
+    tile_coordinates: dict[str, str] = {}
+    for name, aranges in aranges_by_c.items():
+        if not aranges:
+            continue
+        reduction_uses = [
+            any(depends_on(operand, arange) for operand in reductions)
+            for arange in aranges
+        ]
+        role = (
+            "reduction_tile_extent"
+            if all(reduction_uses)
+            else "tile_extent"
+            if not any(reduction_uses)
+            else None
+        )
+        # Mixed use has no unique role and deliberately keeps the default.
+        coordinates_by_arange: list[set[str]] = []
+        for arange in aranges:
+            coordinates: set[str] = set()
+            for comparison in (
+                node
+                for node in scope_nodes()
+                if isinstance(node, ast.Compare) and is_straight_line(node)
+            ):
+                operands = [comparison.left, *comparison.comparators]
+                for operator, left, right in zip(
+                    comparison.ops, operands[:-1], operands[1:], strict=True
+                ):
+                    directed_pairs: tuple[tuple[ast.AST, ast.AST], ...]
+                    if isinstance(operator, (ast.Lt, ast.LtE)):
+                        directed_pairs = ((left, right),)
+                    elif isinstance(operator, (ast.Gt, ast.GtE)):
+                        directed_pairs = ((right, left),)
+                    else:
+                        directed_pairs = ()
+                    for indexed, extent in directed_pairs:
+                        coordinate = (
+                            shape_coordinate_names.get(extent.id)
+                            if (
+                                isinstance(extent, ast.Name)
+                                and extent.id not in shadowed_names
+                            )
+                            else None
+                        )
+                        if isinstance(coordinate, str) and depends_on(indexed, arange):
+                            coordinates.add(coordinate)
+            coordinates_by_arange.append(coordinates)
+        if (
+            role is not None
+            and coordinates_by_arange
+            and all(len(coordinates) == 1 for coordinates in coordinates_by_arange)
+            and len(set.union(*coordinates_by_arange)) == 1
+        ):
+            result[name] = role
+            tile_coordinates[name] = next(iter(coordinates_by_arange[0]))
+    return result, tile_coordinates
+
+
 def _prepare_triton_workload_source(
     adapter: TritonWorkloadAdapter,
     *,
@@ -3914,6 +4168,25 @@ def _prepare_triton_workload_source(
     view = adapter.compiler_view(
         source_slice.parameters, source_slice.constexpr_parameters
     )
+    observed_roles, observed_tile_coordinates = _source_c_schedule_roles(
+        source_slice.code,
+        function_name=source_slice.function,
+        c_names=tuple(name for name, _value in adapter.c_values),
+        shape_coordinate_names={
+            **{
+                scalar.formal: scalar.shape_coordinate
+                for scalar in adapter.scalars
+                if isinstance(scalar.shape_coordinate, str)
+            },
+            **dict(adapter.semantic_constexpr_shape_coordinates),
+        },
+    )
+    if observed_roles or observed_tile_coordinates:
+        view = replace(
+            view,
+            schedule_roles={**dict(view.schedule_roles), **observed_roles},
+            schedule_tile_coordinates=observed_tile_coordinates,
+        )
     source_slice.validate_abi(
         parameter_order=view.parameter_order,
         constexpr_parameters=view.constexpr_parameters,
@@ -3923,6 +4196,9 @@ def _prepare_triton_workload_source(
         source_symbol=entry.symbol,
         bound_constexpr_parameters=tuple(
             name for name, _value in adapter.semantic_constexprs
+        ),
+        additional_compiler_slots=tuple(
+            name for name, _value in adapter.compiler_options
         ),
     )
     runtime_parameters = tuple(
@@ -3938,13 +4214,6 @@ def _prepare_triton_workload_source(
             for name in (*runtime_parameters, *source_slice.constexpr_parameters)
         ),
     )
-    used_opaque_names = set(mapping.values())
-    next_c = 0
-    for name, _value in adapter.compiler_options:
-        while f"c{next_c}" in used_opaque_names:
-            next_c += 1
-        mapping[name] = f"c{next_c}"
-        used_opaque_names.add(mapping[name])
     # ``anonymize_source`` also records every source identifier it rewrites,
     # including local temporaries, helper names, and module declarations.  The
     # public Triton ABI mapping is narrower: it is only the selected entry's
@@ -3974,18 +4243,50 @@ def _prepare_triton_workload_source(
     c0.update(
         (mapping[name], value) for name, value in adapter.compiler_options
     )
+    import_roots: list[Path] = []
+    seen_import_roots: set[Path] = set()
+    for root in search_roots:
+        root_path = Path(root).expanduser().resolve()
+        for relative in (
+            Path("support"),
+            Path("liger-kernel") / "support",
+            Path("xformers") / "support",
+        ):
+            candidate = root_path / relative
+            if candidate.is_dir() and candidate not in seen_import_roots:
+                seen_import_roots.add(candidate)
+                import_roots.append(candidate)
     gate_source = KernelSource.from_code(
-        anonymous, "scrc_k0", trusted=True
+        anonymous,
+        "scrc_k0",
+        trusted=True,
+        import_roots=tuple(import_roots),
+    )
+    request_source = SourceProgram(
+        source_slice.code,
+        gate_source,
+        lift_source_kind="python",
+        lift_source_symbol=source_slice.function,
+        lift_parameter_order=source_slice.parameters,
+        lift_constexpr_parameters=source_slice.constexpr_parameters,
+    )
+    source_facts = SourceFacts.from_compiler_view(
+        view,
+        frontend="triton",
+        source_kind=request_source.lift_source_kind,
+        source_symbol=source_slice.function,
+        source_to_opaque=abi_mapping,
+        source_digest=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        source_slice_digest=hashlib.sha256(
+            source_slice.code.encode("utf-8")
+        ).hexdigest(),
+    )
+    construction = CanonicalConstruction.from_source_facts(
+        source_facts,
+        source_text=source_slice.code,
     )
     request = SCRCRunRequest(
-        SourceProgram(
-            source_slice.code,
-            gate_source,
-            lift_source_kind="python",
-            lift_source_symbol=source_slice.function,
-            lift_parameter_order=source_slice.parameters,
-            lift_constexpr_parameters=source_slice.constexpr_parameters,
-        ),
+        request_source,
         HarnessBindingInstance.create(
             c0,
             gate1_case=CompileCase(arguments, adapter.grid, schedule),
@@ -3998,6 +4299,8 @@ def _prepare_triton_workload_source(
             },
         ),
         "triton",
+        source_facts,
+        construction,
     )
     source_manifest = _build_generated_source_manifest(
         adapter,
@@ -4041,7 +4344,7 @@ def prepare_triton_workload(
         entry=entry,
         source=source,
         source_location=resolution.location,
-        search_roots=(module_root,),
+        search_roots=(module_root, *_configured_external_source_roots()),
     )
 
 
@@ -4250,6 +4553,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         ),
         scalars=(
             _scalar("stride", "i64", 127),
+            _scalar("gate_multiplier", "f32", 1.0),
         ),
         semantic_constexprs=(("n_cols", 127),),
         semantic_constexpr_shape_coordinates=(("n_cols", "h1"),),

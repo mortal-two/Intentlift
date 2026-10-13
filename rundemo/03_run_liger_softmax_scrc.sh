@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 PYTHONPATH_VALUE="$REPO_ROOT/python${PYTHONPATH:+:$PYTHONPATH}"
-DATASET_ROOT="${INTENTIR_DATASET_ROOT:-$REPO_ROOT/../Dataset}"
+DATASET_ROOT="${INTENTIR_DATASET_ROOT:-}"
 PROVIDER_CONFIG="${INTENTIR_PROVIDER_CONFIG:-$REPO_ROOT/llm_providers.local.json}"
 EVIDENCE_ROOT="${INTENTIR_EVIDENCE_ROOT:-$REPO_ROOT/../intentir-evidence}"
 RUN_ROOT="${INTENTIR_DEMO_RUN_ROOT:-$EVIDENCE_ROOT/rundemo/scrc}"
@@ -23,7 +23,7 @@ Usage:
   bash rundemo/03_run_liger_softmax_scrc.sh
 
 Environment overrides:
-  INTENTIR_DATASET_ROOT   existing external Dataset root
+  INTENTIR_DATASET_ROOT   required existing external Dataset root
   INTENTIR_PROVIDER_CONFIG
                           ignored provider JSON path; never committed
   INTENTIR_PROVIDER_NAME  optional provider name from that JSON
@@ -40,6 +40,12 @@ fi
 
 if [[ $# -ne 0 ]]; then
     echo "unexpected argument: $1" >&2
+    exit 2
+fi
+
+if [[ -z "$DATASET_ROOT" ]]; then
+    echo "Dataset root is required." >&2
+    echo "Set INTENTIR_DATASET_ROOT to an existing Dataset root." >&2
     exit 2
 fi
 
@@ -75,7 +81,7 @@ exec env PYTHONPATH="$PYTHONPATH_VALUE" \
     --case "high_performance:liger_softmax" \
     --dataset-root "$DATASET_ROOT" \
     "${PROVIDER_ARGS[@]}" \
-    --lift-backend responses \
+    --lift-backend miniswe \
     --replay-backend responses \
     --max-lift-calls "$MAX_LIFT_CALLS" \
     --run-root "$RUN_ROOT" \

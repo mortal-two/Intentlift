@@ -210,27 +210,40 @@ def _torch_dtype(torch: Any, dtype: str) -> Any:
 def _load_module(
     source: KernelSource, temporary: Path
 ) -> tuple[ModuleType, str, dict[str, Any]]:
-    code, origin = source.read_code()
-    normalized, frontend_compat = normalize_deprecated_triton_dot(code)
-    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
-    module_name = f"_intentir_gate2_{source.function}_{digest}_{id(source):x}"
-    if source.kind == "module_file" and not frontend_compat["rewrite_count"]:
-        assert source.path is not None
-        path = Path(source.path).resolve()
-    else:
-        path = temporary / f"{module_name}.py"
-        path.write_text(normalized, encoding="utf-8")
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load Triton module from {origin}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
+    previous_sys_path = list(sys.path)
     try:
-        spec.loader.exec_module(module)
-    except Exception:
-        sys.modules.pop(module_name, None)
-        raise
-    return module, module_name, frontend_compat
+        if source.trusted:
+            for raw_root in source.import_roots:
+                root = Path(raw_root).expanduser().resolve()
+                if not root.is_dir():
+                    raise ValueError(
+                        f"trusted Source import root is not a directory: {root}"
+                    )
+                if str(root) not in sys.path:
+                    sys.path.insert(0, str(root))
+        code, origin = source.read_code()
+        normalized, frontend_compat = normalize_deprecated_triton_dot(code)
+        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+        module_name = f"_intentir_gate2_{source.function}_{digest}_{id(source):x}"
+        if source.kind == "module_file" and not frontend_compat["rewrite_count"]:
+            assert source.path is not None
+            path = Path(source.path).resolve()
+        else:
+            path = temporary / f"{module_name}.py"
+            path.write_text(normalized, encoding="utf-8")
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load Triton module from {origin}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(module_name, None)
+            raise
+        return module, module_name, frontend_compat
+    finally:
+        sys.path[:] = previous_sys_path
 
 
 def _launch_by_name(

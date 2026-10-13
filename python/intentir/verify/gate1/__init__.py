@@ -56,8 +56,12 @@ from .model import (
     opaque_replay_abi,
 )
 from .pi import (
+    ProgramCoordinateProjection,
+    ProgramCoordinateProjectionError,
+    ProgramCoordinateRow,
     RealizationWitness,
     RealizationWitnessError,
+    canonical_program_coordinate_projection,
     validate_normalization_bindings_against_j,
 )
 from .profile import ObserverProfile, observer_profile_for
@@ -73,6 +77,8 @@ __all__ = [
     "ObserverProfile", "observer_profile_for",
     "ParameterMode", "PortableScope", "ProvenanceRecord", "ProvenanceRole",
     "RealizationAuthorization", "RealizationWitness",
+    "ProgramCoordinateProjection", "ProgramCoordinateProjectionError",
+    "ProgramCoordinateRow", "canonical_program_coordinate_projection",
     "RealizationWitnessError", "validate_normalization_bindings_against_j",
     "ReductionBoundary", "RefinementKind",
     "ResultRelationKind", "ResultRelationSpec",

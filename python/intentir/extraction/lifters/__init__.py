@@ -15,8 +15,6 @@ _LAZY_EXPORTS = {
     "SCRCCompilerArgument": ("intentir.extraction.lifters.scrc", "SCRCCompilerArgument"),
     "SCRCCompilerView": ("intentir.extraction.lifters.scrc", "SCRCCompilerView"),
     "SCRCExtraction": ("intentir.extraction.lifters.scrc", "SCRCExtraction"),
-    "SCRCLiftAttempt": ("intentir.extraction.lifters.scrc", "SCRCLiftAttempt"),
-    "SCRCLiftError": ("intentir.extraction.lifters.scrc", "SCRCLiftError"),
     "SCRCProvenance": ("intentir.extraction.lifters.scrc", "SCRCProvenance"),
     "SCRCReliftContext": ("intentir.extraction.lifters.scrc", "SCRCReliftContext"),
     "SCRCReliftRecord": ("intentir.extraction.lifters.scrc", "SCRCReliftRecord"),
@@ -27,6 +25,7 @@ _LAZY_EXPORTS = {
     "scrc_relift_prompt_sha256": ("intentir.extraction.lifters.scrc", "scrc_relift_prompt_sha256"),
     "scrc_lift_core_json_schema": ("intentir.extraction.lifters.scrc_schema", "scrc_lift_core_json_schema"),
     "scrc_lift_core_text_format": ("intentir.extraction.lifters.scrc_schema", "scrc_lift_core_text_format"),
+    "scrc_semantic_candidate_text_format": ("intentir.extraction.lifters.scrc_schema", "scrc_semantic_candidate_text_format"),
 }
 
 
@@ -51,8 +50,6 @@ __all__ = [
     "SCRCExtraction",
     "SCRCCompilerArgument",
     "SCRCCompilerView",
-    "SCRCLiftAttempt",
-    "SCRCLiftError",
     "SCRCProvenance",
     "SCRCReliftContext",
     "SCRCReliftRecord",
@@ -63,4 +60,5 @@ __all__ = [
     "scrc_relift_prompt_sha256",
     "scrc_lift_core_json_schema",
     "scrc_lift_core_text_format",
+    "scrc_semantic_candidate_text_format",
 ]

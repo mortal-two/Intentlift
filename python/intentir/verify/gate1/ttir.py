@@ -21,7 +21,7 @@ names (for example ``"tt.reduce"``).
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -43,6 +43,7 @@ __all__ = [
     "TTIR_FINGERPRINT_SCHEMA",
     "TTIRParseError",
     "TTIRParser",
+    "diagnostic_source_locations",
     "extract_ttir_fingerprint",
     "fingerprint_ttir",
     "parse_ttir",
@@ -53,6 +54,13 @@ TTIR_FINGERPRINT_SCHEMA = "triton-ttir-3.6-gate1-v13"
 _SCHEMA_VERSION = TTIR_FINGERPRINT_SCHEMA
 _SSA_RE = re.compile(r"%[A-Za-z0-9_.$-]+(?:#[0-9]+)?")
 _LOC_START_RE = re.compile(r"loc\s*\(")
+_LOCATION_DEFINITION_RE = re.compile(
+    r"(?m)^\s*(?P<name>#loc[A-Za-z0-9_.$-]*)\s*=\s*(?P<value>loc\s*\(.*)$"
+)
+_LOCATION_REFERENCE_RE = re.compile(r"#loc[A-Za-z0-9_.$-]*")
+_LOCATION_COORDINATE_RE = re.compile(
+    r'"(?:\\.|[^"\\])*"\s*:\s*(?P<line>[0-9]+)\s*:\s*(?P<column>[0-9]+)'
+)
 _OP_RE = re.compile(
     r'(?P<quoted>"[A-Za-z_][A-Za-z0-9_.-]*")|'
     r"(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*)"
@@ -328,6 +336,133 @@ def _strip_locations(text: str) -> str:
     return "".join(output)
 
 
+def _diagnostic_source_location_records(
+    text: str,
+) -> tuple[tuple[str, tuple[str, ...], int, int], ...]:
+    """Return narrow raw-TTIR location records for provenance only.
+
+    The observer parser intentionally consumes TTIR with locations stripped,
+    while Source authorization needs the compiler's original debug coordinate.
+    Keep the bridge deliberately local: a record is emitted only for a direct
+    operation statement with exactly one resolvable coordinate.  In
+    particular, this does not turn a nearby location definition, a nested
+    region close, or an operation sequence position into an identity.
+    """
+
+    if not isinstance(text, str) or not text.strip():
+        raise TTIRParseError("TTIR text is empty")
+
+    definitions: dict[str, str] = {}
+    for match in _LOCATION_DEFINITION_RE.finditer(text):
+        start = match.start("value")
+        opening = text.find("(", start)
+        if opening < 0:
+            continue
+        try:
+            end = _balanced_end(text, opening, "(", ")")
+        except TTIRParseError:
+            continue
+        definitions[match.group("name")] = text[start : end + 1]
+
+    def coordinates(location: str) -> tuple[int, int] | None:
+        pending = [location]
+        expanded: set[str] = set()
+        payloads: list[str] = []
+        while pending:
+            current = pending.pop()
+            if current in expanded:
+                continue
+            expanded.add(current)
+            payloads.append(current)
+            for reference in _LOCATION_REFERENCE_RE.findall(current):
+                definition = definitions.get(reference)
+                if definition is not None:
+                    pending.append(definition)
+        found = {
+            (int(match.group("line")), int(match.group("column")))
+            for payload in payloads
+            for match in _LOCATION_COORDINATE_RE.finditer(payload)
+        }
+        return next(iter(found)) if len(found) == 1 else None
+
+    records: list[tuple[str, tuple[str, ...], int, int]] = []
+    active_name: str | None = None
+    active_results: tuple[str, ...] = ()
+    active_text = ""
+    recorded = False
+    # A direct operation can span lines, and its location may be followed by
+    # a type or attribute suffix.  The former implementation required
+    # ``loc(...)`` to be the final character and then chose the last token
+    # before it as the operation.  That confuses ordinary typed TTIR with
+    # location definitions/attributes and silently drops valid provenance.
+    # Track only the operation head of the current direct statement instead.
+    for raw_line in text.splitlines():
+        stripped = raw_line.lstrip()
+        if stripped.startswith("#loc"):
+            continue
+        head = _operation_head(raw_line)
+        if head is not None:
+            active_results, active_name, _tail, _quoted = head
+            active_text = raw_line
+            recorded = False
+        elif active_name is not None and not recorded:
+            active_text = (active_text + "\n" + raw_line)[-16384:]
+        else:
+            continue
+        if recorded or active_name is None:
+            continue
+        candidates: list[tuple[int, int]] = []
+        incomplete = False
+        for location_match in _LOC_START_RE.finditer(active_text):
+            opening = active_text.find(
+                "(", location_match.start(), location_match.end()
+            )
+            if opening < 0:
+                incomplete = True
+                continue
+            try:
+                end = _balanced_end(active_text, opening, "(", ")")
+            except TTIRParseError:
+                incomplete = True
+                continue
+            coordinate = coordinates(active_text[location_match.start() : end + 1])
+            if coordinate is not None:
+                candidates.append(coordinate)
+        if incomplete or len(set(candidates)) != 1:
+            continue
+        line, column = candidates[0]
+        if line <= 0 or column < 0:
+            continue
+        records.append((active_name, active_results, line, column))
+        recorded = True
+    return tuple(records)
+
+
+def diagnostic_source_locations(text: str) -> tuple[tuple[str, int, int], ...]:
+    """Return compiler-attested operation locations for Source provenance.
+
+    Gate1 deliberately excludes debug locations from its equality and digest:
+    locations are presentation metadata, not replay membership.  Source-aware
+    construction nevertheless needs a *reject-only* bridge from an exact
+    Source occurrence to an observed compiler operation.  This helper keeps
+    that bridge ephemeral and conservative.  It returns a row only when an
+    operation has exactly one resolvable file/line/column coordinate; missing,
+    fused, callsite-only, or multiply located operations are intentionally
+    absent rather than guessed.
+
+    The result is never serialized by :class:`TTIRFingerprint`, exposed to a
+    provider, or used to accept Gate1 membership.  Its consumers must bind it
+    to an independently issued opaque Source authorization token.
+    """
+
+    return tuple(
+        (operation, line, column)
+        for operation, _results, line, column in _diagnostic_source_location_records(
+            text
+        )
+    )
+
+
 def _canonical_attrs(text: str) -> tuple[tuple[str, str], ...]:
     text = text.strip()
     if not text:
@@ -362,6 +497,82 @@ def _validate_attribute_dictionary(
             )
         seen.add(name)
     return attrs
+
+
+_SCF_FOR_INTEGER_DTYPE_RE = r"(?:i|u)(?:1|8|16|32|64)"
+_SCF_FOR_INTEGER_LITERAL_RE = re.compile(r"[+-]?[0-9]+")
+_SCF_FOR_DENSE_INTEGER_RE = re.compile(
+    r"dense<(?P<values>.*)>:tensor<"
+    r"(?P<shape>[1-9][0-9]*(?:x[1-9][0-9]*)*)x"
+    rf"(?P<dtype>{_SCF_FOR_INTEGER_DTYPE_RE})>"
+)
+
+
+def _flatten_scf_for_integer_list(text: str) -> list[str] | None:
+    """Flatten a dense integer literal without accepting arbitrary syntax."""
+
+    stripped = text.strip()
+    if _SCF_FOR_INTEGER_LITERAL_RE.fullmatch(stripped) is not None:
+        return [stripped]
+    if not (stripped.startswith("[") and stripped.endswith("]")):
+        return None
+    items = _split_top_level(stripped[1:-1])
+    if not items:
+        return None
+    flattened: list[str] = []
+    for item in items:
+        nested = _flatten_scf_for_integer_list(item)
+        if nested is None:
+            return None
+        flattened.extend(nested)
+    return flattened
+
+
+def _validate_scf_for_closing_attributes(
+    attrs: Sequence[tuple[str, str]], *, context: str
+) -> tuple[tuple[str, str], ...]:
+    """Validate the small set of Triton compiler hints emitted after ``scf.for``.
+
+    These attributes are compiler metadata rather than J-visible computation.
+    Keep the parser strict, but do not reject real Triton divisibility hints.
+    """
+
+    validated: list[tuple[str, str]] = []
+    for name, value in attrs:
+        if name == "tt.num_stages":
+            if re.fullmatch(r"[1-9][0-9]*:i32", value) is None:
+                raise TTIRParseError(
+                    f"{context} has invalid tt.num_stages value {value!r}"
+                )
+            validated.append((name, value))
+            continue
+
+        if re.fullmatch(r"tt\.divisibility_arg[0-9]+", name) is None:
+            raise TTIRParseError(
+                f"{context} has unsupported closing attribute {name!r}"
+            )
+        match = _SCF_FOR_DENSE_INTEGER_RE.fullmatch(value)
+        if match is None:
+            raise TTIRParseError(
+                f"{context} has invalid {name} value {value!r}"
+            )
+        values = _flatten_scf_for_integer_list(match.group("values"))
+        if values is None:
+            raise TTIRParseError(
+                f"{context} has non-integer dense values for {name!r}"
+            )
+        shape = tuple(int(item) for item in match.group("shape").split("x"))
+        element_count = 1
+        for extent in shape:
+            element_count *= extent
+        # A scalar dense literal is an MLIR splat; a bracketed literal must
+        # provide exactly one integer for every static tensor element.
+        if len(values) != 1 and len(values) != element_count:
+            raise TTIRParseError(
+                f"{context} dense values for {name!r} do not match tensor shape"
+            )
+        validated.append((name, value))
+    return tuple(validated)
 
 
 def _pointer_dtype(type_text: str) -> str | None:
@@ -661,6 +872,16 @@ class TTIRFingerprint:
         repr=False,
         compare=False,
     )
+    # Diagnostic-only lexical memory transfers.  Unlike ``memory_effects``,
+    # which is canonically sorted for Gate1 membership, this sidecar retains
+    # the one-to-one order shared by the provenance and address sidecars
+    # below.  It is source-aware ingress evidence only: it is not serialized,
+    # compared, or included in the Gate1 digest.
+    diagnostic_memory_transfers: tuple[MemoryEffect, ...] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
     # Diagnostic-only lexical memory events with the function-argument
     # positions that may supply each pointer operand.  Replay's source-blind
     # compile preflight uses this sidecar to check ordering already authored in
@@ -674,8 +895,12 @@ class TTIRFingerprint:
         compare=False,
     )
     # Diagnostic-only normalized pointer-address forms for source-aware Lift.
-    # Each row is ``(effect_kind, pointer_base, polynomial, context)`` where
-    # ``polynomial`` contains only anonymous argument/program/lane atoms.  The
+    # Each row is ``(effect_kind, pointer_base, polynomial, context,
+    # element_type, typed_offset_layers)`` where ``polynomial`` contains only
+    # anonymous argument/program/lane atoms. Every typed layer retains one
+    # nonzero ``tt.addptr`` offset polynomial, its explicit integer/index type,
+    # and the bounded SSA type-propagation chain ending at that offset. A
+    # direct zero-offset base pointer has no layers. The
     # forms are deliberately excluded from equality, serialization, and the
     # digest: they can reject an impossible source-bound axis claim, but they
     # can never weaken or alter Gate1 membership.
@@ -685,8 +910,73 @@ class TTIRFingerprint:
             str,
             tuple[tuple[tuple[str, ...], int], ...],
             tuple[str, ...],
+            str | None,
+            tuple[
+                tuple[
+                    tuple[tuple[tuple[str, ...], int], ...],
+                    str | None,
+                    tuple[str, ...],
+                ],
+                ...,
+            ],
         ],
         ...,
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
+    # Compiler-attested Source locations for the narrow provenance bridge used
+    # by Source-aware Lift.  As with the other diagnostic sidecars this is
+    # excluded from equality, serialization and digest: a debug-location
+    # change must never alter Gate1 membership.  Ledger construction consumes
+    # it only to reject a requested semantic-owner/guard authorization when a
+    # unique Source-to-compiler counterpart is unavailable.
+    diagnostic_source_locations: tuple[tuple[str, int, int], ...] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
+    # One compiler-visible source coordinate for each direct memory operation,
+    # retained in compiler order together with its transfer kind and mask bit.
+    # This is a reject-only provenance sidecar: Source construction may bind a
+    # lexical memory call only when its own exact coordinate has one compatible
+    # row here.  It is excluded from equality, serialization, and digest just
+    # like the other diagnostic sidecars.
+    diagnostic_memory_source_locations: tuple[
+        tuple[str, bool, int, int], ...
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
+    # Exact compiler-local predicate use for each direct memory operation.
+    # Rows are ``(kind, masked, access_line, access_column, predicate_op,
+    # predicate_line, predicate_column, predicate_is_i1)``.  A producer may
+    # be an exact direct SSA operand of the matched memory operation while
+    # lacking its own compiler debug coordinate; in that case predicate_op
+    # and predicate_is_i1 remain present but both predicate coordinates are
+    # null.  This is still not a wildcard: consumers must bind it through the
+    # same exact memory access and an independently proven Source def-use
+    # edge.  This remains an internal reject-only sidecar and never changes
+    # Gate1 membership.
+    diagnostic_memory_predicate_evidence: tuple[
+        tuple[str, bool, int, int, str | None, int | None, int | None, bool], ...
+    ] = field(
+        default=(),
+        repr=False,
+        compare=False,
+    )
+    # Exact compiler-local value edge for each direct memory operation.  Rows
+    # are ``(kind, masked, access_line, access_column, owner_op, owner_line,
+    # owner_column, direct_edge)``.  For a load the owner is its sole direct
+    # SSA user; for a store it is the direct producer of the stored value.  A
+    # standalone owner location can be absent after lowering, but a direct
+    # edge still belongs only to the already exact matched memory access.
+    # This reject-only sidecar is excluded from equality, serialization, and
+    # digest.
+    diagnostic_memory_owner_evidence: tuple[
+        tuple[str, bool, int, int, str | None, int | None, int | None, bool], ...
     ] = field(
         default=(),
         repr=False,
@@ -727,6 +1017,7 @@ class _Operation:
     operands: list[str]
     local_signature: str
     context: tuple[int, ...]
+    result_types: tuple[str, ...] = ()
     axis: int | None = None
     reverse: bool | None = None
     cmp_predicate: str | None = None
@@ -768,6 +1059,7 @@ def _diagnostic_iteration_bases(
     function: _FunctionParts,
     operations: list[_Operation],
     result_to_node: Mapping[str, int],
+    leaf_labels: Mapping[str, str],
 ) -> tuple[tuple[int, str, str, int], ...]:
     """Classify only the three closed pi induction bases from exact TTIR SSA.
 
@@ -777,10 +1069,19 @@ def _diagnostic_iteration_bases(
     """
 
     nodes = {operation.node_id: operation for operation in operations}
-    arguments = {
-        name: name.removeprefix("%")
-        for name, _type, _attrs in function.arguments
-    }
+    arguments: dict[str, str] = {}
+    for name, _type, _attrs in function.arguments:
+        label = leaf_labels.get(name)
+        match = (
+            re.fullmatch(r"arg\[([0-9]+)\]:.*", label)
+            if isinstance(label, str)
+            else None
+        )
+        if match is not None:
+            # Publish the pre-specialization physical ABI handle, never the
+            # compiler's compacted argN ordinal. Ambiguous scalar aliases are
+            # deliberately labelled ``unmapped*`` upstream and yield no row.
+            arguments[name] = f"p{match.group(1)}"
     passthrough = {
         "arith.extsi", "arith.extui", "arith.index_cast", "arith.index_castui",
         "arith.trunci",
@@ -1681,6 +1982,29 @@ def _comparison_result_type(operand_type: str | None) -> str | None:
     return _normalize_space(f"tensor<{','.join(pieces)}>")
 
 
+def _is_i1_predicate_type(type_text: str | None) -> bool:
+    """Return whether one parser-validated SSA type is a boolean predicate.
+
+    Triton's vector masks are ranked ``tensor<...xi1>`` values.  A token-boundary
+    regular expression is not sufficient here: the ``x`` immediately before
+    the element type is part of the MLIR tensor grammar, but is also an
+    alphanumeric character.  Reuse the closed tensor-type parser so this
+    accepts only scalar ``i1`` or an encodingless ranked tensor whose actual
+    element type is exactly ``i1``.  Unknown or malformed types remain false.
+    """
+
+    if not isinstance(type_text, str):
+        return False
+    normalized = _normalize_space(type_text)
+    if normalized == "i1":
+        return True
+    try:
+        contract = _ranked_tensor_contract(normalized)
+    except TTIRParseError:
+        return False
+    return contract is not None and contract[1] == "i1"
+
+
 def _operation_result_types(
     name: str,
     tail: str,
@@ -1760,20 +2084,6 @@ def _operation_result_types(
     if len(inferred) != result_count:
         return (None,) * result_count
     return tuple(inferred)
-
-
-def _return_contract_types(tail: str, operand_count: int) -> tuple[str, ...]:
-    if operand_count == 0:
-        if _trailing_type_signature(tail) is not None:
-            raise TTIRParseError("void tt.return unexpectedly carries a type")
-        return ()
-    signature = _trailing_type_signature(tail)
-    if signature is None:
-        raise TTIRParseError("value tt.return is missing its explicit type")
-    result = _declared_types(signature)
-    if len(result) != operand_count:
-        raise TTIRParseError("tt.return SSA/type arity mismatch")
-    return result
 
 
 def _scalar_constant(tail: str) -> float | None:
@@ -1976,6 +2286,7 @@ def _bounded_normalize_operations(
                 f"arith.mulf %, % : {result_type}"
             ),
             context=operation.context,
+            result_types=(result_type,),
             header_operand_count=2,
             fork_id=operation.fork_id,
             fork_arm=operation.fork_arm,
@@ -2059,6 +2370,390 @@ _PREDICATE_VIEW_OPS = {
     "tt.trans",
 }
 
+_DEFAULT_ZERO_LOWER_BOUND_CLASS = "default_zero_lower_bound"
+_CLOSED_CONSUMER_IDENTITY_CLASS = "closed_consumer_identity"
+
+
+def _zero_lower_bound_class_limit(
+    anchor_exemptions: frozenset[str],
+) -> int | None:
+    """Read one bounded class cardinality from the unary Gate1 profile."""
+
+    values = {
+        int(item.split(":", 1)[1])
+        for item in anchor_exemptions
+        if item.startswith(_DEFAULT_ZERO_LOWER_BOUND_CLASS + ":")
+        and item.split(":", 1)[1].isdigit()
+    }
+    if len(values) != 1:
+        return None
+    value = next(iter(values))
+    return value if value > 0 else None
+
+
+def _zero_lower_bound_mask_profile(
+    operations: Sequence[_Operation],
+    result_to_node: Mapping[str, int],
+    anchor_exemptions: frozenset[str],
+) -> tuple[frozenset[int], dict[str, str]]:
+    """Find only compiler mask scaffolding authorized by one J access class.
+
+    The profile recognizes the closed shape ``and(zero <= coordinate,
+    surviving_predicate)`` at a load/store mask.  It never rewrites a bare
+    predicate, an upper bound, a control predicate, a value, or a predicate
+    with a shared zero constant.  The caller supplies the maximum number of
+    J-authorized predicated access occurrences; an observation with more such
+    shapes is not normalized.
+    """
+
+    limit = _zero_lower_bound_class_limit(anchor_exemptions)
+    if limit is None:
+        return frozenset(), {}
+    node_by_id = {operation.node_id: operation for operation in operations}
+    uses: dict[str, list[tuple[_Operation, int]]] = defaultdict(list)
+    for operation in operations:
+        for index, operand in enumerate(operation.operands):
+            uses.setdefault(operand, []).append((operation, index))
+
+    def is_mask_operand(operation: _Operation, index: int) -> bool:
+        return (
+            operation.name == "tt.load"
+            and index == 1
+            and operation.header_operand_count >= 2
+        ) or (
+            operation.name == "tt.store"
+            and index == 2
+            and operation.header_operand_count >= 3
+        )
+
+    def direct_zero_constant(name: str) -> int | None:
+        node_id = result_to_node.get(name)
+        if node_id is None:
+            return None
+        producer = node_by_id[node_id]
+        return (
+            node_id
+            if producer.name == "arith.constant"
+            and producer.constant_value is not None
+            and float(producer.constant_value) == 0.0
+            else None
+        )
+
+    def is_lane_coordinate(
+        name: str, active: frozenset[str] = frozenset()
+    ) -> bool:
+        """Accept only a range lane and its type/rank-preserving wrappers."""
+
+        if name in active:
+            return False
+        node_id = result_to_node.get(name)
+        if node_id is None:
+            return False
+        producer = node_by_id[node_id]
+        if producer.name == "tt.make_range":
+            return True
+        if producer.name not in {
+            "arith.extsi",
+            "arith.extui",
+            "arith.index_cast",
+            "arith.index_castui",
+            "arith.trunci",
+            "tt.broadcast",
+            "tt.expand_dims",
+            "tt.reshape",
+            "tt.splat",
+            "tt.trans",
+        } or len(producer.operands) != 1:
+            return False
+        return is_lane_coordinate(producer.operands[0], active | {name})
+
+    def lower_bound_comparison(name: str) -> tuple[int, str] | None:
+        node_id = result_to_node.get(name)
+        if node_id is None:
+            return None
+        producer = node_by_id[node_id]
+        if producer.name != "arith.cmpi" or len(producer.operands) != 2:
+            return None
+        operands = list(producer.operands)
+        if producer.cmp_flipped:
+            operands.reverse()
+        if producer.cmp_predicate not in {"sle", "ule"}:
+            return None
+        zero_node = direct_zero_constant(operands[0])
+        if (
+            zero_node is None
+            or direct_zero_constant(operands[1]) is not None
+            or not is_lane_coordinate(operands[1])
+        ):
+            return None
+        return node_id, operands[1]
+
+    nodes: set[int] = set()
+    aliases: dict[str, str] = {}
+    matched = 0
+    for operation in operations:
+        if operation.name != "arith.andi" or len(operation.operands) != 2:
+            continue
+        root = operation.result_names[0] if len(operation.result_names) == 1 else None
+        if root is None:
+            continue
+        root_uses = uses.get(root, [])
+        if not root_uses or not all(is_mask_operand(*item) for item in root_uses):
+            continue
+        candidates = [
+            (index, lower_bound_comparison(operand))
+            for index, operand in enumerate(operation.operands)
+        ]
+        lower = [(index, value) for index, value in candidates if value is not None]
+        if len(lower) != 1:
+            continue
+        lower_index, (comparison_node, survivor) = lower[0]
+        survivor_node = result_to_node.get(survivor)
+        if survivor_node is None or node_by_id[survivor_node].name not in _PREDICATE_VIEW_OPS:
+            continue
+        comparison = operation.operands[lower_index]
+        comparison_uses = uses.get(comparison, [])
+        if len(comparison_uses) != 1 or comparison_uses[0][0] is not operation:
+            continue
+        comparison_operation = node_by_id[comparison_node]
+        comparison_operands = list(comparison_operation.operands)
+        if comparison_operation.cmp_flipped:
+            comparison_operands.reverse()
+        zero_value = comparison_operands[0]
+        zero_node = direct_zero_constant(zero_value)
+        if zero_node is None:
+            continue
+        zero_uses = uses.get(zero_value, [])
+        if len(zero_uses) != 1 or zero_uses[0][0] is not comparison_operation:
+            continue
+        nodes.update({operation.node_id, comparison_node, zero_node})
+        aliases[root] = survivor
+        matched += 1
+
+    if matched == 0 or matched > limit:
+        return frozenset(), {}
+    return frozenset(nodes), aliases
+
+
+def _closed_consumer_identity_class_limit(
+    anchor_exemptions: frozenset[str],
+) -> int | None:
+    """Read the bounded cardinality of the π-authorized identity class."""
+
+    values = {
+        int(item.split(":", 1)[1])
+        for item in anchor_exemptions
+        if item.startswith(_CLOSED_CONSUMER_IDENTITY_CLASS + ":")
+        and item.split(":", 1)[1].isdigit()
+    }
+    if len(values) != 1:
+        return None
+    value = next(iter(values))
+    return value if value > 0 else None
+
+
+def _closed_consumer_identity_nodes(
+    operations: Sequence[_Operation],
+    result_to_node: Mapping[str, int],
+    anchor_exemptions: frozenset[str],
+) -> frozenset[int]:
+    """Find only optional value ``select`` nodes covered by π's class.
+
+    The matcher is intentionally source-blind and syntactic.  A candidate must
+    be an authored-mask ``arith.select`` with one of the two closed
+    ``-inf -> 0`` spellings: a zero false arm after ``exp``, or a negative-
+    infinity false arm immediately before ``exp``.  Its result must reach a
+    reduction/value consumer through only transparent wrappers.  The J/π
+    certificate proves the corresponding closed producer mapping; this
+    function only identifies the bounded compiler materialization in one
+    observation.  In particular, a zero false arm before ``exp`` is *not*
+    accepted because ``exp(0)`` is not the outside identity.  Unknown selects
+    stay hard.
+    """
+
+    limit = _closed_consumer_identity_class_limit(anchor_exemptions)
+    if limit is None:
+        return frozenset()
+    node_by_id = {operation.node_id: operation for operation in operations}
+    uses: dict[str, list[_Operation]] = defaultdict(list)
+    for operation in operations:
+        for operand in [*operation.operands, *operation.region_results]:
+            uses.setdefault(operand, []).append(operation)
+
+    def producer(value: str) -> _Operation | None:
+        node_id = result_to_node.get(value)
+        return node_by_id.get(node_id) if node_id is not None else None
+
+    def reaches_exp(
+        value: str,
+        active: frozenset[str] = frozenset(),
+    ) -> bool:
+        if value in active:
+            return False
+        operation = producer(value)
+        if operation is None:
+            return False
+        if operation.name in {"math.exp", "math.exp2", "math.expm1"}:
+            return True
+        if operation.name not in {
+            "arith.cast", "arith.extf", "arith.truncf", "tt.broadcast",
+            "tt.expand_dims", "tt.reshape", "tt.trans", "arith.select",
+            "arith.subf", "arith.addf", "arith.mulf",
+        }:
+            return False
+        return any(
+            reaches_exp(operand, active | {value})
+            for operand in operation.operands
+        )
+
+    def reaches_sub(
+        value: str,
+        active: frozenset[str] = frozenset(),
+    ) -> bool:
+        """Recognize the closed pre-exp producer boundary only."""
+
+        if value in active:
+            return False
+        operation = producer(value)
+        if operation is None:
+            return False
+        if operation.name == "arith.subf":
+            return True
+        if operation.name not in {
+            "arith.cast", "arith.extf", "arith.truncf", "tt.broadcast",
+            "tt.expand_dims", "tt.reshape", "tt.trans",
+        }:
+            return False
+        return any(
+            reaches_sub(operand, active | {value})
+            for operand in operation.operands
+        )
+
+    transparent_shape_wrappers = {
+        "tt.broadcast",
+        "tt.expand_dims",
+        "tt.reshape",
+        "tt.trans",
+    }
+
+    def reaches_reduction(
+        value: str,
+        active: frozenset[str] = frozenset(),
+    ) -> bool:
+        """Follow only one-input shape views from a value to a consumer.
+
+        A select may feed both the reduction and the final pointwise value.
+        The identity quotient is valid for the whole SSA value in that case,
+        but the matcher must not treat an arbitrary arithmetic user as proof of
+        a reduction path.  Following uses, rather than only the direct user,
+        handles Triton's common ``select -> reshape -> tt.reduce`` spelling
+        while keeping the accepted wrapper set closed.
+        """
+
+        if value in active:
+            return False
+        for user in uses.get(value, ()):
+            if user.name in {"tt.reduce", "tt.scan"}:
+                return True
+            if user.name in {"math.exp", "math.exp2", "math.expm1"}:
+                if len(user.result_names) != 1:
+                    continue
+                if reaches_reduction(
+                    user.result_names[0], active | {value}
+                ):
+                    return True
+            if (
+                user.name not in transparent_shape_wrappers
+                or len(user.operands) != 1
+                or len(user.result_names) != 1
+            ):
+                continue
+            if reaches_reduction(
+                user.result_names[0], active | {value}
+            ):
+                return True
+        return False
+
+    def reaches_exp_after(
+        value: str,
+        active: frozenset[str] = frozenset(),
+    ) -> bool:
+        """Recognize a select result consumed by ``exp`` through views."""
+
+        if value in active:
+            return False
+        for user in uses.get(value, ()):
+            if user.name in {"math.exp", "math.exp2", "math.expm1"}:
+                return True
+            if (
+                user.name in transparent_shape_wrappers
+                and len(user.operands) == 1
+                and len(user.result_names) == 1
+                and reaches_exp_after(user.result_names[0], active | {value})
+            ):
+                return True
+        return False
+
+    def constant_kind(operation: _Operation) -> str | None:
+        if operation.name != "arith.constant":
+            return None
+        if operation.constant_value is not None:
+            if float(operation.constant_value) == 0.0:
+                return "zero"
+            if operation.constant_value == float("-inf"):
+                return "neg_inf"
+        # MLIR commonly prints an f32 -inf splat as its IEEE hex payload;
+        # _scalar_constant intentionally keeps such dense literals opaque.
+        if re.search(r"0xFF800000", operation.local_signature, re.IGNORECASE):
+            return "neg_inf"
+        return None
+
+    matched: list[int] = []
+    for operation in operations:
+        if operation.name != "arith.select" or len(operation.operands) != 3:
+            continue
+        condition, true_value, false_value = operation.operands
+        false_operation = producer(false_value)
+        if false_operation is None:
+            continue
+        false_kind = constant_kind(false_operation)
+        if false_kind not in {"zero", "neg_inf"}:
+            continue
+        condition_users = uses.get(condition, [])
+        if not any(
+            (
+                user.name == "tt.load"
+                and user.header_operand_count >= 2
+                and len(user.operands) > 1
+                and user.operands[1] == condition
+            )
+            or (
+                user.name == "tt.store"
+                and user.header_operand_count >= 3
+                and len(user.operands) > 2
+                and user.operands[2] == condition
+            )
+            for user in condition_users
+        ):
+            continue
+        result_names = operation.result_names
+        if len(result_names) != 1:
+            continue
+        if not reaches_reduction(result_names[0]):
+            continue
+        post_exp_form = false_kind == "zero" and reaches_exp(true_value)
+        pre_exp_form = (
+            false_kind == "neg_inf"
+            and reaches_sub(true_value)
+            and reaches_exp_after(result_names[0])
+        )
+        if not (post_exp_form or pre_exp_form):
+            continue
+        matched.append(operation.node_id)
+        if len(matched) > limit:
+            return frozenset()
+    return frozenset(matched)
+
 _REPRESENTATION_ANCHOR_OPS = {
     # These stages have an owner in the closed realization topology.  Their
     # existence remains hard evidence even though the pure formula between
@@ -2097,6 +2792,7 @@ def _representation_only_nodes(
     terminal_forks: Sequence[_TerminalFork],
     *,
     anchor_exemptions: frozenset[str] = frozenset(),
+    identity_nodes: frozenset[int] = frozenset(),
 ) -> frozenset[int]:
     """Find pure compiler scaffolding with no independent artifact owner.
 
@@ -2124,6 +2820,15 @@ def _representation_only_nodes(
         if node_id is None or node_id in value_nodes or node_id in active:
             return
         operation = node_by_id[node_id]
+
+        if node_id in identity_nodes:
+            # A π-authorized post-consumer identity materialization is a
+            # representation detail.  Preserve the producer value as the
+            # semantic operand and keep the select/zero literal out of the
+            # hard value slice.
+            if len(operation.operands) >= 2:
+                mark_value(operation.operands[1], active | {node_id})
+            return
 
         if _is_identity_reshape(operation):
             # Keep the value boundary transparent: the reshape itself may be
@@ -2214,6 +2919,17 @@ def _representation_only_nodes(
     for terminal_fork in terminal_forks:
         mark_predicate(terminal_fork.predicate)
 
+    zero_bound_nodes, _zero_bound_aliases = _zero_lower_bound_mask_profile(
+        operations, result_to_node, anchor_exemptions
+    )
+    # A class-level lower-bound quotient is valid only for pure predicate
+    # scaffolding.  If one of its nodes also contributes to a stored/returned
+    # value, keep the entire class hard rather than partially erasing it.
+    if zero_bound_nodes and zero_bound_nodes.isdisjoint(value_nodes):
+        predicate_nodes.difference_update(zero_bound_nodes)
+    else:
+        zero_bound_nodes = frozenset()
+
     representation: set[int] = set()
     for operation in operations:
         if operation.node_id in value_nodes or operation.node_id in predicate_nodes:
@@ -2232,6 +2948,8 @@ def _representation_only_nodes(
         if operation.name not in _KNOWN_PURE_OPS:
             continue
         representation.add(operation.node_id)
+    representation.update(zero_bound_nodes)
+    representation.update(identity_nodes)
     return frozenset(representation)
 
 
@@ -2426,13 +3144,6 @@ def _parse_block_header(line: str) -> tuple[str, tuple[tuple[str, str], ...]] | 
             )
         )
     return match.group("label"), tuple(arguments)
-
-
-def _parse_block_args(line: str) -> list[str]:
-    header = _parse_block_header(line)
-    if header is None:
-        return []
-    return [name for name, _ in header[1]]
 
 
 def _operation_has_effect(operation: _Operation) -> bool:
@@ -2761,6 +3472,7 @@ class TTIRParser:
                 operations, result_to_node, terminal_forks
             )
         )
+        source_location_records = _diagnostic_source_location_records(text)
         return self._fingerprint(
             function,
             operations,
@@ -2771,6 +3483,11 @@ class TTIRParser:
             schedule=schedule,
             representation_anchor_exemptions=representation_anchor_exemptions,
             runtime_values=runtime_values,
+            source_locations=tuple(
+                (operation, line, column)
+                for operation, _results, line, column in source_location_records
+            ),
+            source_location_results=source_location_records,
         )
 
     def _parse_operations(
@@ -3173,20 +3890,30 @@ class TTIRParser:
                     suffix[: attr_close + 1],
                     context="scf.for closing attributes",
                 )
-                if any(
-                    name != "tt.num_stages"
-                    or re.fullmatch(r"[1-9][0-9]*:i32", value) is None
-                    for name, value in close_attrs
-                ):
-                    raise TTIRParseError(
-                        "scf.for has unsupported closing attributes"
-                    )
-                operation.local_signature = _normalize_space(
-                    operation.local_signature
-                    + " close_attrs={"
-                    + ",".join(f"{name}={value}" for name, value in close_attrs)
-                    + "}"
+                validated_close_attrs = _validate_scf_for_closing_attributes(
+                    close_attrs,
+                    context="scf.for closing attributes",
                 )
+                # ``tt.divisibility_arg*`` is a Triton compiler hint.  It is
+                # deliberately validated above so malformed metadata cannot
+                # pass as TTIR, but it must not become a hard J-vs-Source
+                # semantic fingerprint.  Keep the pre-existing num_stages
+                # behavior for scheduling metadata compatibility.
+                semantic_close_attrs = tuple(
+                    (name, value)
+                    for name, value in validated_close_attrs
+                    if name == "tt.num_stages"
+                )
+                if semantic_close_attrs:
+                    operation.local_signature = _normalize_space(
+                        operation.local_signature
+                        + " close_attrs={"
+                        + ",".join(
+                            f"{name}={value}"
+                            for name, value in semantic_close_attrs
+                        )
+                        + "}"
+                    )
             if region_block_counts.get(owner_id, 0) != 1:
                 raise TTIRParseError("scf.for must contain exactly one body block")
             init_count = max(0, len(operation.operands) - 3)
@@ -3755,6 +4482,7 @@ class TTIRParser:
                 operands=list(operands),
                 local_signature=_local_signature(name, tail),
                 context=tuple(node for node, _ in region_stack),
+                result_types=tuple(inferred_result_types),
                 axis=(
                     scan_axis
                     if name == "tt.scan"
@@ -4214,6 +4942,7 @@ class TTIRParser:
                     operands=mapped_operands,
                     local_signature=operation.local_signature,
                     context=mapped_context,
+                    result_types=operation.result_types,
                     axis=operation.axis,
                     reverse=operation.reverse,
                     cmp_predicate=operation.cmp_predicate,
@@ -4351,6 +5080,10 @@ class TTIRParser:
         schedule: Mapping[str, Any] | None,
         representation_anchor_exemptions: frozenset[str],
         runtime_values: Mapping[str, int | bool] | None,
+        source_locations: tuple[tuple[str, int, int], ...],
+        source_location_results: tuple[
+            tuple[str, tuple[str, ...], int, int], ...
+        ],
     ) -> TTIRFingerprint:
         raw_argument_aliases = (
             python_interface.get("ttir_argument_aliases", {})
@@ -4385,8 +5118,128 @@ class TTIRParser:
                     )
                     for name, type_text, _attrs in function.arguments
                 }
-            )
+        )
         node_by_id = {operation.node_id: operation for operation in operations}
+
+        def source_memory_kind(operation: str) -> str | None:
+            if operation == "tt.load":
+                return "load"
+            if operation == "tt.store":
+                return "store"
+            if operation.startswith("tt.atomic"):
+                return "update"
+            return None
+
+        # A raw location list is useful only when its direct memory-operation
+        # slice can be proven to be the same compiler slice parsed below.  Do
+        # not use a partial zip, names from an expanded helper, or source
+        # order to fill a gap.  In any of those cases the sidecar stays empty
+        # and Source construction consequently cannot authorize that access.
+        raw_memory_locations = [
+            (kind, line, column)
+            for operation, line, column in source_locations
+            if (kind := source_memory_kind(operation)) is not None
+        ]
+        parsed_memory_operations = [
+            operation
+            for operation in operations
+            if source_memory_kind(operation.name) is not None
+        ]
+        diagnostic_memory_source_locations: tuple[
+            tuple[str, bool, int, int], ...
+        ] = ()
+        operation_source_locations: dict[int, tuple[str, int, int]] = {}
+        # Compiler SSA result spellings are internal, current-compilation
+        # evidence only.  Use them solely to attach a parsed operation to its
+        # own raw debug coordinate.  Duplicate results or a family mismatch
+        # are not resolved by a sequence/ordinal fallback.
+        raw_locations_by_result: dict[str, list[tuple[str, int, int]]] = {}
+        for raw_operation, raw_results, line, column in source_location_results:
+            if (
+                not isinstance(raw_operation, str)
+                or not isinstance(raw_results, tuple)
+                or not all(isinstance(result, str) for result in raw_results)
+                or isinstance(line, bool)
+                or not isinstance(line, int)
+                or line <= 0
+                or isinstance(column, bool)
+                or not isinstance(column, int)
+                or column < 0
+            ):
+                continue
+            for raw_result in raw_results:
+                raw_locations_by_result.setdefault(raw_result, []).append(
+                    (raw_operation, line, column)
+                )
+        # The general source-location sidecar is deliberately conservative:
+        # exact current-compiler result identity is eligible for a predicate
+        # producer bridge. A helper expansion, fused operation, or duplicate
+        # raw result leaves that operation unlocated instead of pairing
+        # repeated operations by position.
+        if (
+            len(source_locations) == len(operations)
+            and all(
+                raw_operation == parsed.name
+                for (raw_operation, _line, _column), parsed in zip(
+                    source_locations, operations, strict=True
+                )
+            )
+        ):
+            operation_source_locations = {
+                parsed.node_id: (raw_operation, line, column)
+                for (raw_operation, line, column), parsed in zip(
+                    source_locations, operations, strict=True
+                )
+            }
+        for parsed in operations:
+            if parsed.node_id in operation_source_locations:
+                continue
+            if len(parsed.result_names) != 1:
+                continue
+            matches = raw_locations_by_result.get(parsed.result_names[0], ())
+            if len(matches) != 1:
+                continue
+            raw_operation, line, column = matches[0]
+            if raw_operation != parsed.name:
+                continue
+            operation_source_locations[parsed.node_id] = (
+                raw_operation,
+                line,
+                column,
+            )
+        memory_operation_locations: dict[int, tuple[str, int, int]] = {}
+        if (
+            len(raw_memory_locations) == len(parsed_memory_operations)
+            and all(
+                raw_kind == source_memory_kind(parsed.name)
+                for (raw_kind, _line, _column), parsed in zip(
+                    raw_memory_locations, parsed_memory_operations, strict=True
+                )
+            )
+        ):
+            memory_operation_locations = {
+                parsed.node_id: (parsed.name, line, column)
+                for (_kind, line, column), parsed in zip(
+                    raw_memory_locations, parsed_memory_operations, strict=True
+                )
+            }
+            diagnostic_memory_source_locations = tuple(
+                (
+                    kind,
+                    (
+                        parsed.header_operand_count >= 2
+                        if kind == "load"
+                        else parsed.header_operand_count >= 3
+                        if kind == "store"
+                        else parsed.header_operand_count >= 3
+                    ),
+                    line,
+                    column,
+                )
+                for (kind, line, column), parsed in zip(
+                    raw_memory_locations, parsed_memory_operations, strict=True
+                )
+            )
         value_if_ids = {
             operation.node_id
             for operation in operations
@@ -4410,12 +5263,30 @@ class TTIRParser:
         effect_occurrences = _effect_occurrence_identities(
             operations, terminal_forks
         )
+        identity_nodes = _closed_consumer_identity_nodes(
+            operations,
+            result_to_node,
+            representation_anchor_exemptions,
+        )
+        identity_aliases = {
+            operation.result_names[0]: operation.operands[1]
+            for operation in operations
+            if operation.node_id in identity_nodes
+            and len(operation.result_names) == 1
+            and len(operation.operands) >= 2
+        }
         representation_only = _representation_only_nodes(
             operations,
             result_to_node,
             terminal_forks,
             anchor_exemptions=representation_anchor_exemptions,
+            identity_nodes=identity_nodes,
         )
+        _zero_bound_nodes, zero_bound_aliases = _zero_lower_bound_mask_profile(
+            operations, result_to_node, representation_anchor_exemptions
+        )
+        if not _zero_bound_nodes.issubset(representation_only):
+            zero_bound_aliases = {}
         normalize_access_addresses = (
             "tt.addptr" in representation_anchor_exemptions
         )
@@ -4529,6 +5400,25 @@ class TTIRParser:
                 )
             elif operation.name == "tt.make_range":
                 result = {(f"lane:{operation.local_signature}",): 1}
+            elif operation.name == "tt.load" and operation.operands:
+                # A scalar integer loaded by the Source can legitimately
+                # participate in a later pointer offset. It is neither an
+                # affine constant nor an arbitrary unknown: record its
+                # source-proven load address as one opaque typed integer atom.
+                # The enclosing integer operation still proves that this value
+                # is used as an integer address expression.
+                loaded_from = pointer_form(operation.operands[0], next_active)
+                if loaded_from is None:
+                    result = None
+                else:
+                    atom = _stable_json(
+                        [
+                            "tt.load.integer_address_input",
+                            loaded_from[0],
+                            polynomial_payload(loaded_from[1]),
+                        ]
+                    )
+                    result = {(f"integer_memory_value:{atom}",): 1}
             elif operation.name in {
                 "arith.extsi", "arith.extui", "arith.index_cast",
                 "arith.index_castui", "arith.trunci", "tt.splat",
@@ -4554,14 +5444,22 @@ class TTIRParser:
                     if denominator is not None and set(denominator) == {()}
                     else None
                 )
-                if numerator is None or denominator_value in {None, 0}:
+                if numerator is None or denominator is None or denominator_value == 0:
                     result = None
                 else:
+                    # A dynamic divisor is not affine, but it is still a
+                    # typed, source-proven integer address relation.  Dropping
+                    # it here made the address sidecar shorter than the
+                    # transfer/origin sidecars, so otherwise valid kernels
+                    # failed Source preparation before Lift began.  Preserve
+                    # the complete relation as one opaque integer atom.  It
+                    # remains a proof obligation (not an affine rewrite and
+                    # not a Gate1 equivalence relaxation).
                     atom = _stable_json(
                         [
                             operation.name,
                             polynomial_payload(numerator),
-                            denominator_value,
+                            polynomial_payload(denominator),
                         ]
                     )
                     result = {(f"integer_relation:{atom}",): 1}
@@ -4570,9 +5468,107 @@ class TTIRParser:
             polynomial_cache[name] = None if result is None else dict(result)
             return None if result is None else dict(result)
 
-        pointer_cache: dict[
-            str, tuple[str, dict[tuple[str, ...], int]] | None
-        ] = {}
+        # ``pointer_form`` carries a fourth, host-only typed-offset-layer
+        # profile in addition to its legacy base/polynomial/element facts.
+        pointer_cache: dict[str, Any] = {}
+        value_type_cache: dict[str, str | None] = {}
+
+        def closed_value_type(
+            name: str,
+            active: frozenset[str] = frozenset(),
+        ) -> str | None:
+            """Recover only an explicit compiler type for one SSA value."""
+
+            if name in value_type_cache:
+                return value_type_cache[name]
+            if name in active:
+                return None
+            label = leaf_labels.get(name)
+            if isinstance(label, str) and label.startswith("arg[") and "]:" in label:
+                result = _normalize_space(label.split("]:", 1)[1])
+                value_type_cache[name] = result or None
+                return result or None
+            node_id = result_to_node.get(name)
+            operation = node_by_id.get(node_id) if node_id is not None else None
+            if operation is None or name not in operation.result_names:
+                value_type_cache[name] = None
+                return None
+            operand_types = tuple(
+                closed_value_type(operand, active | {name})
+                for operand in operation.operands
+            )
+            try:
+                result_types = _operation_result_types(
+                    operation.name,
+                    operation.local_signature,
+                    len(operation.result_names),
+                    operand_types,
+                    call_result_types=operation.call_result_types,
+                )
+            except (TTIRParseError, ValueError):
+                result_types = (None,) * len(operation.result_names)
+            result = result_types[operation.result_names.index(name)]
+            result = _normalize_space(result) if isinstance(result, str) else None
+            value_type_cache[name] = result
+            return result
+
+        def integer_index_type(type_text: str | None) -> str | None:
+            """Return the explicit signless integer/index element type."""
+
+            if not isinstance(type_text, str):
+                return None
+            normalized = _normalize_space(type_text)
+            if re.fullmatch(r"(?:i[0-9]+|index)", normalized) is not None:
+                return normalized
+            matches = re.findall(r"(?:^|x)(i[0-9]+|index)(?=[,>])", normalized)
+            return matches[-1] if matches else None
+
+        type_proof_cache: dict[str, tuple[str, ...]] = {}
+
+        def integer_type_proof(
+            name: str,
+            active: frozenset[str] = frozenset(),
+        ) -> tuple[str, ...]:
+            """Return a bounded compiler-SSA type propagation witness.
+
+            The witness retains operation families and explicit types, but no
+            raw SSA spelling. The exact TTIR fingerprint remains the source of
+            truth; an unknown, cyclic or unbounded chain returns no proof.
+            """
+
+            cached = type_proof_cache.get(name)
+            if cached is not None:
+                return cached
+            index_type = integer_index_type(closed_value_type(name))
+            if index_type is None or name in active:
+                type_proof_cache[name] = ()
+                return ()
+            if name in leaf_labels:
+                result = (f"arg:{index_type}",)
+                type_proof_cache[name] = result
+                return result
+            node_id = result_to_node.get(name)
+            operation = node_by_id.get(node_id) if node_id is not None else None
+            if operation is None or name not in operation.result_names:
+                type_proof_cache[name] = ()
+                return ()
+            pieces: list[str] = []
+            for operand in operation.operands:
+                if integer_index_type(closed_value_type(operand)) is None:
+                    continue
+                proof = integer_type_proof(operand, active | {name})
+                if not proof:
+                    type_proof_cache[name] = ()
+                    return ()
+                pieces.extend(proof)
+            pieces.append(f"{operation.name}:{index_type}")
+            if len(pieces) > 64:
+                type_proof_cache[name] = ()
+                return ()
+            result = tuple(pieces)
+            type_proof_cache[name] = result
+            return result
+
         loop_carried_initials: dict[str, str] = {}
         if normalize_access_addresses:
             for candidate in operations:
@@ -4595,10 +5591,12 @@ class TTIRParser:
         def pointer_form(
             name: str,
             active: frozenset[str] = frozenset(),
-        ) -> tuple[str, dict[tuple[str, ...], int]] | None:
+        ) -> Any:
             if name in pointer_cache:
                 cached = pointer_cache[name]
-                return None if cached is None else (cached[0], dict(cached[1]))
+                return None if cached is None else (
+                    cached[0], dict(cached[1]), cached[2], cached[3]
+                )
             if name in active:
                 raise TTIRParseError("cyclic pointer representation expression")
             if name in leaf_labels:
@@ -4606,22 +5604,60 @@ class TTIRParser:
                 result = (
                     pointer_form(initial, active | {name})
                     if initial is not None
-                    else (leaf_labels[name], {})
+                    else (
+                        leaf_labels[name],
+                        {},
+                        _pointer_dtype(closed_value_type(name) or ""),
+                        (),
+                    )
                 )
                 pointer_cache[name] = result
-                return None if result is None else (result[0], dict(result[1]))
+                return None if result is None else (
+                    result[0], dict(result[1]), result[2], result[3]
+                )
             node_id = result_to_node.get(name)
             if node_id is None:
                 pointer_cache[name] = None
                 return None
             operation = node_by_id[node_id]
             next_active = active | {name}
-            result: tuple[str, dict[tuple[str, ...], int]] | None = None
+            result: Any = None
             if operation.name == "tt.addptr" and len(operation.operands) >= 2:
                 base = pointer_form(operation.operands[0], next_active)
                 offset = integer_polynomial(operation.operands[1], next_active)
+                pointer_element = _pointer_dtype(
+                    closed_value_type(operation.operands[0]) or ""
+                )
+                index_type = integer_index_type(closed_value_type(operation.operands[1]))
+                type_proof = integer_type_proof(operation.operands[1])
                 if base is not None and offset is not None:
-                    result = (base[0], polynomial_add(base[1], offset))
+                    closed_element = (
+                        pointer_element
+                        if isinstance(pointer_element, str)
+                        and pointer_element == base[2]
+                        else None
+                    )
+                    combined_polynomial = polynomial_add(base[1], offset)
+                    # Preserve every nonzero addptr layer independently. A
+                    # later i32 vector offset cannot overwrite an earlier i64
+                    # scalar offset; both compiler proofs reach the Source
+                    # transfer ledger. Zero layers carry no address term.
+                    layers = base[3]
+                    if offset:
+                        layers = (
+                            *layers,
+                            (
+                                polynomial_payload(offset),
+                                index_type,
+                                type_proof,
+                            ),
+                        )
+                    result = (
+                        base[0],
+                        combined_polynomial,
+                        closed_element,
+                        layers,
+                    )
             elif operation.name in {
                 "tt.splat", "tt.broadcast", "tt.expand_dims", "tt.reshape",
             } and len(operation.operands) == 1:
@@ -4634,9 +5670,13 @@ class TTIRParser:
                         operation.operands[operand_index], next_active
                     )
             pointer_cache[name] = (
-                None if result is None else (result[0], dict(result[1]))
+                None
+                if result is None
+                else (result[0], dict(result[1]), result[2], result[3])
             )
-            return None if result is None else (result[0], dict(result[1]))
+            return None if result is None else (
+                result[0], dict(result[1]), result[2], result[3]
+            )
 
         def hard_local_signature(operation: _Operation) -> str:
             if operation.name != "tt.addptr":
@@ -4739,6 +5779,21 @@ class TTIRParser:
             return cached
 
         def operand_ref(name: str, *, semantic: bool) -> str:
+            alias_seen: set[str] = set()
+            while name in identity_aliases:
+                if name in alias_seen:
+                    raise TTIRParseError(
+                        "cyclic closed-consumer identity alias"
+                    )
+                alias_seen.add(name)
+                name = identity_aliases[name]
+            while name in zero_bound_aliases:
+                if name in alias_seen:
+                    raise TTIRParseError(
+                        "cyclic default-zero-bound predicate alias"
+                    )
+                alias_seen.add(name)
+                name = zero_bound_aliases[name]
             if name in leaf_labels:
                 return leaf_labels[name]
             node_id = result_to_node[name]
@@ -4763,6 +5818,10 @@ class TTIRParser:
         ) -> list[str]:
             names = [*operation.operands, *operation.region_results]
             refs = [operand_ref(name, semantic=semantic) for name in names]
+            if operation.name == "tt.load" and operation.header_operand_count >= 2:
+                refs[1] = operand_ref(names[1], semantic=semantic)
+            elif operation.name == "tt.store" and operation.header_operand_count >= 3:
+                refs[2] = operand_ref(names[2], semantic=semantic)
             if (
                 normalize_access_addresses
                 and names
@@ -5290,6 +6349,7 @@ class TTIRParser:
             member_refs = sorted(
                 node_ref(member.node_id, semantic=True)
                 for member in direct_members.get(region_id, ())
+                if member.node_id not in representation_only
             )
             member_refs.extend(
                 sorted(
@@ -5353,6 +6413,8 @@ class TTIRParser:
             for child in direct_children.get(parent, ()):
                 edges.append((parent_ref, region_ref(child), "region.child"))
             for member in direct_members.get(parent, ()):
+                if member.node_id in representation_only:
+                    continue
                 edges.append(
                     (
                         parent_ref,
@@ -5423,7 +6485,19 @@ class TTIRParser:
             )
 
         memory_effects: list[MemoryEffect] = []
+        diagnostic_memory_transfers: list[MemoryEffect] = []
+        diagnostic_memory_predicate_evidence: list[
+            tuple[str, bool, int, int, str | None, int | None, int | None, bool]
+        ] = []
+        diagnostic_memory_owner_evidence: list[
+            tuple[str, bool, int, int, str | None, int | None, int | None, bool]
+        ] = []
         effect_counts: Counter[str] = Counter()
+
+        direct_users: dict[str, list[_Operation]] = defaultdict(list)
+        for candidate in operations:
+            for operand in candidate.operands:
+                direct_users[operand].append(candidate)
 
         def value_ref(value: str) -> str:
             """Expose typed constants while keeping other SSA values opaque."""
@@ -5448,11 +6522,120 @@ class TTIRParser:
                 else None
             )
 
+        def predicate_evidence(
+            operation: _Operation,
+            *,
+            kind: str,
+            masked: bool,
+            predicate_operand: int | None,
+        ) -> None:
+            """Emit an occurrence-aligned, fail-closed predicate receipt."""
+
+            access_location = (
+                operation_source_locations.get(operation.node_id)
+                or memory_operation_locations.get(operation.node_id)
+            )
+            if access_location is None:
+                return
+            _access_operation, access_line, access_column = access_location
+            predicate_operation: str | None = None
+            predicate_line: int | None = None
+            predicate_column: int | None = None
+            predicate_is_i1 = False
+            if masked and predicate_operand is not None:
+                if predicate_operand >= len(operation.operands):
+                    return
+                producer_id = result_to_node.get(operation.operands[predicate_operand])
+                producer = node_by_id.get(producer_id) if producer_id is not None else None
+                producer_location = (
+                    operation_source_locations.get(producer.node_id)
+                    if producer is not None else None
+                )
+                if producer is not None:
+                    predicate_operation = producer.name
+                    if producer_location is not None:
+                        _producer_operation, predicate_line, predicate_column = producer_location
+                    # The producer's local signature normally describes its
+                    # *input* operands (notably for comparisons), so it is not
+                    # sound type evidence for the value feeding the memory
+                    # predicate.  Use the parser-validated result type for
+                    # this exact SSA result instead.  This is only a
+                    # type-profile prerequisite; the Source ledger and
+                    # boundary validator still prove the target relation and
+                    # projection separately.
+                    try:
+                        result_index = producer.result_names.index(
+                            operation.operands[predicate_operand]
+                        )
+                        predicate_type = producer.result_types[result_index]
+                    except (IndexError, ValueError):
+                        predicate_type = None
+                    predicate_is_i1 = _is_i1_predicate_type(predicate_type)
+            diagnostic_memory_predicate_evidence.append(
+                (
+                    kind,
+                    masked,
+                    access_line,
+                    access_column,
+                    predicate_operation,
+                    predicate_line,
+                    predicate_column,
+                    predicate_is_i1,
+                )
+            )
+
+        def owner_evidence(
+            operation: _Operation,
+            *,
+            kind: str,
+            masked: bool,
+        ) -> None:
+            """Emit one exact direct value-edge receipt for a memory access."""
+
+            access_location = (
+                operation_source_locations.get(operation.node_id)
+                or memory_operation_locations.get(operation.node_id)
+            )
+            if access_location is None:
+                return
+            _access_operation, access_line, access_column = access_location
+            owner: _Operation | None = None
+            if kind == "load" and len(operation.result_names) == 1:
+                users = direct_users.get(operation.result_names[0], ())
+                if len(users) == 1:
+                    owner = users[0]
+            elif kind == "store" and len(operation.operands) >= 2:
+                producer_id = result_to_node.get(operation.operands[1])
+                owner = (
+                    node_by_id.get(producer_id)
+                    if producer_id is not None
+                    else None
+                )
+            owner_location = (
+                operation_source_locations.get(owner.node_id)
+                if owner is not None else None
+            )
+            owner_line = owner_location[1] if owner_location is not None else None
+            owner_column = owner_location[2] if owner_location is not None else None
+            diagnostic_memory_owner_evidence.append(
+                (
+                    kind,
+                    masked,
+                    access_line,
+                    access_column,
+                    owner.name if owner is not None else None,
+                    owner_line,
+                    owner_column,
+                    owner is not None,
+                )
+            )
+
         for operation in operations:
             if operation.name == "tt.load":
                 masked = operation.header_operand_count >= 2
                 predicate = (
-                    operand_ref(operation.operands[1], semantic=True) if masked else None
+                    operand_ref(operation.operands[1], semantic=True)
+                    if masked else None
                 )
                 other = (
                     value_ref(operation.operands[2])
@@ -5463,11 +6646,20 @@ class TTIRParser:
                     "load", masked, predicate, other, operation.local_signature
                 )
                 memory_effects.append(effect)
+                diagnostic_memory_transfers.append(effect)
+                predicate_evidence(
+                    operation,
+                    kind="load",
+                    masked=masked,
+                    predicate_operand=1 if masked else None,
+                )
+                owner_evidence(operation, kind="load", masked=masked)
                 effect_counts["read.masked" if masked else "read"] += 1
             elif operation.name == "tt.store":
                 masked = operation.header_operand_count >= 3
                 predicate = (
-                    operand_ref(operation.operands[2], semantic=True) if masked else None
+                    operand_ref(operation.operands[2], semantic=True)
+                    if masked else None
                 )
                 effect = MemoryEffect(
                     "store",
@@ -5477,6 +6669,25 @@ class TTIRParser:
                     operation.local_signature,
                 )
                 memory_effects.append(effect)
+                # A store value is not a load ``other=`` fill.  Keep the
+                # occurrence-aligned sidecar explicit so consumers cannot
+                # accidentally treat a constant store as a masked-load fill.
+                diagnostic_memory_transfers.append(
+                    MemoryEffect(
+                        "store",
+                        masked,
+                        predicate,
+                        None,
+                        operation.local_signature,
+                    )
+                )
+                predicate_evidence(
+                    operation,
+                    kind="store",
+                    masked=masked,
+                    predicate_operand=2 if masked else None,
+                )
+                owner_evidence(operation, kind="store", masked=masked)
                 effect_counts["write.masked" if masked else "write"] += 1
             elif operation.name.startswith("tt.atomic"):
                 effect_counts[operation.name] += 1
@@ -5801,6 +7012,15 @@ class TTIRParser:
                 str,
                 tuple[tuple[tuple[str, ...], int], ...],
                 tuple[str, ...],
+                str | None,
+                tuple[
+                    tuple[
+                        tuple[tuple[tuple[str, ...], int], ...],
+                        str | None,
+                        tuple[str, ...],
+                    ],
+                    ...,
+                ],
             ]
         ] = []
         for operation in operations:
@@ -5827,6 +7047,8 @@ class TTIRParser:
                     pointer[0],
                     polynomial_payload(pointer[1]),
                     context,
+                    pointer[2],
+                    pointer[3],
                 )
             )
 
@@ -5880,13 +7102,23 @@ class TTIRParser:
                 function,
                 operations,
                 result_to_node,
+                leaf_labels,
             ),
             diagnostic_effect_traces=tuple(
                 sorted(diagnostic_effect_traces)
             ),
+            diagnostic_memory_transfers=tuple(diagnostic_memory_transfers),
             diagnostic_memory_effect_origins=diagnostic_memory_effect_origins,
             diagnostic_memory_address_forms=tuple(
                 diagnostic_memory_address_forms
+            ),
+            diagnostic_source_locations=source_locations,
+            diagnostic_memory_source_locations=diagnostic_memory_source_locations,
+            diagnostic_memory_predicate_evidence=tuple(
+                diagnostic_memory_predicate_evidence
+            ),
+            diagnostic_memory_owner_evidence=tuple(
+                diagnostic_memory_owner_evidence
             ),
         )
 
@@ -6128,6 +7360,32 @@ def runtime_argument_names(text: str) -> tuple[str, ...]:
     cleaned = _strip_locations(text)
     function = _parse_function(cleaned)
     return tuple(name.removeprefix("%") for name, _, _ in function.arguments)
+
+
+def compiled_program_id_axes(ttir: str) -> tuple[int, ...] | None:
+    """Return the literal Triton launch-axis multiset from one TTIR observation.
+
+    Both Replay admission and unary Gate1 normalization consume this parser so
+    a ``pi.program_axes`` witness and the compiled-obligation check name the
+    same physical x/y/z observation.  Unknown syntax stays unavailable; this
+    helper never infers an axis from operation order or from the peer TTIR.
+    """
+
+    axes: list[int] = []
+    axis_names = {"x": 0, "y": 1, "z": 2}
+    for line in ttir.splitlines():
+        if "tt.get_program_id" not in line:
+            continue
+        named = re.search(r"\btt\.get_program_id\s+([xyz])(?:\s|:)", line)
+        if named is not None:
+            axes.append(axis_names[named.group(1)])
+            continue
+        generic = re.search(r"\baxis\s*=\s*([0-2])(?:\s*:\s*i32)?", line)
+        if generic is not None:
+            axes.append(int(generic.group(1)))
+            continue
+        return None
+    return tuple(sorted(axes))
 
 
 def fingerprint_ttir(

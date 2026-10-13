@@ -2,28 +2,28 @@ import copy
 import hashlib
 import json
 import logging
+import signal
 import time
+import threading
+from contextlib import contextmanager
 from collections.abc import Callable
 
 import litellm
 import httpx
 
-from minisweagent.exceptions import FormatError, MiniSWERequestCancelled
+from minisweagent.exceptions import (
+    FormatError,
+    LimitsExceeded,
+    MiniSWERequestCancelled,
+)
 from minisweagent.models import GLOBAL_MODEL_STATS
 from minisweagent.models.litellm_model import LitellmModel, LitellmModelConfig
 from minisweagent.models.utils.actions_toolcall_response import (
-    APPLY_PATCH_TOOL_RESPONSE_API,
     APPLY_REPLAY_PATCH_TOOL_RESPONSE_API,
     BASH_TOOL_RESPONSE_API,
-    CHECK_CANDIDATE_TOOL_RESPONSE_API,
-    CHECK_SUBMIT_CANDIDATE_TOOL_RESPONSE_API,
-    INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API,
-    INSPECT_LIFT_SCHEMA_TOOL_RESPONSE_API,
-    SAVE_CONSTRUCTION_PLAN_TOOL_RESPONSE_API,
-    SAVE_SEMANTIC_LEDGER_TOOL_RESPONSE_API,
-    SUBMIT_CANDIDATE_TOOL_RESPONSE_API,
+    MCP_CALL_TOOL_RESPONSE_API,
+    MCP_FIRST_READ_TOOL_RESPONSE_API,
     SUBMIT_REPLAY_TOOL_RESPONSE_API,
-    WRITE_TEXT_TOOL_RESPONSE_API,
     finish_reason_from_responses_api,
     format_toolcall_observation_messages,
     parse_toolcall_actions_response,
@@ -35,17 +35,9 @@ logger = logging.getLogger("litellm_response_model")
 
 class LitellmResponseModelConfig(LitellmModelConfig):
     max_tool_calls_per_response: int = 1
-    enable_apply_patch_tool: bool = False
-    enable_submit_candidate_tool: bool = False
-    enable_write_text_tool: bool = False
-    enable_semantic_ledger_tool: bool = False
-    enable_construction_plan_tool: bool = False
-    enable_check_submit_candidate_tool: bool = False
-    enable_lift_context_tool: bool = False
-    enable_lift_schema_tool: bool = False
-    enable_check_candidate_tool: bool = False
-    require_first_semantic_ledger: bool = False
-    require_second_construction_plan: bool = False
+    enable_bash_tool: bool = True
+    enable_lift_mcp_tool: bool = False
+    require_first_lift_mcp: bool = False
     routine_reasoning_effort: str | None = None
     routine_timeout_seconds: float | None = None
     semantic_initial_turns: int = 1
@@ -58,9 +50,13 @@ class LitellmResponseModelConfig(LitellmModelConfig):
     compact_response_history_keep_recent: int = 0
     use_previous_response_id: bool = False
     # Transport recovery is deliberately separate from logical Lift calls.
-    # The active Lift contract permits at most one retry of a transient
-    # provider failure per model turn.
+    # The active workflow may disable retries for expensive Lift turns while
+    # other callers retain a bounded transport-only retry.
     transient_retry_attempts: int = 0
+    # Zero retains the generic model default. Replay sets both explicitly so a
+    # changing source cannot turn into an unbounded provider-call episode.
+    physical_provider_call_limit: int = 0
+    transport_retry_limit: int = 0
 
 
 class LitellmResponseModel(LitellmModel):
@@ -76,20 +72,9 @@ class LitellmResponseModel(LitellmModel):
             raise ValueError(
                 "compact_response_history_keep_recent must be non-negative"
             )
-        if (
-            self.config.require_first_semantic_ledger
-            and not self.config.enable_semantic_ledger_tool
-        ):
+        if self.config.require_first_lift_mcp and not self.config.enable_lift_mcp_tool:
             raise ValueError(
-                "require_first_semantic_ledger needs enable_semantic_ledger_tool"
-            )
-        if (
-            self.config.require_second_construction_plan
-            and not self.config.enable_construction_plan_tool
-        ):
-            raise ValueError(
-                "require_second_construction_plan needs "
-                "enable_construction_plan_tool"
+                "require_first_lift_mcp needs enable_lift_mcp_tool"
             )
         if self.config.routine_reasoning_effort not in {
             None,
@@ -110,6 +95,10 @@ class LitellmResponseModel(LitellmModel):
             raise ValueError("semantic_initial_turns must be in [0, 4]")
         if not 0 <= self.config.transient_retry_attempts <= 1:
             raise ValueError("transient_retry_attempts must be in [0, 1]")
+        if self.config.physical_provider_call_limit < 0:
+            raise ValueError("physical_provider_call_limit must be non-negative")
+        if self.config.transport_retry_limit < 0:
+            raise ValueError("transport_retry_limit must be non-negative")
         self._physical_provider_calls = 0
         self._transport_retries = 0
         self._history_compaction_packets = 0
@@ -159,6 +148,54 @@ class LitellmResponseModel(LitellmModel):
     @property
     def transport_retries(self) -> int:
         return self._transport_retries
+
+    def _reserve_physical_provider_call(self, *, transport_retry: bool) -> None:
+        """Reserve one actual request before it reaches the provider.
+
+        The limit is intentionally checked at the physical attempt boundary,
+        not merely before a logical model query.  This also caps a retry or a
+        continuation fallback that happens inside a single query.
+        """
+
+        if (
+            self.config.physical_provider_call_limit
+            and self._physical_provider_calls
+            >= self.config.physical_provider_call_limit
+        ):
+            raise LimitsExceeded(
+                {
+                    "role": "exit",
+                    "content": "PhysicalProviderCallLimitExceeded",
+                    "extra": {
+                        "exit_status": "PhysicalProviderCallLimitExceeded",
+                        "submission": "",
+                        "physical_provider_calls": self._physical_provider_calls,
+                        "physical_provider_call_limit": (
+                            self.config.physical_provider_call_limit
+                        ),
+                    },
+                }
+            )
+        if (
+            transport_retry
+            and self.config.transport_retry_limit
+            and self._transport_retries >= self.config.transport_retry_limit
+        ):
+            raise LimitsExceeded(
+                {
+                    "role": "exit",
+                    "content": "TransportRetryLimitExceeded",
+                    "extra": {
+                        "exit_status": "TransportRetryLimitExceeded",
+                        "submission": "",
+                        "transport_retries": self._transport_retries,
+                        "transport_retry_limit": self.config.transport_retry_limit,
+                    },
+                }
+            )
+        self._physical_provider_calls += 1
+        if transport_retry:
+            self._transport_retries += 1
 
     @property
     def history_compaction(self) -> dict[str, int | bool]:
@@ -262,10 +299,7 @@ class LitellmResponseModel(LitellmModel):
                         parsed = json.loads(arguments)
                     except (TypeError, ValueError):
                         parsed = {}
-                    if message.get("name") in {
-                        "apply_patch",
-                        "apply_replay_patch",
-                    }:
+                    if message.get("name") == "apply_replay_patch":
                         replacement = {
                             "path": (
                                 parsed.get("path", "/output/candidate.json")
@@ -276,25 +310,22 @@ class LitellmResponseModel(LitellmModel):
                             "new_text": "",
                             "submit": False,
                         }
-                    elif message.get("name") == "submit_candidate":
-                        replacement = {"candidate_text": receipt}
                     elif message.get("name") == "submit_replay":
                         replacement = {"source_text": receipt}
-                    elif message.get("name") == "write_text":
-                        replacement = {
-                            "path": (
-                                parsed.get("path", "/work/semantic_ledger.md")
-                                if isinstance(parsed, dict)
-                                else "/work/semantic_ledger.md"
-                            ),
-                            "content": receipt,
-                            "mode": "overwrite",
-                            "submit": False,
-                        }
-                    elif message.get("name") == "save_semantic_ledger":
-                        replacement = {"content": receipt}
-                    elif message.get("name") == "save_construction_plan":
-                        replacement = {"content": receipt}
+                    elif message.get("name") == "mcp_call_tool":
+                        method = (
+                            parsed.get("method", "resources/read")
+                            if isinstance(parsed, dict)
+                            else "resources/read"
+                        )
+                        params = (
+                            parsed.get("params", {})
+                            if isinstance(parsed, dict)
+                            else {}
+                        )
+                        if not isinstance(params, dict):
+                            params = {}
+                        replacement = {"method": method, "params": params}
                     else:
                         replacement = {"command": f"# {receipt}"}
                     message["arguments"] = json.dumps(replacement, sort_keys=True)
@@ -660,7 +691,11 @@ class LitellmResponseModel(LitellmModel):
         if isinstance(exc, transient_types):
             return True
         text = f"{type(exc).__name__}: {exc}".casefold()
-        return "unexpected eof" in text
+        return (
+            "unexpected eof" in text
+            or "stream ended without a completed response" in text
+            or "responses stream emitted a failure event" in text
+        )
 
     def _record_packet(self, messages: list[dict], *, continuation: bool) -> tuple[int, int]:
         items, chars = self._packet_shape(messages)
@@ -673,57 +708,32 @@ class LitellmResponseModel(LitellmModel):
             self._stateless_input_chars += chars
         return items, chars
 
-    def _response_tools(self, *, response_count: int) -> list[dict]:
-        if self.config.require_first_semantic_ledger and response_count == 0:
-            if not self.config.enable_semantic_ledger_tool:
-                raise ValueError(
-                    "require_first_semantic_ledger needs enable_semantic_ledger_tool"
-                )
-            return [SAVE_SEMANTIC_LEDGER_TOOL_RESPONSE_API]
-        if self.config.require_second_construction_plan and response_count == 1:
-            if not self.config.enable_construction_plan_tool:
-                raise ValueError(
-                    "require_second_construction_plan needs "
-                    "enable_construction_plan_tool"
-                )
-            return [SAVE_CONSTRUCTION_PLAN_TOOL_RESPONSE_API]
+    def _response_tools(
+        self,
+        *,
+        response_count: int,
+        response_tools: list[dict] | None = None,
+    ) -> list[dict]:
+        if response_tools is not None:
+            if not response_tools or any(
+                not isinstance(tool, dict) for tool in response_tools
+            ):
+                raise ValueError("dynamic Responses tool surface is malformed")
+            return copy.deepcopy(response_tools)
+        if self.config.require_first_lift_mcp and response_count == 0:
+            # The first owner turn is deliberately read-only.  This makes the
+            # MCP bridge an actual context boundary instead of an optional set
+            # of tools that a provider can bypass by emitting a candidate from
+            # the startup receipt alone.  Later turns receive the ordinary
+            # MCP read/write surface and CandidateCheck remains authoritative.
+            return [MCP_FIRST_READ_TOOL_RESPONSE_API]
         return [
-            BASH_TOOL_RESPONSE_API,
             *(
-                [APPLY_PATCH_TOOL_RESPONSE_API]
-                if self.config.enable_apply_patch_tool
+                [BASH_TOOL_RESPONSE_API]
+                if self.config.enable_bash_tool
                 else []
             ),
-            *(
-                [SUBMIT_CANDIDATE_TOOL_RESPONSE_API]
-                if self.config.enable_submit_candidate_tool
-                else []
-            ),
-            *(
-                [WRITE_TEXT_TOOL_RESPONSE_API]
-                if self.config.enable_write_text_tool
-                else []
-            ),
-            *(
-                [CHECK_SUBMIT_CANDIDATE_TOOL_RESPONSE_API]
-                if self.config.enable_check_submit_candidate_tool
-                else []
-            ),
-            *(
-                [INSPECT_LIFT_CONTEXT_TOOL_RESPONSE_API]
-                if self.config.enable_lift_context_tool
-                else []
-            ),
-            *(
-                [INSPECT_LIFT_SCHEMA_TOOL_RESPONSE_API]
-                if self.config.enable_lift_schema_tool
-                else []
-            ),
-            *(
-                [CHECK_CANDIDATE_TOOL_RESPONSE_API]
-                if self.config.enable_check_candidate_tool
-                else []
-            ),
+            *([MCP_CALL_TOOL_RESPONSE_API] if self.config.enable_lift_mcp_tool else []),
             *(
                 [APPLY_REPLAY_PATCH_TOOL_RESPONSE_API]
                 if self.config.enable_replay_patch_tool
@@ -736,12 +746,145 @@ class LitellmResponseModel(LitellmModel):
             ),
         ]
 
+    @contextmanager
+    def _hard_provider_deadline(self, timeout):
+        """Enforce the configured turn deadline around streaming LiteLLM calls.
+
+        LiteLLM's HTTP timeout does not reliably bound iteration over a relay's
+        SSE stream.  Lift/Replay must still fail closed at the model-turn
+        boundary, so the main-thread caller also owns a real wall-clock alarm.
+        Worker-thread callers retain LiteLLM's native timeout because Python
+        signals cannot safely interrupt a non-main thread.
+        """
+
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or timeout <= 0
+            or threading.current_thread() is not threading.main_thread()
+        ):
+            yield
+            return
+        previous_handler = signal.getsignal(signal.SIGALRM)
+        previous_timer = signal.getitimer(signal.ITIMER_REAL)
+        started = time.monotonic()
+
+        def on_alarm(_signum, _frame):
+            raise litellm.exceptions.Timeout(
+                "provider response exceeded the configured turn deadline",
+                model=self.config.model_name,
+                llm_provider="responses",
+            )
+
+        signal.signal(signal.SIGALRM, on_alarm)
+        signal.setitimer(signal.ITIMER_REAL, float(timeout))
+        try:
+            yield
+        finally:
+            elapsed = time.monotonic() - started
+            if previous_timer[0] > 0:
+                signal.setitimer(
+                    signal.ITIMER_REAL,
+                    max(0.001, previous_timer[0] - elapsed),
+                    previous_timer[1],
+                )
+            else:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_handler)
+
+    @staticmethod
+    def _materialize_streaming_response(response):
+        """Return the completed Responses object for a streaming LiteLLM call.
+
+        A streaming Responses iterator is usable only after the provider emits
+        its completed response envelope.  A closed function-call item is not a
+        substitute for that envelope: accepting it would turn a truncated SSE
+        transport into a valid Lift/Replay action.
+        Duck typing is intentional: LiteLLM has changed the concrete iterator
+        class between releases, while the completed-response contract is
+        stable.
+        """
+
+        if not hasattr(response, "completed_response"):
+            # ``_query`` always requests the Responses SSE path.  A relay may
+            # nevertheless return a plain completed envelope, which is safe
+            # only when it explicitly says ``status=completed`` and carries an
+            # output list.  An arbitrary iterator or a function-call-looking
+            # object is not a completion witness and must not reach the action
+            # parser as if it were one.
+            status = (
+                response.get("status")
+                if isinstance(response, dict)
+                else getattr(response, "status", None)
+            )
+            output = (
+                response.get("output")
+                if isinstance(response, dict)
+                else getattr(response, "output", None)
+            )
+            if status == "completed" and isinstance(output, (list, tuple)):
+                return response
+            raise RuntimeError(
+                "Responses stream ended without a completed response object"
+            )
+        function_items: dict[str, dict] = {}
+        anonymous_function_items: list[dict] = []
+        for _event in response:
+            event_type = getattr(_event, "type", None)
+            if event_type in {"error", "response.failed"}:
+                raise RuntimeError("Responses stream emitted a failure event")
+            item = getattr(_event, "item", None)
+            item_type = getattr(item, "type", None)
+            if item_type != "function_call":
+                continue
+            item_value = (
+                item.model_dump(mode="json")
+                if hasattr(item, "model_dump")
+                else dict(item)
+            )
+            item_id = item_value.get("id")
+            if isinstance(item_id, str) and item_id:
+                function_items[item_id] = item_value
+            else:
+                anonymous_function_items.append(item_value)
+        completed_event = getattr(response, "completed_response", None)
+        completed_response = getattr(completed_event, "response", None)
+        if completed_response is None:
+            raise RuntimeError(
+                "Responses stream ended without a completed response object"
+            )
+        output = getattr(completed_response, "output", None)
+        output_items = list(output) if isinstance(output, (list, tuple)) else []
+        output_ids = {
+            item_id
+            for item in output_items
+            if isinstance(
+                item_id := (
+                    item.get("id")
+                    if isinstance(item, dict)
+                    else getattr(item, "id", None)
+                ),
+                str,
+            )
+            and item_id
+        }
+        recovered_items = [
+            item
+            for item_id, item in function_items.items()
+            if item_id not in output_ids
+        ]
+        recovered_items.extend(anonymous_function_items)
+        if recovered_items:
+            completed_response.output = [*output_items, *recovered_items]
+        return completed_response
+
     def _query(
         self,
         messages: list[dict[str, str]],
         *,
         response_count: int = 0,
         semantic_turn: bool = False,
+        response_tools: list[dict] | None = None,
         **kwargs,
     ):
         if self.config.routine_reasoning_effort is not None and not semantic_turn:
@@ -759,19 +902,59 @@ class LitellmResponseModel(LitellmModel):
             )
         try:
             model_kwargs = self.config.model_kwargs | kwargs
+            # Materialize the SSE Responses stream into the completed-response
+            # shape expected by action parsing.
+            model_kwargs.setdefault("stream", True)
+            tools = self._response_tools(
+                response_count=response_count,
+                response_tools=response_tools,
+            )
+            if tools:
+                # Lift and Replay are action protocols.  A completed response
+                # without a tool call cannot advance either protocol and only
+                # creates an avoidable format-error turn.
+                model_kwargs.setdefault("tool_choice", "required")
             if model_kwargs.get("timeout") is None:
                 model_kwargs["timeout"] = httpx.Timeout(None)
-            return litellm.responses(
-                model=self.config.model_name,
-                input=messages,
-                tools=self._response_tools(response_count=response_count),
-                **model_kwargs,
-            )
+            def issue_response(request_kwargs):
+                response = litellm.responses(
+                    model=self.config.model_name,
+                    input=messages,
+                    tools=tools,
+                    **request_kwargs,
+                )
+                return self._materialize_streaming_response(response)
+
+            with self._hard_provider_deadline(model_kwargs.get("timeout")):
+                try:
+                    return issue_response(model_kwargs)
+                except AttributeError as exc:
+                    # Some OpenAI-compatible Responses relays emit a valid
+                    # streamed completion whose ``usage`` is a JSON mapping.
+                    # Current LiteLLM then crashes in its *post-completion*
+                    # logging callback while accessing ``response.usage`` as
+                    # a pydantic field. The SSE request is already complete,
+                    # so no partial output can be trusted. Reissue the same
+                    # logical turn once through the completed Responses path,
+                    # which preserves tools/strict JSON and still requires a
+                    # full ``status=completed`` envelope below. Do not catch
+                    # arbitrary AttributeError: those remain host failures.
+                    if str(exc) != "'dict' object has no attribute 'usage'":
+                        raise
+                    completed_kwargs = dict(model_kwargs)
+                    completed_kwargs["stream"] = False
+                    return issue_response(completed_kwargs)
         except litellm.exceptions.AuthenticationError as e:
             e.message += " Configure credentials through the IntentIR provider settings."
             raise e
 
     def query(self, messages: list[dict[str, str]], **kwargs) -> dict:
+        response_tools = kwargs.pop("response_tools", None)
+        if response_tools is not None and (
+            not isinstance(response_tools, list)
+            or any(not isinstance(tool, dict) for tool in response_tools)
+        ):
+            raise ValueError("dynamic Responses tool surface is malformed")
         last_response_index, previous_response_id = self._latest_response_id(messages)
         continuation_enabled = (
             self.config.use_previous_response_id
@@ -829,9 +1012,9 @@ class LitellmResponseModel(LitellmModel):
             self._raise_if_cancelled()
             with attempt:
                 call_was_fallback = False
-                self._physical_provider_calls += 1
-                if attempt.retry_state.attempt_number > 1:
-                    self._transport_retries += 1
+                self._reserve_physical_provider_call(
+                    transport_retry=attempt.retry_state.attempt_number > 1
+                )
                 started = time.monotonic()
                 packet_items, packet_chars = self._record_packet(
                     prepared_messages,
@@ -842,6 +1025,7 @@ class LitellmResponseModel(LitellmModel):
                         prepared_messages,
                         response_count=response_count,
                         semantic_turn=semantic_turn,
+                        response_tools=response_tools,
                         **(
                             {"previous_response_id": previous_response_id}
                             if previous_response_id is not None
@@ -880,7 +1064,7 @@ class LitellmResponseModel(LitellmModel):
                         previous_response_id = None
                         prepared_messages = self._prepare_messages_for_api(messages)
                         call_was_fallback = True
-                        self._physical_provider_calls += 1
+                        self._reserve_physical_provider_call(transport_retry=False)
                         started = time.monotonic()
                         packet_items, packet_chars = self._record_packet(
                             prepared_messages, continuation=False
@@ -890,6 +1074,7 @@ class LitellmResponseModel(LitellmModel):
                                 prepared_messages,
                                 response_count=response_count,
                                 semantic_turn=semantic_turn,
+                                response_tools=response_tools,
                                 **kwargs,
                             )
                         except Exception as fallback_exc:
@@ -975,7 +1160,10 @@ class LitellmResponseModel(LitellmModel):
         if self.config.use_global_model_stats:
             GLOBAL_MODEL_STATS.add(cost_output["cost"])
         try:
-            actions = self._parse_actions(response)
+            actions = self._parse_actions(
+                response,
+                response_count=response_count,
+            )
         except FormatError as e:
             # hasattr guard: litellm.responses() returns a pydantic object, but tests
             # may inject a plain dict; dict(response) is the correct fallback in that case.
@@ -996,25 +1184,18 @@ class LitellmResponseModel(LitellmModel):
         }
         return message
 
-    def _parse_actions(self, response) -> list[dict]:
+    def _parse_actions(self, response, *, response_count: int = 0) -> list[dict]:
         return parse_toolcall_actions_response(
             getattr(response, "output", []),
             format_error_template=self.config.format_error_template,
             template_kwargs={"finish_reason": finish_reason_from_responses_api(response)},
             max_tool_calls=self.config.max_tool_calls_per_response,
-            enable_apply_patch_tool=self.config.enable_apply_patch_tool,
-            enable_submit_candidate_tool=self.config.enable_submit_candidate_tool,
-            enable_write_text_tool=self.config.enable_write_text_tool,
-            enable_semantic_ledger_tool=self.config.enable_semantic_ledger_tool,
-            enable_construction_plan_tool=(
-                self.config.enable_construction_plan_tool
+            enable_bash_tool=self.config.enable_bash_tool,
+            enable_lift_mcp_tool=self.config.enable_lift_mcp_tool,
+            mcp_first_read_only=(
+                self.config.require_first_lift_mcp
+                and response_count == 0
             ),
-            enable_check_submit_candidate_tool=(
-                self.config.enable_check_submit_candidate_tool
-            ),
-            enable_lift_context_tool=self.config.enable_lift_context_tool,
-            enable_lift_schema_tool=self.config.enable_lift_schema_tool,
-            enable_check_candidate_tool=self.config.enable_check_candidate_tool,
             enable_replay_patch_tool=self.config.enable_replay_patch_tool,
             enable_submit_replay_tool=self.config.enable_submit_replay_tool,
         )

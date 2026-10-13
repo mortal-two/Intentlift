@@ -26,6 +26,7 @@ from intentir.verify.gate2.scalar import ScalarLoweringRunner, ScalarLoweringSpe
 from intentir.verify.gate2.triton import TritonRunner
 from intentir.verify.scrc_workload_run import build_workload_jc_suite
 from intentir.verify.workload_adapters import PreparedTritonWorkload
+from intentir.ir.canonical_j import j_elaboration
 
 from .pipeline import LoweredProgram, execute_cuda_artifact
 from .portable_bundle import logical_runtime_array
@@ -211,7 +212,7 @@ class CudaOpaqueExecution:
                 self.materialized.intent_mlir,
                 inputs,
             )
-            logical_outputs = tuple(item.name for item in self.j.intent.outputs)
+            logical_outputs = j_elaboration(self.j).output_names
             copied = {
                 case.output_binding_map[logical_name]: torch_tensor_to_numpy(
                     torch, outputs[f"out{index}"]
