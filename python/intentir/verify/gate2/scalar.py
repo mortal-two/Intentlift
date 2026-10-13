@@ -54,7 +54,7 @@ from intentir.verify.gate1.model import (
     SemanticArchive,
 )
 
-from .model import ExecutionResult
+from .model import ExecutionResult, output_binding_digest, output_digest
 
 
 SCALAR_LOWERING_PROTOCOL = "j_scalar_cpu_mlir_v24"
@@ -94,29 +94,35 @@ def _canonical_str_mapping(value: Mapping[str, str]) -> tuple[tuple[str, str], .
     return tuple(sorted(value.items()))
 
 
-def _walk_ops(body: Sequence[IntentOp]) -> tuple[IntentOp, ...]:
-    result: list[IntentOp] = []
-    for op in body:
-        result.append(op)
-        result.extend(_walk_ops(op.body))
-    return tuple(result)
-
-
 def _node_table(j: SemanticArchive) -> dict[str, IntentOp]:
-    by_path: dict[str, IntentOp] = {}
-
-    def visit(body: Sequence[IntentOp], prefix: str = "body") -> None:
-        for index, op in enumerate(body):
-            path = f"{prefix}[{index}]"
-            by_path[path] = op
-            visit(op.body, f"{path}.body")
-
-    visit(j.intent.body)
-    result: dict[str, IntentOp] = dict(by_path)
-    for node_id, path in j.node_ids.items():
-        if path in by_path:
-            result[node_id] = by_path[path]
+    elaboration = j_elaboration(j)
+    result = elaboration.construction_records.typed_operation_by_ref(j.node_ids)
+    if result is None:
+        raise ValueError(
+            "Gate2 scalar cannot materialize canonical operation references"
+        )
     return result
+
+
+def _canonical_rows(j: SemanticArchive) -> tuple[tuple[str, IntentOp], ...]:
+    rows = j_elaboration(j).typed_operation_rows
+    if rows is None:
+        raise ValueError(
+            "Gate2 scalar requires a complete canonical operation view"
+        )
+    return tuple(rows)
+
+
+def _canonical_ops(j: SemanticArchive) -> tuple[IntentOp, ...]:
+    return tuple(operation for _path, operation in _canonical_rows(j))
+
+
+def _canonical_body(j: SemanticArchive) -> tuple[IntentOp, ...]:
+    return tuple(
+        operation
+        for path, operation in _canonical_rows(j)
+        if "." not in path and path.startswith("body[")
+    )
 
 
 def _result_names(op: IntentOp) -> tuple[str, ...]:
@@ -310,9 +316,12 @@ def _validate_masked_sum_reduction(
     """Validate the narrow padded single-axis sum projection supported by E_J."""
 
     boundary = j.boundary
+    elaboration = j_elaboration(j)
+    value_types = elaboration.value_type_by_name
+    canonical_outputs = elaboration.output_names
     if (
         len(j.intent.inputs) != 1
-        or len(j.intent.outputs) != 1
+        or len(canonical_outputs) != 1
         or len(boundary.reductions) != 1
     ):
         raise NotImplementedError(
@@ -334,7 +343,7 @@ def _validate_masked_sum_reduction(
             "E_J padded reduction requires one dense load and one store"
         )
     load, store = loads[0], stores[0]
-    if load.tensor != j.intent.inputs[0].name or store.tensor != j.intent.outputs[0].name:
+    if load.tensor != j.intent.inputs[0].name or store.tensor != canonical_outputs[0]:
         raise ValueError("E_J padded reduction access tensors differ from J ABI")
     if (
         isinstance(load.fill_value, bool)
@@ -370,8 +379,11 @@ def _validate_masked_sum_reduction(
         )
     reduced_axis = reduction_axes[0]
     input_tensor = j.intent.inputs[0]
-    output_tensor = j.intent.outputs[0]
-    if input_tensor.dtype != output_tensor.dtype:
+    output_binding = j_elaboration(j).output_by_name.get(canonical_outputs[0])
+    if output_binding is None:
+        raise ValueError("E_J padded reduction output lacks a canonical binding")
+    output_type = output_binding.output_type
+    if input_tensor.dtype != output_type.dtype:
         raise NotImplementedError(
             "E_J padded sum currently requires equal input/output dtype"
         )
@@ -382,7 +394,7 @@ def _validate_masked_sum_reduction(
         for index, extent in enumerate(input_tensor.shape)
         if index != reduced_axis
     ]
-    if output_tensor.shape != expected_output_shape:
+    if tuple(output_type.shape) != tuple(expected_output_shape):
         raise ValueError("E_J padded reduction output shape is not axis removal")
 
     load_axes = axes_by_access[load.access_id]
@@ -421,11 +433,15 @@ def _validate_masked_sum_reduction(
     output_values = {
         item.output: item.value for item in j_elaboration(j).output_bindings
     }
-    if output_values != {output_tensor.name: reduction.result}:
+    if output_values != {output_binding.output: reduction.result}:
         raise ValueError("E_J padded reduction result is not the J output")
 
-    body = j.intent.body
-    if not body or body[-1] is not reduction or any(op.body for op in body):
+    body = _canonical_body(j)
+    if (
+        not body
+        or body[-1].node_id != reduction.node_id
+        or any(op.body for op in body)
+    ):
         raise NotImplementedError(
             "E_J padded reduction requires one flat graph ending in reduction"
         )
@@ -473,10 +489,17 @@ def _validate_masked_sum_reduction(
             "E_J padded reduction load does not feed the reduction slice"
         )
     for op in body[:-1]:
+        result_names = _result_names(op)
+        result_type = (
+            value_types.get(result_names[0])
+            if len(result_names) == 1
+            else None
+        )
         if (
-            op.type is None
-            or op.type.get("dtype") != input_tensor.dtype
-            or op.type.get("shape") != input_tensor.shape
+            result_type is None
+            or not result_type.is_tensor
+            or result_type.dtype != input_tensor.dtype
+            or tuple(result_type.shape) != tuple(input_tensor.shape)
         ):
             raise NotImplementedError(
                 "E_J padded reduction prefix must preserve input dtype and shape"
@@ -513,9 +536,11 @@ def _validate_masked_sum_reduction(
             "E_J padded reduction prefix does not map fill to sum identity"
         )
     if (
-        reduction.type is None
-        or reduction.type.get("dtype") != output_tensor.dtype
-        or reduction.type.get("shape") != output_tensor.shape
+        not isinstance(reduction.result, str)
+        or value_types.get(reduction.result) is None
+        or not value_types[reduction.result].is_tensor
+        or value_types[reduction.result].dtype != output_type.dtype
+        or tuple(value_types[reduction.result].shape) != tuple(output_type.shape)
     ):
         raise ValueError(
             "E_J padded reduction result type differs from the output ABI"
@@ -525,18 +550,14 @@ def _validate_masked_sum_reduction(
         raise NotImplementedError(
             "E_J padded reduction requires the single physical tile axis 0"
         )
-    for name, value in (
-        ("identity", contract.identity),
-        ("masked_contribution", contract.masked_contribution),
+    if (
+        isinstance(contract.identity, bool)
+        or not isinstance(contract.identity, (int, float))
+        or float(contract.identity) != 0.0
     ):
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or float(value) != 0.0
-        ):
-            raise NotImplementedError(
-                f"E_J padded sum requires explicit neutral {name}=0"
-            )
+        raise NotImplementedError(
+            "E_J padded sum requires explicit neutral identity=0"
+        )
 
 
 def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
@@ -550,6 +571,7 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
     """
 
     elaboration = j_elaboration(j)
+    value_types = elaboration.value_type_by_name
     boundary = j.boundary
     if any(
         parameter.alias_of is not None
@@ -576,22 +598,25 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
             "E_J mask erasure does not implement update padding"
         )
     nodes = _node_table(j)
+    # Output dtype/shape is owned by the canonical output construction record,
+    # not a second read of ``intent.outputs``.  Inputs remain J declarations
+    # here because this projection validates the Gate2 invocation ABI.
+    canonical_output_bindings = elaboration.output_by_name
     tensors = {
-        item.name: item for item in [*j.intent.inputs, *j.intent.outputs]
+        **{item.name: item for item in j.intent.inputs},
+        **{
+            output: binding.output_type
+            for output, binding in canonical_output_bindings.items()
+        },
     }
     input_names = {item.name for item in j.intent.inputs}
-    output_names = {item.name for item in j.intent.outputs}
-    canonical_output_bindings = {
-        item.output: item for item in j_elaboration(j).output_bindings
-    }
+    output_names = set(elaboration.output_names)
     output_values = {
         output: item.value
         for output, item in canonical_output_bindings.items()
     }
     graph_operands = {
-        operand
-        for operation in _node_table(j).values()
-        for operand in operation.operands
+        operand for operation in _canonical_ops(j) for operand in operation.operands
     }
     loads_by_tensor: dict[str, list[Any]] = {}
     for access in boundary.accesses:
@@ -690,7 +715,9 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
         if predicate_contract is not None:
             guards, lower_axes, upper_bounds = predicate_contract
             graph_operands = {
-                operand for node in j.intent.body for operand in node.operands
+                operand
+                for node in _canonical_ops(j)
+                for operand in node.operands
             }
             if not guards.issubset(graph_operands):
                 raise ValueError(
@@ -760,7 +787,7 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                 if (
                     access.tensor not in graph_operands
                     and (
-                        j.intent.body
+                        _canonical_body(j)
                         or access.tensor not in set(output_values.values())
                     )
                 ):
@@ -774,12 +801,16 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
             raise ValueError(
                 f"E_J store {access.access_id!r} does not target a J output"
             )
-        observable_value = output_values.get(access.tensor, access.tensor)
+        observable_value = output_values[access.tensor]
         output_binding = canonical_output_bindings.get(access.tensor)
+        output_store_ref = (
+            output_binding.store_node_ref
+            if output_binding is not None
+            else None
+        )
         if (
-            output_binding is not None
-            and output_binding.node_ref is not None
-            and nodes.get(output_binding.node_ref) is not op
+            output_store_ref is not None
+            and nodes.get(output_store_ref) is not op
         ):
             raise ValueError(
                 f"E_J store {access.access_id!r} disagrees with output mapping"
@@ -789,18 +820,20 @@ def _validate_dense_functional_boundary(j: SemanticArchive) -> None:
                 raise ValueError(
                     f"E_J store {access.access_id!r} is not produced by its J node"
                 )
+            producer_type = value_types.get(observable_value)
             if has_predicate_or_fill and not masked_reduction and (
-                op.type is None
-                or op.type.get("dtype") != tensor.dtype
-                or op.type.get("shape") != tensor.shape
+                producer_type is None
+                or not producer_type.is_tensor
+                or producer_type.dtype != tensor.dtype
+                or tuple(producer_type.shape) != tuple(tensor.shape)
             ):
                 raise ValueError(
                     "E_J store producer type differs from the output tensor"
                 )
         elif (
-            j.intent.body
+            _canonical_body(j)
             or output_binding is None
-            or output_binding.node_ref is not None
+            or output_store_ref is not None
             or observable_value not in input_names
         ):
             raise NotImplementedError(
@@ -928,19 +961,11 @@ def _contract_ir_indexed_graph_fallback(j: SemanticArchive) -> bool:
     ):
         return False
 
-    def walk(body: Sequence[IntentOp]):
-        for operation in body:
-            yield operation
-            yield from walk(operation.body)
-            for arm in (operation.positive, operation.negative):
-                if arm is not None:
-                    yield from walk(arm.body)
-
     if any(
         operation.op in {
             "arg_reduce", "effect_if", "loop", "reduce", "scan", "value_if",
         }
-        for operation in walk(j.intent.body)
+        for operation in _canonical_ops(j)
     ):
         return False
     if not boundary.accesses or any(
@@ -1055,7 +1080,10 @@ class ScalarLoweringSpec:
         object.__setattr__(self, "output_bindings", _canonical_str_mapping(outputs))
         validate_dimension_instantiation(self.j, dims)
         expected_inputs = {item.name for item in self.j.intent.inputs}
-        expected_outputs = {item.name for item in self.j.intent.outputs}
+        expected_outputs = {
+            binding.output
+            for binding in j_elaboration(self.j).output_bindings
+        }
         if set(inputs) != expected_inputs:
             raise ValueError("scalar input bindings differ from J inputs")
         if set(outputs) != expected_outputs:
@@ -1292,6 +1320,10 @@ class ScalarLoweringRunner:
                     inputs,
                     broadcast_axes=broadcast_axes,
                     access_guard_relations=guarded_loads,
+                    consumer_extensions=(
+                        projection.consumer_extensions
+                        if projection is not None else ()
+                    ),
                     conditional_effect_stores=(
                         projection.conditional_effect_stores
                         if projection is not None else ()
@@ -1344,6 +1376,8 @@ class ScalarLoweringRunner:
                         spec.j.boundary.result_relations
                     ),
                     "execution_evidence": dict(execution.metadata),
+                    "output_digest": output_digest(outputs),
+                    "output_binding_digest": output_binding_digest(outputs),
                 },
             )
         except (CPUBackendUnsupportedError, NotImplementedError) as exc:

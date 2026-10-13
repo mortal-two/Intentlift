@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one registered Triton, TileLang, or CUDA workload through full SCRC."""
+"""Run one registered Triton/TTIR workload through the shared SCRC lifecycle."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import threading
+import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,25 +16,9 @@ PYTHON_ROOT = ROOT / "python"
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
-from intentir.extraction.providers.provider import get_provider
-from intentir.verify.scrc_runner import MainStatus
-from intentir.verify.scrc_workload_run import (
-    WorkloadExecutionError,
-    classify_scrc_report,
-    execute_prepared_workload,
-    initialize_workload_evidence,
-    next_workload_run_dir,
-    save_workload_failure,
-    save_workload_execution,
-)
-from intentir.verify.workload_registry import (
-    frontend_dataset_harness_projection,
-    prepare_registered_scrc_workload,
-)
-from intentir.verify.workload_adapters import TRITON_WORKLOAD_ADAPTERS
-
-
 def _parser() -> argparse.ArgumentParser:
+    from intentir.verify.scrc_runner import MAX_LIFT_CALLS
+
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--case", help="registered real-workload case id")
@@ -53,7 +39,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lift-backend",
         choices=("responses", "miniswe", "codex"),
-        default="miniswe",
+        default="responses",
     )
     parser.add_argument(
         "--replay-backend",
@@ -64,6 +50,15 @@ def _parser() -> argparse.ArgumentParser:
         "--no-masked-j",
         action="store_true",
         help="diagnostic mode: skip the J-necessity masked Replay arm",
+    )
+    parser.add_argument(
+        "--max-lift-calls",
+        type=int,
+        default=MAX_LIFT_CALLS,
+        help=(
+            "maximum logical Lift invocations for this branch "
+            f"(1-{MAX_LIFT_CALLS})"
+        ),
     )
     parser.add_argument(
         "--run-root",
@@ -90,54 +85,97 @@ def _emit(payload: dict[str, object], *, json_mode: bool) -> None:
         print(f"{key}: {value}")
 
 
-def _listed_cases(dataset_root: str | None = None) -> dict[str, object]:
-    try:
-        projection = frontend_dataset_harness_projection(dataset_root=dataset_root)
-    except (OSError, ValueError) as exc:
-        projection = None
-        unavailable = [
-            {
-                "case_id": "dataset:TianchenIR-MultiFrontend",
-                "frontend": "native",
-                "status": "case_unavailable",
-                "reason": f"{type(exc).__name__}: {exc}",
-            }
-        ]
-    else:
-        unavailable = [item.to_json() for item in projection.diagnostics]
-    rows = {
-        **TRITON_WORKLOAD_ADAPTERS,
-        **(dict(projection.harnesses) if projection is not None else {}),
-    }
+def _listed_cases() -> dict[str, object]:
+    """List only cases executable by this shared Triton/TTIR entry point.
+
+    CUDA, CuTe, and TileLang remain discoverable through their own Dataset and
+    Gate runner paths.  Including them here would advertise cases that this
+    module deliberately refuses to execute and would recreate the old
+    cross-frontend routing ambiguity.
+    """
+
+    from intentir.verify.workload_manifest import build_workload_manifest
+
+    manifest = build_workload_manifest()
+    rows = {entry.case_id: entry for entry in manifest.entries}
     cases = [
-        {
-            "case_id": case_id,
-            "frontend": getattr(rows[case_id], "frontend", "triton"),
-        }
+        {"case_id": case_id, "frontend": "triton"}
         for case_id in sorted(rows)
     ]
     return {
+        "scope": "shared-scrc-triton-ttir",
         "count": len(cases),
         "cases": cases,
-        "native_unavailable_count": len(unavailable),
-        "native_unavailable": unavailable,
+        "native_frontends": {
+            "cuda": "CudaCompiler + CudaGate1Runner + native Gate2",
+            "cute": "CuteCompiler + CuteGate1Runner (independent CuTe path)",
+            "tilelang": "TileLangCompiler + TileLangGate1Runner + native Gate2",
+        },
+        "native_dataset_check": (
+            "run tools/frontend_dataset.py --validate separately; its cases "
+            "are not accepted by the shared Triton/TTIR runner"
+        ),
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
     if args.list:
-        _emit(_listed_cases(args.dataset_root), json_mode=args.json)
+        _emit(_listed_cases(), json_mode=args.json)
         return 0
 
+    from intentir.extraction.providers.provider import get_provider
+    from intentir.verify.scrc_runner import MAX_LIFT_CALLS, MainStatus
+    from intentir.verify.scrc_workload_run import (
+        WorkloadExecutionError,
+        classify_scrc_report,
+        execute_prepared_workload,
+        initialize_workload_evidence,
+        next_workload_run_dir,
+        safe_workload_failure_diagnostic,
+        safe_workload_failure_metadata,
+        save_workload_failure,
+        save_workload_execution,
+    )
+    from intentir.verify.workload_registry import prepare_registered_scrc_workload
+
     assert args.case is not None
+    if not 1 <= args.max_lift_calls <= MAX_LIFT_CALLS:
+        print(
+            f"--max-lift-calls must be in [1, {MAX_LIFT_CALLS}]",
+            file=sys.stderr,
+        )
+        return 2
     run_dir: Path | None = None
+    frontend_started = time.monotonic()
     try:
+        prepare_started = time.monotonic()
         prepared = prepare_registered_scrc_workload(
             args.case,
             dataset_root=args.dataset_root,
         )
+        if prepared.request.frontend != "triton":
+            raise ValueError(
+                "shared SCRC frontend accepts Triton/TTIR only; "
+                f"{prepared.request.frontend!r} must use its native frontend Gate runner"
+            )
+        prepare_elapsed_ms = (time.monotonic() - prepare_started) * 1000.0
+        provider_started = time.monotonic()
         provider = get_provider(args.provider, args.provider_config)
+        provider_elapsed_ms = (time.monotonic() - provider_started) * 1000.0
+        frontend_setup_metrics = {
+            "prepare_registered_workload": {
+                "elapsed_ms": prepare_elapsed_ms,
+                "runs": 1,
+                "status": "finished",
+            },
+            "provider_setup": {
+                "elapsed_ms": provider_elapsed_ms,
+                "runs": 1,
+                "status": "finished",
+            },
+        }
+
         run_dir = next_workload_run_dir(args.run_root, args.case)
         initialize_workload_evidence(
             run_dir,
@@ -147,19 +185,113 @@ def main(argv: list[str] | None = None) -> int:
             run_masked_j=not args.no_masked_j,
             lift_backend=args.lift_backend,
             replay_backend=args.replay_backend,
+            max_lift_calls=args.max_lift_calls,
         )
-        execution = execute_prepared_workload(
-            prepared,
-            provider=provider,
-            effort=args.effort,
-            run_masked_j=not args.no_masked_j,
-            lift_backend=args.lift_backend,
-            replay_backend=args.replay_backend,
+        stage_started: dict[tuple[str, int | None, int | None], float] = {}
+        progress_lock = threading.Lock()
+        progress_stop = threading.Event()
+        active_stage: dict[str, object] | None = None
+
+        def progress(
+            stage: str,
+            attempt: int | None,
+            formal_round: int | None,
+            status: str,
+        ) -> None:
+            nonlocal active_stage
+            key = (stage, attempt, formal_round)
+            now = time.monotonic()
+            with progress_lock:
+                if status == "started":
+                    stage_started[key] = now
+                    active_stage = {
+                        "stage": stage,
+                        "attempt": attempt,
+                        "formal_round": formal_round,
+                        "started": now,
+                    }
+                elapsed_ms = (now - stage_started.get(key, now)) * 1000.0
+                print(
+                    json.dumps(
+                        {
+                            "event": "scrc_progress",
+                            "case_id": args.case,
+                            "stage": stage,
+                            "attempt": attempt,
+                            "formal_round": formal_round,
+                            "status": status,
+                            "stage_elapsed_ms": round(elapsed_ms, 3),
+                        },
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if status != "started" and active_stage is not None:
+                    if (
+                        active_stage["stage"],
+                        active_stage["attempt"],
+                        active_stage["formal_round"],
+                    ) == key:
+                        active_stage = None
+
+        def emit_waiting_progress() -> None:
+            while not progress_stop.wait(15.0):
+                with progress_lock:
+                    if active_stage is None:
+                        continue
+                    elapsed_ms = (time.monotonic() - active_stage["started"]) * 1000.0
+                    print(
+                        json.dumps(
+                            {
+                                "event": "scrc_progress",
+                                "case_id": args.case,
+                                "stage": active_stage["stage"],
+                                "attempt": active_stage["attempt"],
+                                "formal_round": active_stage["formal_round"],
+                                "status": "waiting",
+                                "stage_elapsed_ms": round(elapsed_ms, 3),
+                            },
+                            sort_keys=True,
+                            ensure_ascii=False,
+                            allow_nan=False,
+                        ),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+
+        heartbeat = threading.Thread(
+            target=emit_waiting_progress,
+            name="scrc-progress-heartbeat",
+            daemon=True,
         )
+        heartbeat.start()
+        try:
+            execution = execute_prepared_workload(
+                prepared,
+                provider=provider,
+                effort=args.effort,
+                run_masked_j=not args.no_masked_j,
+                lift_backend=args.lift_backend,
+                replay_backend=args.replay_backend,
+                max_lift_calls=args.max_lift_calls,
+                progress_callback=progress,
+            )
+        finally:
+            progress_stop.set()
+            heartbeat.join(timeout=1.0)
         save_workload_execution(run_dir, prepared, execution)
     except Exception as exc:
+        runtime_error = exc if isinstance(exc, WorkloadExecutionError) else None
+        safe_diagnostic = safe_workload_failure_diagnostic(exc)
+        payload = {
+            "failure_class": "workload_infrastructure",
+            **safe_diagnostic,
+            "max_lift_calls": args.max_lift_calls,
+        }
         if run_dir is not None:
-            runtime_error = exc if isinstance(exc, WorkloadExecutionError) else None
             try:
                 save_workload_failure(
                     run_dir,
@@ -170,21 +302,35 @@ def main(argv: list[str] | None = None) -> int:
                     runtime=runtime_error,
                 )
             except Exception as save_error:  # pragma: no cover - defensive path
-                (run_dir / "failure_save_error.txt").write_text(
-                    f"{type(save_error).__name__}: {save_error}\n",
-                    encoding="utf-8",
-                )
-            payload = {
-                "failure_class": "workload_infrastructure",
-                "error": f"{type(exc).__name__}: {exc}",
-            }
+                payload["failure_save_error_class"] = type(save_error).__name__
+            payload["evidence_path"] = str(run_dir)
             if isinstance(exc, WorkloadExecutionError):
-                payload["evidence"] = exc.evidence
+                payload["evidence"] = safe_workload_failure_metadata(
+                    exc.evidence
+                )
+                payload["stage_metrics"] = safe_workload_failure_metadata(
+                    {"stage_metrics": exc.stage_metrics}
+                ).get("stage_metrics", {})
             (run_dir / "infrastructure_error.json").write_text(
                 json.dumps(payload, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-        print(f"SCRC frontend run failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        elif isinstance(exc, WorkloadExecutionError):
+            payload["evidence"] = safe_workload_failure_metadata(exc.evidence)
+            payload["stage_metrics"] = safe_workload_failure_metadata(
+                {"stage_metrics": exc.stage_metrics}
+            ).get("stage_metrics", {})
+        if args.json:
+            _emit(payload, json_mode=True)
+        else:
+            print(
+                "SCRC frontend run failed: "
+                + safe_diagnostic["rule_code"]
+                + " ("
+                + safe_diagnostic["cause_class"]
+                + ")",
+                file=sys.stderr,
+            )
         return 2
 
     classification = classify_scrc_report(execution.report)
@@ -196,6 +342,20 @@ def main(argv: list[str] | None = None) -> int:
         "evidence_path": str(run_dir),
         "lift_backend": args.lift_backend,
         "replay_backend": args.replay_backend,
+        "max_lift_calls": args.max_lift_calls,
+        "stage_metrics": {
+            **frontend_setup_metrics,
+            **dict(execution.report.stage_metrics),
+            "frontend_total": {
+                "elapsed_ms": (time.monotonic() - frontend_started) * 1000.0,
+                "runs": 1,
+                "status": (
+                    "passed"
+                    if execution.report.main_status is MainStatus.SCRC_CERTIFIED
+                    else "failed"
+                ),
+            },
+        },
     }
     _emit(payload, json_mode=args.json)
     return 0 if execution.report.main_status is MainStatus.SCRC_CERTIFIED else 1

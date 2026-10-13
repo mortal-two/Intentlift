@@ -21,7 +21,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Iterable, Literal, Mapping
 
 from .codegen import extract_python_module, validate_triton_module
 
@@ -36,6 +36,28 @@ __all__ = [
 
 _CACHE_SCHEMA_VERSION = 2
 _WORKER = Path(__file__).with_name("_triton_worker.py")
+_PROJECT_PYTHON_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _worker_environment(base: Mapping[str, str]) -> dict[str, str]:
+    """Give fresh Gate1 workers the same source import root as the parent.
+
+    The command-line tools intentionally import the active checkout by adding
+    ``<repo>/python`` to ``sys.path``.  A worker launched by filesystem path
+    does not inherit that Python-only mutation, so an otherwise healthy
+    source checkout could fail before Triton is imported with
+    ``ModuleNotFoundError: intentir``.  Preserve caller-provided paths while
+    making the active checkout the first deterministic lookup location.
+    """
+
+    environment = dict(base)
+    project_root = str(_PROJECT_PYTHON_ROOT)
+    existing = environment.get("PYTHONPATH", "")
+    entries = [project_root]
+    if existing:
+        entries.append(existing)
+    environment["PYTHONPATH"] = os.pathsep.join(entries)
+    return environment
 
 
 def _plain_mapping(value: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -57,6 +79,7 @@ class KernelSource:
     path: str | os.PathLike[str] | None = None
     code: str | None = None
     trusted: bool = False
+    import_roots: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.kind not in {"module_file", "code"}:
@@ -69,6 +92,23 @@ class KernelSource:
             object.__setattr__(self, "path", str(Path(self.path).expanduser()))
         elif not isinstance(self.code, str) or self.path is not None:
             raise ValueError("code source requires a Python string and forbids path")
+        roots = tuple(
+            str(Path(root).expanduser().resolve())
+            for root in self.import_roots
+        )
+        if len(roots) != len(set(roots)):
+            raise ValueError("KernelSource.import_roots must be unique")
+        if roots and not self.trusted:
+            raise ValueError(
+                "KernelSource.import_roots are allowed only for trusted Source"
+            )
+        missing = [root for root in roots if not Path(root).is_dir()]
+        if missing:
+            raise ValueError(
+                "KernelSource.import_roots must name existing directories: "
+                + ", ".join(missing)
+            )
+        object.__setattr__(self, "import_roots", roots)
 
     @classmethod
     def from_file(
@@ -77,14 +117,32 @@ class KernelSource:
         function: str,
         *,
         trusted: bool = False,
+        import_roots: Iterable[str | os.PathLike[str]] = (),
     ) -> "KernelSource":
-        return cls("module_file", function, path=path, trusted=trusted)
+        return cls(
+            "module_file",
+            function,
+            path=path,
+            trusted=trusted,
+            import_roots=tuple(str(item) for item in import_roots),
+        )
 
     @classmethod
     def from_code(
-        cls, code: str, function: str, *, trusted: bool = False
+        cls,
+        code: str,
+        function: str,
+        *,
+        trusted: bool = False,
+        import_roots: Iterable[str | os.PathLike[str]] = (),
     ) -> "KernelSource":
-        return cls("code", function, code=code, trusted=trusted)
+        return cls(
+            "code",
+            function,
+            code=code,
+            trusted=trusted,
+            import_roots=tuple(str(item) for item in import_roots),
+        )
 
     @classmethod
     def from_replay(
@@ -417,6 +475,7 @@ class TritonCompiler:
                 "code": code,
                 "filename": filename,
                 "function": source.function,
+                "import_roots": list(source.import_roots),
                 # This field participates in the evidence/cache identity even
                 # though the worker does not execute policy from it.  Source
                 # and replay must each compile once when their text happens to
@@ -453,8 +512,9 @@ class TritonCompiler:
                 json.dumps(request, sort_keys=True), encoding="utf-8"
             )
 
-            environment = dict(os.environ)
+            environment = _worker_environment(os.environ)
             environment.update(self.extra_env)
+            environment = _worker_environment(environment)
             # These flags are part of the Gate1 evidence contract.  Always
             # compile and retain the textual IR; the worker also reads asm
             # directly so Triton's filesystem dump is supporting evidence only.

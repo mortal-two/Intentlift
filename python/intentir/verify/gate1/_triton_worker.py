@@ -95,7 +95,17 @@ def _load_module(
     filename: str | None = None,
     trusted_source: bool = False,
     source_identity_code: str | None = None,
+    import_roots: tuple[str, ...] = (),
 ) -> ModuleType:
+    if trusted_source:
+        for raw_root in import_roots:
+            root = Path(raw_root).expanduser().resolve()
+            if not root.is_dir():
+                raise ValueError(
+                    f"trusted Source import root is not a directory: {root}"
+                )
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
     digest = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
     path: Path
     package_name: str | None = None
@@ -143,12 +153,15 @@ def _torch_dtype(torch: Any, name: str) -> Any:
     aliases = {
         "bool": torch.bool,
         "uint8": torch.uint8,
+        "uint16": torch.uint16,
+        "uint32": torch.uint32,
         "int8": torch.int8,
         "int16": torch.int16,
         "short": torch.int16,
         "int32": torch.int32,
         "int": torch.int32,
         "int64": torch.int64,
+        "index": torch.int64,
         "long": torch.int64,
         "float16": torch.float16,
         "half": torch.float16,
@@ -343,6 +356,7 @@ def _compile(request: Mapping[str, Any]) -> dict[str, Any]:
             ),
             trusted_source=source.get("trust_role") == "trusted_source",
             source_identity_code=source_code,
+            import_roots=tuple(source.get("import_roots", ())),
         )
         kernel = getattr(module, function_name, None)
         if kernel is None:
