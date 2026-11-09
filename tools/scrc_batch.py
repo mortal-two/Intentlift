@@ -8,10 +8,11 @@ from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 from queue import Empty, Queue
+import re
 import sys
 from threading import BoundedSemaphore, Lock, Thread
 from time import monotonic
-from typing import Any, Callable, TextIO
+from typing import Any, Callable, Mapping, TextIO
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_ROOT = ROOT / "python"
@@ -31,6 +32,7 @@ from intentir.verify.workload_manifest import build_workload_manifest
 
 
 SCRC_PROGRESS_PROTOCOL = "intentir.scrc.progress.v1"
+_SAFE_PROGRESS_TOKEN = re.compile(r"[A-Za-z0-9_.:-]{1,96}\Z")
 _PROGRESS_FIELDS = frozenset(
     {
         "protocol",
@@ -43,6 +45,7 @@ _PROGRESS_FIELDS = frozenset(
         "formal_round",
         "elapsed",
         "status",
+        "diagnostic",
     }
 )
 _PROGRESS_EVENTS = frozenset(
@@ -79,6 +82,82 @@ class _ProgressState:
     attempt: int | None
     formal_round: int | None
     status: str
+    diagnostic: Mapping[str, Any] | None = None
+
+
+_SAFE_PROGRESS_DIAGNOSTIC_KEYS = frozenset(
+    {
+        "phase",
+        "failure_class",
+        "candidate_present",
+        "candidate_check_started",
+        "typecheck_started",
+        "replay_started",
+        "gate1_started",
+        "gate2_started",
+    }
+)
+
+
+def _safe_progress_diagnostic(
+    details: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Keep live rejection diagnostics explicit and source-free.
+
+    The Lift runner already projects diagnostics before invoking this callback,
+    but the batch progress channel is an external boundary too.  Re-project
+    the bounded lifecycle fields here and flatten only rule/path pairs.  No
+    candidate, provider response, trajectory, or exception text is allowed to
+    cross this channel.
+    """
+
+    if not isinstance(details, Mapping):
+        return None
+    safe: dict[str, Any] = {}
+    for key in _SAFE_PROGRESS_DIAGNOSTIC_KEYS:
+        value = details.get(key)
+        if isinstance(value, bool) or (
+            key in {"phase", "failure_class"}
+            and isinstance(value, str)
+            and _SAFE_PROGRESS_TOKEN.fullmatch(value) is not None
+        ):
+            safe[key] = value
+
+    rules: list[dict[str, str]] = []
+    for source_key in ("candidate_check_feedback", "source_reconcile"):
+        source = details.get(source_key)
+        rows = source.get("diagnostics") if isinstance(source, Mapping) else None
+        if not isinstance(rows, list):
+            continue
+        for row in rows[:12]:
+            if not isinstance(row, Mapping):
+                continue
+            code = row.get("rule_code")
+            path = row.get("path")
+            if (
+                not isinstance(code, str)
+                or _SAFE_PROGRESS_TOKEN.fullmatch(code) is None
+            ):
+                continue
+            item = {"rule_code": code}
+            if (
+                isinstance(path, str)
+                and len(path) <= 128
+                and (
+                    path.startswith("j.")
+                    or path.startswith("pi.")
+                    or path in {"<candidate>", "<canonical-constructor>"}
+                )
+            ):
+                item["path"] = path
+            rules.append(item)
+            if len(rules) >= 12:
+                break
+        if len(rules) >= 12:
+            break
+    if rules:
+        safe["rules"] = rules
+    return safe or None
 
 
 class _LiveProgressEmitter:
@@ -177,6 +256,8 @@ class _LiveProgressEmitter:
             payload["attempt"] = state.attempt
         if state.formal_round is not None:
             payload["formal_round"] = state.formal_round
+        if state.diagnostic:
+            payload["diagnostic"] = dict(state.diagnostic)
         if not set(payload) <= _PROGRESS_FIELDS:
             raise AssertionError("progress payload escaped its closed field set")
         return payload
@@ -225,6 +306,7 @@ class _LiveProgressEmitter:
         attempt: int | None = None,
         formal_round: int | None = None,
         status: str,
+        details: Mapping[str, Any] | None = None,
     ) -> None:
         def update(now: float) -> tuple[dict[str, Any], ...]:
             started = self._case_starts.setdefault(case_id, now)
@@ -236,6 +318,7 @@ class _LiveProgressEmitter:
                 attempt,
                 formal_round,
                 status,
+                _safe_progress_diagnostic(details),
             )
             self._active[(case_id, branch_id)] = state
             return (
@@ -253,7 +336,9 @@ class _LiveProgressEmitter:
         case_id: str,
         ordinal: int,
         branch_id: int,
-    ) -> Callable[[str, int | None, int | None, str], None] | None:
+    ) -> Callable[
+        [str, int | None, int | None, str, dict[str, Any] | None], None
+    ] | None:
         if not self.enabled:
             return None
 
@@ -262,6 +347,7 @@ class _LiveProgressEmitter:
             attempt: int | None,
             formal_round: int | None,
             status: str,
+            details: dict[str, Any] | None = None,
         ) -> None:
             self.stage_transition(
                 case_id,
@@ -271,6 +357,7 @@ class _LiveProgressEmitter:
                 attempt=attempt,
                 formal_round=formal_round,
                 status=status,
+                details=details,
             )
 
         return observe
@@ -493,9 +580,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--lift-backend",
-        choices=("responses", "miniswe", "codex"),
-        default="responses",
-        help="candidate Lift implementation; independent from Replay backend",
+        choices=("miniswe",),
+        default="miniswe",
+        help="MCP Lift Agent; the only formal J authoring backend",
     )
     parser.add_argument(
         "--lift-workflow",
@@ -599,12 +686,7 @@ def main(argv: list[str] | None = None) -> int:
     argument_vector = list(sys.argv[1:] if argv is None else argv)
     args = _parser().parse_args(argument_vector)
     if args.pre_replay_rejections is None:
-        args.pre_replay_rejections = (
-            0
-            if args.lift_backend in {"miniswe", "codex"}
-            and args.lift_workflow == "single"
-            else args.max_lift_calls
-        )
+        args.pre_replay_rejections = 0
     concurrency_options = (
         "--candidates",
         "--case-workers",
@@ -761,9 +843,7 @@ def main(argv: list[str] | None = None) -> int:
             WorkloadExecution,
             classify_scrc_report,
             complete_prepared_workload_gate2,
-            gate2_exposes_logical_j_pass_implementation_failure,
             initialize_workload_evidence,
-            merge_current_replay_retry_execution,
             next_candidate_fanout_dir,
             next_workload_run_dir,
             save_candidate_fanout_report,
@@ -773,8 +853,9 @@ def main(argv: list[str] | None = None) -> int:
             scrc_gate1_search_diagnostic,
             scrc_report_diagnostic,
             search_prepared_workload_gate1,
-            retry_current_workload_gate1_replay,
             save_workload_gate1_search,
+            safe_workload_failure_diagnostic,
+            safe_workload_failure_metadata,
             WorkloadExecutionError,
         )
         from intentir.verify.scrc_runner import MainStatus, SCRCRunReport
@@ -819,6 +900,28 @@ def main(argv: list[str] | None = None) -> int:
             stream=sys.stderr,
         )
         progress.start()
+
+        def public_failure_diagnostic(exc):
+            """Return an actionable, source-free failure receipt."""
+
+            runtime = exc if isinstance(exc, WorkloadExecutionError) else None
+            diagnostic = safe_workload_failure_diagnostic(exc)
+            evidence = safe_workload_failure_metadata(
+                runtime.evidence if runtime is not None else None
+            )
+            details = {
+                "failure_class": diagnostic["rule_code"],
+                "cause_class": diagnostic["cause_class"],
+            }
+            if evidence:
+                details["evidence"] = evidence
+            return (
+                "failure_class="
+                + diagnostic["rule_code"]
+                + "; cause_class="
+                + diagnostic["cause_class"],
+                details,
+            )
 
         def complete_gate2_with_progress(
             entry,
@@ -866,52 +969,10 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     return current_execution
 
-            execution = execute_gate2_once(search, formal_round)
-            base_execution = execution
-            gate2 = execution.report.gate2
-            if not gate2_exposes_logical_j_pass_implementation_failure(gate2):
-                return execution
-
-            consumed_rounds = search.report.call_budget.formal_gate1_rounds
-            retry_searches = []
-            retry_executions = []
-            callback = progress.callback(
-                entry.case_id,
-                entry.ordinal,
-                branch_id,
-            )
-            next_round_offset = consumed_rounds
-            while next_round_offset < args.gate1_rounds:
-                retry_search = retry_current_workload_gate1_replay(
-                    prepared,
-                    search,
-                    formal_round_offset=next_round_offset,
-                    progress_callback=callback,
-                )
-                retry_searches.append(retry_search)
-                replay_rounds = (
-                    retry_search.report.call_budget.formal_gate1_rounds
-                )
-                if replay_rounds == 0:
-                    break
-                next_round_offset += replay_rounds
-                if not retry_search.report.closed:
-                    continue
-                execution = execute_gate2_once(
-                    retry_search,
-                    retry_search.report.accepted_attempt,
-                )
-                retry_executions.append(execution)
-                if not gate2_exposes_logical_j_pass_implementation_failure(
-                    execution.report.gate2
-                ):
-                    break
-
-            return merge_current_replay_retry_execution(
-                base_execution,
-                tuple(retry_searches),
-                tuple(retry_executions),
-            )
+            # Gate2 is the final numeric verdict.  A failed Gate2 is returned
+            # immediately with its safe three-leg summary; only Gate1 may
+            # request another lifecycle round.
+            return execute_gate2_once(search, formal_round)
 
         def execution_result(
             entry,
@@ -968,15 +1029,16 @@ def main(argv: list[str] | None = None) -> int:
                 evidence=evidence if isinstance(evidence, dict) else None,
                 runtime=runtime,
             )
-            cause = runtime.cause if runtime is not None else exc
+            diagnostic, details = public_failure_diagnostic(exc)
             return BatchCaseResult(
                 entry.case_id,
                 entry.ordinal,
                 BatchClassification.INFRASTRUCTURE_FAILED,
                 entry.representative_tier,
-                diagnostic=f"{type(cause).__name__}: {cause}",
+                diagnostic=diagnostic,
                 source_file=prepared.source_location,
                 evidence_path=evidence_path,
+                details=details,
             )
 
         def single_candidate_executor(entry, prepared):
@@ -1205,14 +1267,15 @@ def main(argv: list[str] | None = None) -> int:
                             ),
                             runtime=runtime,
                         )
-                        cause = runtime.cause if runtime is not None else exc
+                        diagnostic, failure_details = public_failure_diagnostic(exc)
                         return CandidateBranchOutcome(
                             branch_id,
                             candidate_entry.case_id,
                             candidate_entry.ordinal,
                             CandidateBranchStatus.INFRASTRUCTURE_FAILED,
-                            diagnostic=f"{type(cause).__name__}: {cause}",
+                            diagnostic=diagnostic,
                             evidence_path=evidence_path,
+                            details=failure_details,
                         )
 
                     search_details = {
@@ -1301,16 +1364,16 @@ def main(argv: list[str] | None = None) -> int:
                             ),
                             runtime=runtime,
                         )
-                        cause = runtime.cause if runtime is not None else exc
+                        diagnostic, failure_details = public_failure_diagnostic(exc)
                         return CandidateBranchOutcome(
                             branch_id,
                             candidate_entry.case_id,
                             candidate_entry.ordinal,
                             CandidateBranchStatus.INFRASTRUCTURE_FAILED,
-                            diagnostic=f"{type(cause).__name__}: {cause}",
+                            diagnostic=diagnostic,
                             evidence_path=evidence_path,
                             call_budget=search.report.call_budget.to_json(),
-                            details=search_details,
+                            details={**search_details, **failure_details},
                             runtime=(search, branch_dir),
                         )
 
@@ -1562,7 +1625,14 @@ def main(argv: list[str] | None = None) -> int:
                         entry.ordinal,
                         BatchClassification.HARNESS_INVALID,
                         entry.representative_tier,
-                        diagnostic=f"{type(exc).__name__}: {exc}",
+                        diagnostic=(
+                            "failure_class=harness_preparation; cause_class="
+                            + type(exc).__name__
+                        ),
+                        details={
+                            "failure_class": "harness_preparation",
+                            "cause_class": type(exc).__name__,
+                        },
                     )
                     return result
                 progress.stage_transition(

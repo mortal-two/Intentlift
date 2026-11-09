@@ -23,10 +23,14 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import re
 from typing import Any, Mapping, Sequence
+
+from intentir.ir.canonical_construction import build_scalar_owner_dag, build_tensor_owner_dag, owner_cast_kind, owner_float_bits
+from .compiler import EXTERNAL_MATH_FAILURE_RULES, validated_external_math_symbols
 
 __all__ = [
     "DotFingerprint",
@@ -59,8 +63,10 @@ _LOCATION_DEFINITION_RE = re.compile(
 )
 _LOCATION_REFERENCE_RE = re.compile(r"#loc[A-Za-z0-9_.$-]*")
 _LOCATION_COORDINATE_RE = re.compile(
-    r'"(?:\\.|[^"\\])*"\s*:\s*(?P<line>[0-9]+)\s*:\s*(?P<column>[0-9]+)'
+    r'(?P<file>"(?:\\.|[^"\\])*")\s*:\s*(?P<line>[0-9]+)\s*:\s*(?P<column>[0-9]+)'
 )
+_SourceCallPath = tuple[tuple[int, int], ...]
+_StatementSourceLocation = tuple[str, int, int, _SourceCallPath]
 _OP_RE = re.compile(
     r'(?P<quoted>"[A-Za-z_][A-Za-z0-9_.-]*")|'
     r"(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*)"
@@ -319,8 +325,11 @@ def _strip_locations(text: str) -> str:
 
     if not isinstance(text, str) or not text.strip():
         raise TTIRParseError("TTIR text is empty")
+    # Keep physical lines aligned with the input so parser-owned operations
+    # can carry their own provenance through SSA renaming and call expansion.
     text = "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith("#loc")
+        "" if line.lstrip().startswith("#loc") else line
+        for line in text.splitlines()
     )
     output: list[str] = []
     index = 0
@@ -329,7 +338,9 @@ def _strip_locations(text: str) -> str:
         boundary = index == 0 or not (text[index - 1].isalnum() or text[index - 1] in "_.$")
         if match and boundary:
             opening = match.end() - 1
-            index = _balanced_end(text, opening, "(", ")") + 1
+            end = _balanced_end(text, opening, "(", ")") + 1
+            output.append("\n" * text[index:end].count("\n"))
+            index = end
             continue
         output.append(text[index])
         index += 1
@@ -338,6 +349,9 @@ def _strip_locations(text: str) -> str:
 
 def _diagnostic_source_location_records(
     text: str,
+    *,
+    statement_locations: dict[int, _StatementSourceLocation] | None = None,
+    source_file: str | None = None,
 ) -> tuple[tuple[str, tuple[str, ...], int, int], ...]:
     """Return narrow raw-TTIR location records for provenance only.
 
@@ -364,54 +378,93 @@ def _diagnostic_source_location_records(
             continue
         definitions[match.group("name")] = text[start : end + 1]
 
-    def coordinates(location: str) -> tuple[int, int] | None:
-        pending = [location]
-        expanded: set[str] = set()
-        payloads: list[str] = []
-        while pending:
-            current = pending.pop()
-            if current in expanded:
-                continue
-            expanded.add(current)
-            payloads.append(current)
-            for reference in _LOCATION_REFERENCE_RE.findall(current):
-                definition = definitions.get(reference)
-                if definition is not None:
-                    pending.append(definition)
-        found = {
-            (int(match.group("line")), int(match.group("column")))
-            for payload in payloads
-            for match in _LOCATION_COORDINATE_RE.finditer(payload)
-        }
-        return next(iter(found)) if len(found) == 1 else None
+    def location_tree(location: str, seen: frozenset[str] = frozenset()) -> tuple[str, int, int, tuple[tuple[str, int, int], ...]] | None:
+        current = location.strip()
+        if current in seen:
+            return None
+        seen = seen | {current}
+        if _LOCATION_REFERENCE_RE.fullmatch(current):
+            definition = definitions.get(current)
+            return location_tree(definition, seen) if definition is not None else None
+        if current.startswith("loc(") and _balanced_end(current, 3, "(", ")") == len(current) - 1:
+            return location_tree(current[4:-1], seen)
+        match = _LOCATION_COORDINATE_RE.fullmatch(current)
+        if match is not None:
+            return json.loads(match["file"]), int(match["line"]), int(match["column"]), ()
+        if current.startswith("callsite(") and current.endswith(")"):
+            payload = current[9:-1]
+            depth = 0
+            quoted = False
+            escaped = False
+            for index, character in enumerate(payload):
+                if quoted:
+                    if escaped:
+                        escaped = False
+                    elif character == "\\":
+                        escaped = True
+                    elif character == '"':
+                        quoted = False
+                    continue
+                if character == '"':
+                    quoted = True
+                elif character in "([<":
+                    depth += 1
+                elif character in ")]>":
+                    depth -= 1
+                elif depth == 0 and payload.startswith(" at ", index):
+                    callee = location_tree(payload[:index], seen)
+                    caller = location_tree(payload[index + 4:], seen)
+                    if callee is None or caller is None:
+                        return None
+                    return (*callee[:3], (*caller[3], caller[:3], *callee[3]))
+            return None
+        named = re.fullmatch(r'"(?:\\.|[^"\\])*"\s*\((.*)\)', current, re.S)
+        return location_tree(named[1], seen) if named is not None else None
+
+    def coordinates(location: str) -> tuple[int, int, _SourceCallPath] | None:
+        try:
+            resolved = location_tree(location)
+        except (ValueError, TTIRParseError, RecursionError):
+            return None
+        if resolved is None:
+            return None
+        filename, line, column, frames = resolved
+        if source_file is not None and (filename != source_file or any(frame[0] != source_file for frame in frames)):
+            return None
+        return line, column, tuple((frame[1], frame[2]) for frame in frames)
 
     records: list[tuple[str, tuple[str, ...], int, int]] = []
     active_name: str | None = None
     active_results: tuple[str, ...] = ()
     active_text = ""
     recorded = False
+    active_line = 0
     # A direct operation can span lines, and its location may be followed by
     # a type or attribute suffix.  The former implementation required
     # ``loc(...)`` to be the final character and then chose the last token
     # before it as the operation.  That confuses ordinary typed TTIR with
     # location definitions/attributes and silently drops valid provenance.
     # Track only the operation head of the current direct statement instead.
-    for raw_line in text.splitlines():
+    for physical_line, raw_line in enumerate(text.splitlines(), 1):
         stripped = raw_line.lstrip()
         if stripped.startswith("#loc"):
             continue
         head = _operation_head(raw_line)
         if head is not None:
             active_results, active_name, _tail, _quoted = head
+            active_line = physical_line
             active_text = raw_line
             recorded = False
+        elif stripped.startswith(("}", "^", "tt.func", "module")):
+            active_name = None
+            continue
         elif active_name is not None and not recorded:
             active_text = (active_text + "\n" + raw_line)[-16384:]
         else:
             continue
         if recorded or active_name is None:
             continue
-        candidates: list[tuple[int, int]] = []
+        candidates: list[tuple[int, int, _SourceCallPath]] = []
         incomplete = False
         for location_match in _LOC_START_RE.finditer(active_text):
             opening = active_text.find(
@@ -430,10 +483,12 @@ def _diagnostic_source_location_records(
                 candidates.append(coordinate)
         if incomplete or len(set(candidates)) != 1:
             continue
-        line, column = candidates[0]
+        line, column, call_path = candidates[0]
         if line <= 0 or column < 0:
             continue
         records.append((active_name, active_results, line, column))
+        if statement_locations is not None:
+            statement_locations[active_line] = (active_name, line, column, call_path)
         recorded = True
     return tuple(records)
 
@@ -645,6 +700,12 @@ class MemoryEffect:
     predicate: str | None = None
     other: str | None = None
     attributes: str = ""
+    # Compiler-local provenance for the Source-aware diagnostic transfer
+    # sidecar. It is excluded from equality and the public fingerprint so
+    # debug/call-expansion details cannot affect Gate1.
+    source_call_path: _SourceCallPath = field(
+        default=(), repr=False, compare=False
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -919,6 +980,7 @@ class TTIRFingerprint:
                 ],
                 ...,
             ],
+                _SourceCallPath,
         ],
         ...,
     ] = field(
@@ -937,14 +999,14 @@ class TTIRFingerprint:
         repr=False,
         compare=False,
     )
-    # One compiler-visible source coordinate for each direct memory operation,
-    # retained in compiler order together with its transfer kind and mask bit.
+    # One compiler-visible source coordinate and call path per memory operation,
+    # retained with its transfer kind and mask bit from the same parsed node.
     # This is a reject-only provenance sidecar: Source construction may bind a
     # lexical memory call only when its own exact coordinate has one compatible
     # row here.  It is excluded from equality, serialization, and digest just
     # like the other diagnostic sidecars.
     diagnostic_memory_source_locations: tuple[
-        tuple[str, bool, int, int], ...
+        tuple[str, bool, int, int, _SourceCallPath], ...
     ] = field(
         default=(),
         repr=False,
@@ -952,7 +1014,11 @@ class TTIRFingerprint:
     )
     # Exact compiler-local predicate use for each direct memory operation.
     # Rows are ``(kind, masked, access_line, access_column, predicate_op,
-    # predicate_line, predicate_column, predicate_is_i1)``.  A producer may
+    # predicate_line, predicate_column, predicate_is_i1, predicate_call_path,
+    # predicate_producer_id, access_call_path)``. The final two fields are
+    # compiler-local identities
+    # used only to prove that two memory accesses consume the same SSA value.
+    # The producer path must match the exact Source invocation. A producer may
     # be an exact direct SSA operand of the matched memory operation while
     # lacking its own compiler debug coordinate; in that case predicate_op
     # and predicate_is_i1 remain present but both predicate coordinates are
@@ -961,7 +1027,7 @@ class TTIRFingerprint:
     # edge.  This remains an internal reject-only sidecar and never changes
     # Gate1 membership.
     diagnostic_memory_predicate_evidence: tuple[
-        tuple[str, bool, int, int, str | None, int | None, int | None, bool], ...
+        tuple[str, bool, int, int, str | None, int | None, int | None, bool, _SourceCallPath | None, int | None, _SourceCallPath], ...
     ] = field(
         default=(),
         repr=False,
@@ -969,18 +1035,27 @@ class TTIRFingerprint:
     )
     # Exact compiler-local value edge for each direct memory operation.  Rows
     # are ``(kind, masked, access_line, access_column, owner_op, owner_line,
-    # owner_column, direct_edge)``.  For a load the owner is its sole direct
+    # owner_column, direct_edge, access_call_path)``.  For a load the owner is its sole direct
     # SSA user; for a store it is the direct producer of the stored value.  A
     # standalone owner location can be absent after lowering, but a direct
     # edge still belongs only to the already exact matched memory access.
     # This reject-only sidecar is excluded from equality, serialization, and
-    # digest.
+    # digest. The final access_call_path prevents two call-expanded memory
+    # events with the same line/column from being interchanged.
     diagnostic_memory_owner_evidence: tuple[
-        tuple[str, bool, int, int, str | None, int | None, int | None, bool], ...
+        tuple[str, bool, int, int, str | None, int | None, int | None, bool, _SourceCallPath], ...
     ] = field(
         default=(),
         repr=False,
         compare=False,
+    )
+    # Host-only, pre-normalization typed scalar producer DAGs. No raw Source,
+    # TTIR, coordinates, ABI names or DAGs enter serialization/Gate1 digest.
+    diagnostic_scalar_owner_graphs: tuple[Mapping[str, Any], ...] = field(
+        default=(), repr=False, compare=False,
+    )
+    diagnostic_tensor_owner_graphs: tuple[Mapping[str, Any], ...] = field(
+        default=(), repr=False, compare=False,
     )
 
     @property
@@ -1035,6 +1110,10 @@ class _Operation:
     structured_if_id: int | None = None
     structured_if_arm: str | None = None
     structured_if_result_type: str | None = None
+    # Host-only evidence bound while parsing this exact statement. Never
+    # included in local signatures, graph identities or Gate1 digests.
+    source_location: tuple[str, int, int] | None = field(default=None, repr=False, compare=False)
+    source_call_path: _SourceCallPath = field(default=(), repr=False, compare=False)
 
 
 @dataclass
@@ -1053,6 +1132,39 @@ class _FunctionParts:
     results: tuple[str, ...]
     body: str
     attributes: tuple[tuple[str, str], ...] = ()
+    source_locations: Mapping[int, _StatementSourceLocation] = field(default_factory=dict, repr=False, compare=False)
+
+
+def _owner_runtime_parameters(
+    function: _FunctionParts, interface: Mapping[str, Any] | None,
+    *, ttir: str,
+) -> tuple[str, ...] | None:
+    """Consume named compiler specialization slots, never infer lost scalars."""
+    if not isinstance(interface, Mapping):
+        return None
+    names, constexpr = interface.get("arg_names"), interface.get("constexpr_indices")
+    if (
+        not isinstance(names, list) or any(not isinstance(name, str) for name in names)
+        or len(set(names)) != len(names) or not isinstance(constexpr, list)
+        or any(type(index) is not int or not 0 <= index < len(names) for index in constexpr)
+        or len(set(constexpr)) != len(constexpr)
+        or interface.get("constexprs") != [names[index] for index in constexpr]
+    ):
+        return None
+    runtime = interface.get("compiled_arg_names")
+    specialized = interface.get("specialized_arg_names")
+    if (
+        interface.get("compiled_ttir_sha256") != hashlib.sha256(ttir.encode("utf-8")).hexdigest()
+        or not isinstance(runtime, list) or not isinstance(specialized, list)
+        or any(not isinstance(name, str) for name in (*runtime, *specialized))
+        or len(set(runtime)) != len(runtime) or len(set(specialized)) != len(specialized)
+        or set(runtime) & set(specialized) or set(runtime) | set(specialized) != set(names)
+        or runtime != [name for name in names if name not in specialized]
+        or not {names[index] for index in constexpr}.issubset(specialized)
+        or len(runtime) != len(function.arguments)
+    ):
+        return None
+    return tuple(runtime)
 
 
 def _diagnostic_iteration_bases(
@@ -1252,7 +1364,10 @@ def _symbol_value(token: str) -> str:
     return value
 
 
-def _parse_function_definition(text: str, match: re.Match[str]) -> _FunctionParts:
+def _parse_function_definition(
+    text: str, match: re.Match[str],
+    statement_locations: Mapping[int, _StatementSourceLocation] | None = None,
+) -> _FunctionParts:
     args_open = match.end() - 1
     args_close = _balanced_end(text, args_open, "(", ")")
     args_text = text[args_open + 1 : args_close]
@@ -1333,13 +1448,22 @@ def _parse_function_definition(text: str, match: re.Match[str]) -> _FunctionPart
         results=results,
         body=text[body_open + 1 : body_close],
         attributes=function_attributes,
+        source_locations={
+            line - text.count("\n", 0, body_open + 1): location
+            for line, location in (statement_locations or {}).items()
+            if text.count("\n", 0, body_open + 1) < line
+            <= text.count("\n", 0, body_close) + 1
+        },
     )
 
 
-def _parse_functions(text: str) -> dict[str, _FunctionParts]:
+def _parse_functions(
+    text: str,
+    statement_locations: Mapping[int, _StatementSourceLocation] | None = None,
+) -> dict[str, _FunctionParts]:
     functions: dict[str, _FunctionParts] = {}
     for match in _FUNCTION_RE.finditer(text):
-        function = _parse_function_definition(text, match)
+        function = _parse_function_definition(text, match, statement_locations)
         if function.name in functions:
             raise TTIRParseError(f"duplicate tt.func symbol @{function.name}")
         functions[function.name] = function
@@ -2102,10 +2226,37 @@ def _scalar_constant(tail: str) -> float | None:
         return None
 
 
+def _authorized_extern_rsqrt(operation: _Operation, symbols: frozenset[str]) -> str | None:
+    """Exact pure extern ABI, with library authority from this compile only."""
+    if operation.name != "tt.extern_elementwise" or len(operation.operands) != 1 or len(operation.result_names) != 1:
+        return None
+    match = re.fullmatch(
+        r"tt\.extern_elementwise %\{([^{}]*)\}:\(([^,(){}]+)\)->([^,(){}]+)",
+        operation.local_signature,
+    )
+    if match is None or match[2] != match[3]:
+        return None
+    attrs = _split_top_level(match[1])
+    expected = {'libname=""', 'libpath=""', 'pure=true'}
+    symbol_attrs = [item for item in attrs if item.startswith('symbol=')]
+    if len(attrs) != 4 or len(symbol_attrs) != 1 or set(attrs) - set(symbol_attrs) != expected:
+        return None
+    symbol = symbol_attrs[0].removeprefix('symbol=')
+    types = {'"__nv_rsqrtf"': "f32", '"__nv_rsqrt"': "f64"}
+    dtype = types.get(symbol)
+    if dtype is None or symbol[1:-1] not in symbols:
+        return None
+    if re.fullmatch(r"(?:" + dtype + r"|tensor<(?:[1-9][0-9]*x)+" + dtype + r">)", match[2]) is None:
+        return None
+    return match[2]
+
+
 def _bounded_normalize_operations(
     operations: list[_Operation],
     result_to_node: dict[str, int],
     terminal_forks: list[_TerminalFork],
+    external_math_symbols: frozenset[str] = frozenset(),
+    external_math_ftz: bool = False,
 ) -> tuple[list[_Operation], dict[str, int], list[_TerminalFork]]:
     """Apply the registered bounded rewrites after lexical SSA resolution.
 
@@ -2167,6 +2318,8 @@ def _bounded_normalize_operations(
         if symbol_match is None or signature_match is None:
             continue
         canonical = extern_unary_ops.get(symbol_match.group("symbol"))
+        if symbol_match.group("symbol") in {"__nv_rsqrtf", "__nv_rsqrt"} and _authorized_extern_rsqrt(operation, external_math_symbols) is None:
+            continue
         input_type = _normalize_space(signature_match.group("input"))
         result_type = _normalize_space(signature_match.group("result"))
         element_match = re.fullmatch(
@@ -2180,9 +2333,16 @@ def _bounded_normalize_operations(
             or element_match.group("dtype") != canonical[1]
         ):
             continue
+        # The reviewed f32 libdevice branch with nvvm-reflect-ftz=1 is a
+        # distinct semantic operation. Never normalize it to ordinary rsqrt.
+        is_ftz_rsqrt = (
+            symbol_match.group("symbol") == "__nv_rsqrtf" and external_math_ftz
+        )
         operation.name = canonical[0]
         operation.local_signature = _normalize_space(
-            f"{canonical[0]} % : {result_type}"
+            f"{operation.name} %"
+            + (" {rsqrt_ftz=true}" if is_ftz_rsqrt else "")
+            + f" : {result_type}"
         )
         operation.header_operand_count = 1
 
@@ -3445,7 +3605,17 @@ class TTIRParser:
         schedule: Mapping[str, Any] | None = None,
         representation_anchor_exemptions: frozenset[str] = frozenset(),
         runtime_values: Mapping[str, int | bool] | None = None,
+        external_math: Mapping[str, Any] | None = None,
+        external_math_source: str | None = None,
     ) -> TTIRFingerprint:
+        external_math_symbols = validated_external_math_symbols(
+            text if external_math_source is None else external_math_source, external_math,
+        )
+        statement_locations: dict[int, _StatementSourceLocation] = {}
+        source_location_records = _diagnostic_source_location_records(
+            text, statement_locations=statement_locations,
+            source_file=python_interface.get("compiled_source_file") if isinstance(python_interface, Mapping) else None,
+        )
         cleaned = _strip_locations(text)
         # Module type aliases are definitions, while proof-relevant use sites
         # carry only the alias spelling.  Ignoring the definition would let a
@@ -3460,19 +3630,50 @@ class TTIRParser:
                 "module-level type aliases are unsupported by Gate1 v7; "
                 "proof-relevant types must be self-contained"
             )
-        functions = _parse_functions(cleaned)
+        functions = _parse_functions(cleaned, statement_locations)
         function = next(
             item for item in functions.values() if item.visibility == "public"
         )
         operations, result_to_node, leaf_labels, terminal_forks = (
             self._expand_reachable_calls(function, functions)
         )
+        if external_math_symbols and external_math_source is not None and external_math_source != text:
+            # Only the host's established Gate1 normalization may rebind a
+            # receipt. Its raw extern ABI/attribute multiset must be intact;
+            # adding/changing a call cannot borrow a different compilation.
+            originals = _parse_functions(_strip_locations(external_math_source))
+            original_entry = next(item for item in originals.values() if item.visibility == "public")
+            original_operations, _results, _leaves, _forks = self._expand_reachable_calls(original_entry, originals)
+            def extern_signatures(items: Sequence[_Operation]) -> Counter[str]:
+                return Counter(item.local_signature for item in items if item.name == "tt.extern_elementwise")
+            if extern_signatures(operations) != extern_signatures(original_operations):
+                external_math_symbols = frozenset()
+        for operation in operations:
+            if operation.name != "tt.extern_elementwise" or re.search(
+                r'\bsymbol="__nv_rsqrtf?"', operation.local_signature,
+            ) is None:
+                continue
+            if _authorized_extern_rsqrt(operation, external_math_symbols) is None:
+                rule = external_math.get("rule_code") if isinstance(external_math, Mapping) else None
+                raise TTIRParseError(
+                    rule if isinstance(rule, str) and rule in EXTERNAL_MATH_FAILURE_RULES
+                    else "source_extern_rsqrt_authorization_unavailable"
+                )
+        owner_graphs = ()
+        tensor_owner_graphs = ()
+        if len(functions) == 1:
+            owner_graphs = self._scalar_owner_graphs(text, function, python_interface)
+        tensor_owner_graphs = self._tensor_owner_graphs(
+            text, function, python_interface, external_math_symbols,
+            external_math_ftz=bool(external_math_symbols) and external_math.get("ftz") is True,
+            expanded=(operations, result_to_node, terminal_forks),
+        )
         operations, result_to_node, terminal_forks = (
             _bounded_normalize_operations(
-                operations, result_to_node, terminal_forks
+                operations, result_to_node, terminal_forks, external_math_symbols,
+                external_math_ftz=external_math_symbols != frozenset() and external_math.get("ftz") is True,
             )
         )
-        source_location_records = _diagnostic_source_location_records(text)
         return self._fingerprint(
             function,
             operations,
@@ -3487,8 +3688,505 @@ class TTIRParser:
                 (operation, line, column)
                 for operation, _results, line, column in source_location_records
             ),
-            source_location_results=source_location_records,
+            scalar_owner_graphs=owner_graphs,
+            tensor_owner_graphs=tensor_owner_graphs,
         )
+
+    def _tensor_owner_graphs(
+        self, text: str, function: _FunctionParts,
+        python_interface: Mapping[str, Any] | None,
+        external_math_symbols: frozenset[str] = frozenset(),
+        external_math_ftz: bool = False,
+        expanded: tuple[list[_Operation], dict[str, int], list[_TerminalFork]] | None = None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Private typed edges for lane vectors and direct program-row addresses.
+
+        No logical shape, padding law or Source occurrence is invented here.
+        Runtime bounds and row/stride edges require a frozen host-launch
+        contract at the Source ledger before they can authorize a receipt.
+        """
+        names = _owner_runtime_parameters(function, python_interface, ttir=text)
+        if names is None:
+            return ()
+        if expanded is None:
+            raw, result_to_node, _leaves, fork = self._parse_operations(function)
+        else:
+            raw, result_to_node, forks = expanded
+            fork = forks or None
+        nodes = {op.node_id: op for op in raw}
+        # Calls have already been checked for exact argument/result types and
+        # independently renamed SSA values. Do not reject unrelated stores
+        # merely because another dependency slice contains structured control.
+        # Each memory event and producer below must still be outside a region;
+        # only the explicitly checked reduction combiner may enter one.
+        if fork is not None:
+            return ()
+        arguments = {name: (index, dtype) for index, (name, dtype, _attrs) in enumerate(function.arguments)}
+        arithmetic = {"arith.addf": "add", "arith.subf": "sub", "arith.mulf": "mul", "arith.divf": "div", "arith.negf": "neg"}
+
+        def producer(value: str) -> _Operation:
+            op = nodes.get(result_to_node.get(value))
+            if op is None or len(op.result_names) != 1 or len(op.result_types) != 1:
+                raise ValueError("source_owner_producer_unsupported")
+            return op
+
+        def value_type(value: str) -> str:
+            typ = arguments[value][1] if value in arguments else producer(value).result_types[0]
+            if not isinstance(typ, str):
+                raise ValueError("source_owner_type_unsupported")
+            return typ
+
+        def typed(typ: str) -> tuple[str, tuple[int, ...]]:
+            tensor = _ranked_tensor_contract(typ)
+            if tensor is None:
+                return typ, ()
+            shape, dtype, _encoding = tensor
+            if any(not dimension.isdigit() or int(dimension) <= 0 for dimension in shape):
+                raise ValueError("source_owner_dynamic_tile_unsupported")
+            return dtype, tuple(int(dimension) for dimension in shape)
+
+        def bare(op: _Operation, suffix: str) -> None:
+            if op.local_signature != _normalize_space(op.name + " " + ", ".join("%" for _ in op.operands) + " : " + suffix):
+                raise ValueError("source_owner_attributes_unsupported")
+
+        def constant(value: str) -> tuple[str, tuple[int, ...], str]:
+            op = producer(value)
+            dtype, shape = typed(value_type(value))
+            if op.name == "tt.splat" and len(op.operands) == 1:
+                bare(op, value_type(op.operands[0]) + " -> " + value_type(value))
+                source_dtype, source_shape, bits = constant(op.operands[0])
+                if source_shape or source_dtype != dtype:
+                    raise ValueError("source_owner_splat_type_mismatch")
+                return dtype, shape, bits
+            if op.name != "arith.constant" or op.operands or dtype not in {"f32", "f64"}:
+                raise ValueError("source_owner_literal_unsupported")
+            literal = r"([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)"
+            match = re.fullmatch(r"arith\.constant " + ("dense<" + literal + ">" if shape else literal) + ":" + re.escape(value_type(value)), op.local_signature)
+            if match is not None:
+                number = float(match[1])
+                if Decimal(match[1]) != Decimal.from_float(number):
+                    raise ValueError("source_owner_literal_inexact")
+                return dtype, shape, owner_float_bits(number, dtype)
+            hex_match = re.fullmatch(
+                r"arith\.constant dense<0x([0-9A-Fa-f]+)>:" + re.escape(value_type(value)),
+                op.local_signature,
+            )
+            if hex_match is None:
+                raise ValueError("source_owner_literal_unsupported")
+            expected_digits = 8 if dtype == "f32" else 16
+            bits = hex_match[1].lower()
+            if len(bits) != expected_digits:
+                raise ValueError("source_owner_literal_unsupported")
+            return dtype, shape, bits
+
+        def integer(value: str) -> int:
+            op = producer(value)
+            dtype, _shape = typed(value_type(value))
+            if dtype not in {"i32", "i64"}:
+                raise ValueError("source_owner_coordinate_type_unsupported")
+            if op.name == "tt.splat" and len(op.operands) == 1:
+                bare(op, value_type(op.operands[0]) + " -> " + value_type(value))
+                if typed(value_type(op.operands[0])) != (dtype, ()):
+                    raise ValueError("source_owner_coordinate_type_mismatch")
+                return integer(op.operands[0])
+            match = re.fullmatch(r"arith\.constant (?:dense<(-?[0-9]+)>|(-?[0-9]+)):" + re.escape(value_type(value)), op.local_signature)
+            if op.name != "arith.constant" or op.operands or match is None:
+                raise ValueError("source_owner_coordinate_not_constant")
+            number = int(match[1] if match[1] is not None else match[2])
+            if not -(2 ** (int(dtype[1:]) - 1)) <= number < 2 ** (int(dtype[1:]) - 1):
+                raise ValueError("source_owner_coordinate_overflow")
+            return number
+
+        def lane(value: str) -> int:
+            op = producer(value)
+            dtype, shape = typed(value_type(value))
+            if op.name != "tt.make_range" or op.operands or dtype != "i32" or len(shape) != 1 or shape[0] >= 2 ** 31:
+                raise ValueError("source_owner_coordinate_not_full_range")
+            attributes = (f"{{end = {shape[0]} : i32, start = 0 : i32}}", f"{{start = 0 : i32, end = {shape[0]} : i32}}")
+            if op.local_signature not in {_normalize_space("tt.make_range " + attrs + " : " + value_type(value)) for attrs in attributes}:
+                raise ValueError("source_owner_coordinate_not_full_range")
+            return shape[0]
+
+        def row_offset(value: str) -> tuple[int, int, str]:
+            op = producer(value)
+            if op.name != "arith.muli" or len(op.operands) != 2 or value_type(value) not in {"i32", "i64"}:
+                raise ValueError("source_owner_row_offset_unproved")
+            bare(op, value_type(value))
+            matches = []
+            for pid, stride in (op.operands, tuple(reversed(op.operands))):
+                stride_argument = stride
+                if stride in arguments:
+                    argument_dtype = arguments[stride][1]
+                    if argument_dtype == "i64":
+                        stride_mode = "direct_i64"
+                    elif argument_dtype == "i32" and value_type(value) == "i32":
+                        stride_mode = "direct_i32"
+                    else:
+                        continue
+                else:
+                    narrowed = producer(stride)
+                    if narrowed.name != "arith.extsi" or len(narrowed.operands) != 1 or value_type(stride) != "i64" or value_type(narrowed.operands[0]) != "i32":
+                        continue
+                    bare(narrowed, "i32 to i64")
+                    stride_argument = narrowed.operands[0]
+                    stride_mode = "signed_i32_extended"
+                if stride_argument not in arguments or arguments[stride_argument][1] != ("i32" if stride_mode in {"direct_i32", "signed_i32_extended"} else "i64"):
+                    continue
+                extended = producer(pid)
+                if stride_mode in {"direct_i64", "signed_i32_extended"}:
+                    if (
+                        extended.name != "arith.extsi"
+                        or len(extended.operands) != 1
+                        or value_type(pid) != "i64"
+                        or value_type(extended.operands[0]) != "i32"
+                    ):
+                        continue
+                    bare(extended, "i32 to i64")
+                    program = producer(extended.operands[0])
+                else:
+                    # Triton may keep both program-id and stride arithmetic in
+                    # i32 when the host ABI value is source-level i64.  This
+                    # is a distinct compiler ABI mode, not an i64 valuation
+                    # inferred from the current launch.  Preserve the mode so
+                    # the Source owner can require the host launch contract's
+                    # independent stride/range proof below.
+                    if value_type(pid) != "i32":
+                        continue
+                    program = producer(pid)
+                    if value_type(value) != "i32":
+                        continue
+                    stride_mode = "direct_i32"
+                match = re.fullmatch(r"tt\.get_program_id ([xyz]):i32", program.local_signature)
+                if program.name == "tt.get_program_id" and not program.operands and match is not None:
+                    matches.append(("xyz".index(match[1]), arguments[stride_argument][0], stride_mode))
+            if len(matches) != 1:
+                raise ValueError("source_owner_row_stride_unproved")
+            return matches[0]
+
+        def pointer(value: str) -> tuple[int, str | int, str | None, tuple[int, int, str] | None]:
+            if value in arguments:
+                position, typ = arguments[value]
+                if _pointer_dtype(typ) not in {"f32", "f64"}:
+                    raise ValueError("source_owner_pointer_type_unsupported")
+                return position, 0, None, None
+            op = producer(value)
+            if op.name == "tt.splat" and len(op.operands) == 1:
+                bare(op, value_type(op.operands[0]) + " -> " + value_type(value))
+                position, offset, coordinate, row = pointer(op.operands[0])
+                if offset != 0 or coordinate is not None:
+                    raise ValueError("source_owner_pointer_unsupported")
+                return position, 0, None, row
+            if op.name != "tt.addptr" or len(op.operands) != 2:
+                raise ValueError("source_owner_pointer_unsupported")
+            bare(op, ", ".join(value_type(operand) for operand in op.operands))
+            position, base, coordinate, row = pointer(op.operands[0])
+            if base != 0 or coordinate is not None:
+                raise ValueError("source_owner_pointer_offset_unsupported")
+            if row is None:
+                try:
+                    return position, 0, None, row_offset(op.operands[1])
+                except ValueError:
+                    pass
+            try:
+                lane(op.operands[1])
+                return position, "axis0", op.operands[1], row
+            except ValueError:
+                return position, integer(op.operands[1]), None, row
+
+        def mask_contract(mask_value: str, lane_value: str | None, shape: tuple[int, ...]) -> tuple[str, int, Any]:
+            if lane_value is None:
+                raise ValueError("source_owner_scalar_mask_unproved")
+            mask = producer(mask_value)
+            if mask.name != "arith.cmpi" or mask.cmp_predicate not in {"slt", "ult"} or mask.cmp_flipped or len(mask.operands) != 2 or mask.operands[0] != lane_value or value_type(mask.operands[0]) != value_type(mask.operands[1]):
+                raise ValueError("source_owner_mask_unproved")
+            expected = "arith.cmpi " + mask.cmp_predicate + ", %, % : " + value_type(lane_value)
+            if mask.local_signature != _normalize_space(expected) or typed(value_type(mask_value)) != ("i1", shape):
+                raise ValueError("source_owner_mask_type_mismatch")
+            try:
+                bound: Any = integer(mask.operands[1])
+            except ValueError:
+                splat = producer(mask.operands[1])
+                if splat.name != "tt.splat" or len(splat.operands) != 1 or splat.operands[0] not in arguments or arguments[splat.operands[0]][1] != "i32":
+                    raise ValueError("source_owner_mask_bound_unproved")
+                bare(splat, "i32 -> " + value_type(mask.operands[1]))
+                bound = ("parameter", arguments[splat.operands[0]][0])
+            if len(shape) != 1 or (isinstance(bound, int) and not 0 < bound <= shape[0]):
+                raise ValueError("source_owner_mask_domain_unproved")
+            return ("lt", 0, bound)
+
+        def memory(op: _Operation) -> dict[str, Any]:
+            kind = "load" if op.name == "tt.load" else "store"
+            location = op.source_location
+            if location is None or location[0] != op.name:
+                raise ValueError("source_owner_memory_location_ambiguous")
+            if op.context or len(op.operands) not in ({1, 3} if kind == "load" else {2, 3}):
+                raise ValueError("source_owner_memory_form_unsupported")
+            bare(op, value_type(op.operands[0]))
+            transferred = op.result_names[0] if kind == "load" else op.operands[1]
+            if _loaded_value_type(value_type(op.operands[0])) != value_type(transferred):
+                raise ValueError("source_owner_memory_element_type_mismatch")
+            position, coordinate, lane_value, row = pointer(op.operands[0])
+            dtype = _pointer_dtype(function.arguments[position][1])
+            predicate, fill = None, None
+            if kind == "load":
+                load_dtype, physical_shape = typed(value_type(op.result_names[0]))
+                coordinate_shape_matches = (
+                    physical_shape == (lane(lane_value),) if lane_value is not None
+                    else physical_shape == () and type(coordinate) is int
+                )
+                if dtype != load_dtype or not coordinate_shape_matches:
+                    raise ValueError("source_owner_load_coordinate_shape_mismatch")
+                if len(op.operands) == 3:
+                    predicate = mask_contract(op.operands[1], lane_value, physical_shape)
+                    fill_dtype, fill_shape, fill = constant(op.operands[2])
+                    if (fill_dtype, fill_shape) != (dtype, physical_shape):
+                        raise ValueError("source_owner_fill_type_mismatch")
+            else:
+                physical_shape = (lane(lane_value),) if lane_value is not None else ()
+                if typed(value_type(op.operands[1])) != (dtype, physical_shape):
+                    raise ValueError("source_owner_store_slice_unsupported")
+                if len(op.operands) == 3:
+                    predicate = mask_contract(op.operands[2], lane_value, physical_shape)
+            # Keep the exact compiler producer identity in the private
+            # observation only.  It is never serialized into Gate1/J or sent
+            # to a provider; Source-aware admission uses it to ensure that a
+            # store authorization is tied to the same TTIR store/value edge
+            # that produced the owner DAG.
+            stored_value_producer_id = (
+                result_to_node.get(op.operands[1])
+                if kind == "store" and len(op.operands) >= 2
+                else None
+            )
+            stored_value_producer = (
+                nodes.get(stored_value_producer_id)
+                if stored_value_producer_id is not None
+                else None
+            )
+            return dict(line=location[1], column=location[2], call_path=op.source_call_path, kind=kind,
+                        pointer_position=position, coordinate=coordinate, dtype=dtype,
+                        row=row,
+                        physical_shape=physical_shape, predicate=predicate, fill=fill,
+                        memory_node_id=op.node_id,
+                        stored_value_producer_id=stored_value_producer_id,
+                        stored_value_producer_operation=(
+                            stored_value_producer.name
+                            if stored_value_producer is not None else None
+                        ),
+                        stored_value_type=(
+                            value_type(op.operands[1])
+                            if kind == "store" and len(op.operands) >= 2
+                            else None
+                        ))
+
+        def describe(value: str) -> tuple[str, str, Sequence[int], Any, Sequence[str]]:
+            if value in arguments:
+                position, dtype = arguments[value]
+                return "input", dtype, (), position, ()
+            op = producer(value)
+            dtype, shape = typed(value_type(value))
+            if op.context:
+                raise ValueError("source_owner_region_escape")
+            if op.name == "tt.load":
+                return "load", dtype, shape, memory(op), ()
+            if op.name == "arith.constant":
+                constant_dtype, constant_shape, bits = constant(value)
+                return "const", constant_dtype, constant_shape, bits, ()
+            if op.name == "tt.splat" and len(op.operands) == 1:
+                bare(op, value_type(op.operands[0]) + " -> " + value_type(value))
+                if typed(value_type(op.operands[0])) != (dtype, ()):
+                    raise ValueError("source_owner_splat_type_mismatch")
+                return "broadcast", dtype, shape, (), tuple(op.operands)
+            if op.name in {"tt.reshape", "tt.trans"} and len(op.operands) == 1:
+                source_type = value_type(op.operands[0])
+                source_dtype, source_shape = typed(source_type)
+                source_contract = _ranked_tensor_contract(source_type)
+                target_contract = _ranked_tensor_contract(value_type(value))
+                if source_dtype != dtype or source_contract is None or target_contract is None or source_contract[2] or target_contract[2]:
+                    raise ValueError("source_owner_transform_layout_unproved")
+                suffix = source_type + " -> " + value_type(value)
+                if op.name == "tt.reshape":
+                    allowed = {
+                        _normalize_space("tt.reshape % : " + suffix),
+                        _normalize_space("tt.reshape % {allow_reorder = false} : " + suffix),
+                    }
+                    if op.local_signature not in allowed:
+                        raise ValueError("source_owner_reshape_order_unproved")
+                    return "reshape", dtype, shape, None, tuple(op.operands)
+                match = re.search(r"order=array<i32:([0-9, ]+)>", op.local_signature)
+                if match is None:
+                    raise ValueError("source_owner_transpose_order_unproved")
+                order = tuple(int(axis.strip()) for axis in match[1].split(","))
+                expected = _normalize_space("tt.trans % {order = array<i32: " + ", ".join(str(axis) for axis in order) + ">} : " + suffix)
+                if op.local_signature != expected or sorted(order) != list(range(len(source_shape))):
+                    raise ValueError("source_owner_transpose_order_unproved")
+                return "transpose", dtype, shape, order, tuple(op.operands)
+            if op.name in {"arith.sitofp", "arith.extf", "arith.truncf"} and len(op.operands) == 1:
+                source_type = value_type(op.operands[0])
+                bare(op, source_type + " to " + value_type(value))
+                source_dtype, source_shape = typed(source_type)
+                kind = owner_cast_kind(source_dtype, dtype)
+                expected_op = {"signed_to_float_rne": "arith.sitofp", "float_extend": "arith.extf", "float_truncate_rne": "arith.truncf"}[kind]
+                if op.name != expected_op or source_shape != shape:
+                    raise ValueError("source_owner_cast_semantics_unproved")
+                return "cast", dtype, shape, kind, tuple(op.operands)
+            if op.name in {"math.exp", "math.rsqrt", "math.tanh"} and len(op.operands) == 1:
+                bare(op, value_type(value))
+                if value_type(op.operands[0]) != value_type(value):
+                    raise ValueError("source_owner_math_type_mismatch")
+                return op.name.split(".")[1], dtype, shape, None, tuple(op.operands)
+            if op.name == "tt.extern_elementwise":
+                external_type = _authorized_extern_rsqrt(op, external_math_symbols)
+                if external_type != value_type(value) or len(op.operands) != 1 or value_type(op.operands[0]) != external_type:
+                    raise ValueError("source_owner_extern_rsqrt_unproved")
+                return (
+                    "rsqrt_ftz" if dtype == "f32" and external_math_ftz else "rsqrt"
+                ), dtype, shape, None, tuple(op.operands)
+            if op.name in arithmetic:
+                bare(op, value_type(value))
+                if any(value_type(operand) != value_type(value) for operand in op.operands):
+                    raise ValueError("source_owner_arithmetic_type_mismatch")
+                return arithmetic[op.name], dtype, shape, None, tuple(op.operands)
+            if op.name == "tt.reduce":
+                if type(op.axis) is not int or len(op.operands) != 1 or len(op.region_block_args) != 2 or len(op.region_results) != 1:
+                    raise ValueError("source_owner_reduction_unsupported")
+                input_dtype, input_shape = typed(value_type(op.operands[0]))
+                if not 0 <= op.axis < len(input_shape) or shape != input_shape[:op.axis] + input_shape[op.axis + 1:]:
+                    raise ValueError("source_owner_reduction_axis_unproved")
+                combiner = producer(op.region_results[0])
+                nested = [child for child in raw if op.node_id in child.context]
+                if input_dtype != dtype or combiner.name not in {"arith.addf", "arith.mulf", "arith.maxnumf"} or tuple(combiner.operands) != tuple(op.region_block_args) or combiner.context != (op.node_id,) or combiner.result_types != (dtype,) or len(nested) != 2 or sum(child.name == "tt.reduce.return" for child in nested) != 1:
+                    raise ValueError("source_owner_combiner_dataflow_mismatch")
+                bare(combiner, dtype)
+                # Exact generic region header, including axis and both types.
+                expected = _normalize_space("tt.reduce axis=" + str(op.axis) + ":i32 :(" + value_type(op.operands[0]) + ")->(" + value_type(value) + ")")
+                if op.local_signature != expected:
+                    raise ValueError("source_owner_reduction_attributes_unsupported")
+                reduction = {
+                    "arith.addf": "sum",
+                    "arith.mulf": "prod",
+                    "arith.maxnumf": "max",
+                }[combiner.name]
+                return "reduce", dtype, shape, (op.axis, reduction), tuple(op.operands)
+            raise ValueError("source_owner_operation_unsupported")
+
+        proofs: list[Mapping[str, Any]] = []
+        for op in raw:
+            if op.name != "tt.store":
+                continue
+            try:
+                store = memory(op)
+                graph = build_tensor_owner_dag(op.operands[1], describe)
+                if not any(row[0] == "load" for row in graph):
+                    continue
+                root_op = graph[-1][0]
+                family = root_op if root_op in {"reduce", "cast", "reshape", "transpose"} else "map_unary" if root_op in {"neg", "exp", "tanh", "rsqrt", "rsqrt_ftz"} else "map_binary"
+                proofs.append(dict(store, parameters=tuple(names),
+                                   parameter_types=tuple(dtype for _name, dtype, _attrs in function.arguments),
+                                   graph=graph, family=family))
+            except (ValueError, TypeError, KeyError, RecursionError, InvalidOperation):
+                continue
+        return tuple(proofs)
+
+    def _scalar_owner_graphs(
+        self, text: str, function: _FunctionParts,
+        python_interface: Mapping[str, Any] | None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Prove direct store edges on the raw parser graph, before rewrites."""
+
+        names = _owner_runtime_parameters(function, python_interface, ttir=text)
+        if names is None:
+            return ()  # No ABI-position inference without the compiler receipt.
+        raw, results, _leaves, fork = self._parse_operations(function)
+        if fork is not None or any(op.context or op.name.startswith(("scf.", "cf.")) for op in raw):
+            return ()
+        arguments = {name: (index, dtype) for index, (name, dtype, _attrs) in enumerate(function.arguments)}
+        nodes = {op.node_id: op for op in raw}
+        arithmetic = {"arith.addf": "add", "arith.subf": "sub", "arith.mulf": "mul", "arith.divf": "div", "arith.negf": "neg"}
+
+        def describe(value: str) -> tuple[str, str, Any, Sequence[str]]:
+            if value in arguments:
+                index, dtype = arguments[value]
+                return "input", dtype, index, ()
+            op = nodes.get(results.get(value))
+            if op is None or len(op.result_names) != 1 or len(op.result_types) != 1:
+                raise ValueError("source_owner_producer_unsupported")
+            dtype = op.result_types[0]
+            if op.name == "arith.constant" and not op.operands:
+                literal = re.fullmatch(
+                    r"arith\.constant ([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?):(f32|f64)",
+                    op.local_signature,
+                )
+                if literal is None or literal[2] != dtype or op.constant_value is None:
+                    raise ValueError("source_owner_literal_unsupported")
+                # The observer's float cache is insufficient for exact f32
+                # decimal rounding. Admit only literals exactly represented
+                # there; do not authorize a double-rounded value.
+                try:
+                    if Decimal(literal[1]) != Decimal.from_float(op.constant_value):
+                        raise ValueError("source_owner_literal_inexact")
+                except InvalidOperation as exc:
+                    raise ValueError("source_owner_literal_unsupported") from exc
+                return "const", dtype, owner_float_bits(op.constant_value, dtype), ()
+            if op.name not in arithmetic:
+                raise ValueError("source_owner_operation_unsupported")
+            # Exact bare op syntax excludes fastmath and all unmodelled attrs.
+            expected = op.name + " " + ", ".join("%" for _ in op.operands) + " : " + dtype
+            if op.local_signature != _normalize_space(expected):
+                raise ValueError("source_owner_attributes_unsupported")
+            return arithmetic[op.name], dtype, None, tuple(op.operands)
+
+        proofs: list[Mapping[str, Any]] = []
+        for op in raw:
+            if op.name != "tt.store" or len(op.operands) not in {2, 3}:
+                continue
+            # A scalar output at its ABI base, with no inferred coordinates.
+            pointer = arguments.get(op.operands[0])
+            if pointer is None or _pointer_dtype(pointer[1]) not in {"f32", "f64"}:
+                continue
+            location = op.source_location
+            if location is None or location[0] != op.name:
+                continue
+            try:
+                graph = build_scalar_owner_dag(op.operands[1], describe)
+            except (ValueError, TypeError, KeyError, RecursionError):
+                continue
+            if graph[-1][0] not in {"add", "sub", "mul", "div", "neg"} or graph[-1][1] != _pointer_dtype(pointer[1]):
+                continue
+            stored_value_producer_id = results.get(op.operands[1])
+            stored_value_producer = (
+                nodes.get(stored_value_producer_id)
+                if stored_value_producer_id is not None
+                else None
+            )
+            if (
+                not isinstance(stored_value_producer_id, int)
+                or stored_value_producer is None
+                or not stored_value_producer.result_types
+                or len(stored_value_producer.result_types) != 1
+                or stored_value_producer.result_types[0] != graph[-1][1]
+            ):
+                # The scalar DAG is not enough by itself: the direct TTIR
+                # value edge must also be known before this proof can be
+                # consumed by Source-aware admission.
+                continue
+            _operation_name, line, column = location
+            proofs.append({
+                "line": line, "column": column, "masked": len(op.operands) == 3,
+                "call_path": op.source_call_path,
+                "kind": "store", "pointer_position": pointer[0],
+                "coordinate": 0, "physical_shape": (),
+                "predicate": None, "fill": None,
+                "dtype": _pointer_dtype(pointer[1]),
+                "memory_node_id": op.node_id,
+                "stored_value_producer_id": stored_value_producer_id,
+                "stored_value_producer_operation": stored_value_producer.name,
+                "stored_value_type": stored_value_producer.result_types[0],
+                "parameters": tuple(names),
+                "parameter_types": tuple(dtype for _name, dtype, _attrs in function.arguments),
+                "family": "map_unary" if graph[-1][0] == "neg" else "map_binary",
+                "graph": graph,
+            })
+        return tuple(proofs)
 
     def _parse_operations(
         self, function: _FunctionParts
@@ -3865,6 +4563,7 @@ class TTIRParser:
                 f":({','.join(declared_inputs)})->"
                 f"({','.join(declared_results)})"
             )
+            operation.result_types = declared_results
 
         def close_for_region(
             owner_id: int, closing_text: str, *, line_number: int
@@ -4478,6 +5177,8 @@ class TTIRParser:
             operation = _Operation(
                 node_id=len(operations),
                 name=name,
+                source_location=function.source_locations[line_number][:3] if line_number in function.source_locations else None,
+                source_call_path=function.source_locations[line_number][3] if line_number in function.source_locations else (),
                 result_names=qualified_results,
                 operands=list(operands),
                 local_signature=_local_signature(name, tail),
@@ -4794,6 +5495,7 @@ class TTIRParser:
             *,
             preserve_return: bool,
             inherited_structured_if: tuple[int, str] | None = None,
+            inherited_call_path: _SourceCallPath | None = (),
         ) -> tuple[str, ...]:
             nonlocal fork_serial
             if function.name in stack:
@@ -4898,6 +5600,11 @@ class TTIRParser:
                         (*stack, function.name),
                         preserve_return=False,
                         inherited_structured_if=mapped_structured_if,
+                        inherited_call_path=(
+                            (*inherited_call_path, *operation.source_call_path, operation.source_location[1:])
+                            if inherited_call_path is not None and operation.source_location is not None
+                            else None
+                        ),
                     )
                     if len(returned) != len(operation.result_names):
                         raise TTIRParseError(
@@ -4938,6 +5645,8 @@ class TTIRParser:
                 clone = _Operation(
                     node_id=len(expanded),
                     name=operation.name,
+                    source_location=operation.source_location if inherited_call_path is not None else None,
+                    source_call_path=(*inherited_call_path, *operation.source_call_path) if inherited_call_path is not None else (),
                     result_names=new_results,
                     operands=mapped_operands,
                     local_signature=operation.local_signature,
@@ -5081,9 +5790,8 @@ class TTIRParser:
         representation_anchor_exemptions: frozenset[str],
         runtime_values: Mapping[str, int | bool] | None,
         source_locations: tuple[tuple[str, int, int], ...],
-        source_location_results: tuple[
-            tuple[str, tuple[str, ...], int, int], ...
-        ],
+        scalar_owner_graphs: tuple[Mapping[str, Any], ...] = (),
+        tensor_owner_graphs: tuple[Mapping[str, Any], ...] = (),
     ) -> TTIRFingerprint:
         raw_argument_aliases = (
             python_interface.get("ttir_argument_aliases", {})
@@ -5130,116 +5838,27 @@ class TTIRParser:
                 return "update"
             return None
 
-        # A raw location list is useful only when its direct memory-operation
-        # slice can be proven to be the same compiler slice parsed below.  Do
-        # not use a partial zip, names from an expanded helper, or source
-        # order to fill a gap.  In any of those cases the sidecar stays empty
-        # and Source construction consequently cannot authorize that access.
-        raw_memory_locations = [
-            (kind, line, column)
-            for operation, line, column in source_locations
-            if (kind := source_memory_kind(operation)) is not None
-        ]
-        parsed_memory_operations = [
-            operation
+        # Provenance travels with each parser-owned operation, including after
+        # scoped SSA renaming and reachable-call expansion. Pairing two lists
+        # by operation family or order is not an identity proof.
+        operation_source_locations = {
+            operation.node_id: operation.source_location
             for operation in operations
-            if source_memory_kind(operation.name) is not None
-        ]
-        diagnostic_memory_source_locations: tuple[
-            tuple[str, bool, int, int], ...
-        ] = ()
-        operation_source_locations: dict[int, tuple[str, int, int]] = {}
-        # Compiler SSA result spellings are internal, current-compilation
-        # evidence only.  Use them solely to attach a parsed operation to its
-        # own raw debug coordinate.  Duplicate results or a family mismatch
-        # are not resolved by a sequence/ordinal fallback.
-        raw_locations_by_result: dict[str, list[tuple[str, int, int]]] = {}
-        for raw_operation, raw_results, line, column in source_location_results:
-            if (
-                not isinstance(raw_operation, str)
-                or not isinstance(raw_results, tuple)
-                or not all(isinstance(result, str) for result in raw_results)
-                or isinstance(line, bool)
-                or not isinstance(line, int)
-                or line <= 0
-                or isinstance(column, bool)
-                or not isinstance(column, int)
-                or column < 0
-            ):
-                continue
-            for raw_result in raw_results:
-                raw_locations_by_result.setdefault(raw_result, []).append(
-                    (raw_operation, line, column)
-                )
-        # The general source-location sidecar is deliberately conservative:
-        # exact current-compiler result identity is eligible for a predicate
-        # producer bridge. A helper expansion, fused operation, or duplicate
-        # raw result leaves that operation unlocated instead of pairing
-        # repeated operations by position.
-        if (
-            len(source_locations) == len(operations)
-            and all(
-                raw_operation == parsed.name
-                for (raw_operation, _line, _column), parsed in zip(
-                    source_locations, operations, strict=True
-                )
+            if operation.source_location is not None
+            and operation.source_location[0] == operation.name
+        }
+        diagnostic_memory_source_locations = tuple(
+            (
+                kind,
+                operation.header_operand_count >= (2 if kind == "load" else 3),
+                location[1],
+                location[2],
+                operation.source_call_path,
             )
-        ):
-            operation_source_locations = {
-                parsed.node_id: (raw_operation, line, column)
-                for (raw_operation, line, column), parsed in zip(
-                    source_locations, operations, strict=True
-                )
-            }
-        for parsed in operations:
-            if parsed.node_id in operation_source_locations:
-                continue
-            if len(parsed.result_names) != 1:
-                continue
-            matches = raw_locations_by_result.get(parsed.result_names[0], ())
-            if len(matches) != 1:
-                continue
-            raw_operation, line, column = matches[0]
-            if raw_operation != parsed.name:
-                continue
-            operation_source_locations[parsed.node_id] = (
-                raw_operation,
-                line,
-                column,
-            )
-        memory_operation_locations: dict[int, tuple[str, int, int]] = {}
-        if (
-            len(raw_memory_locations) == len(parsed_memory_operations)
-            and all(
-                raw_kind == source_memory_kind(parsed.name)
-                for (raw_kind, _line, _column), parsed in zip(
-                    raw_memory_locations, parsed_memory_operations, strict=True
-                )
-            )
-        ):
-            memory_operation_locations = {
-                parsed.node_id: (parsed.name, line, column)
-                for (_kind, line, column), parsed in zip(
-                    raw_memory_locations, parsed_memory_operations, strict=True
-                )
-            }
-            diagnostic_memory_source_locations = tuple(
-                (
-                    kind,
-                    (
-                        parsed.header_operand_count >= 2
-                        if kind == "load"
-                        else parsed.header_operand_count >= 3
-                        if kind == "store"
-                        else parsed.header_operand_count >= 3
-                    ),
-                    line,
-                    column,
-                )
-                for (kind, line, column), parsed in zip(
-                    raw_memory_locations, parsed_memory_operations, strict=True
-                )
-            )
+            for operation in operations
+            if (kind := source_memory_kind(operation.name)) is not None
+            and (location := operation_source_locations.get(operation.node_id)) is not None
+        )
         value_if_ids = {
             operation.node_id
             for operation in operations
@@ -6487,10 +7106,10 @@ class TTIRParser:
         memory_effects: list[MemoryEffect] = []
         diagnostic_memory_transfers: list[MemoryEffect] = []
         diagnostic_memory_predicate_evidence: list[
-            tuple[str, bool, int, int, str | None, int | None, int | None, bool]
+            tuple[str, bool, int, int, str | None, int | None, int | None, bool, _SourceCallPath | None, int | None, _SourceCallPath]
         ] = []
         diagnostic_memory_owner_evidence: list[
-            tuple[str, bool, int, int, str | None, int | None, int | None, bool]
+            tuple[str, bool, int, int, str | None, int | None, int | None, bool, _SourceCallPath]
         ] = []
         effect_counts: Counter[str] = Counter()
 
@@ -6531,10 +7150,7 @@ class TTIRParser:
         ) -> None:
             """Emit an occurrence-aligned, fail-closed predicate receipt."""
 
-            access_location = (
-                operation_source_locations.get(operation.node_id)
-                or memory_operation_locations.get(operation.node_id)
-            )
+            access_location = operation_source_locations.get(operation.node_id)
             if access_location is None:
                 return
             _access_operation, access_line, access_column = access_location
@@ -6542,6 +7158,8 @@ class TTIRParser:
             predicate_line: int | None = None
             predicate_column: int | None = None
             predicate_is_i1 = False
+            predicate_call_path: _SourceCallPath | None = None
+            predicate_producer_id: int | None = None
             if masked and predicate_operand is not None:
                 if predicate_operand >= len(operation.operands):
                     return
@@ -6553,8 +7171,10 @@ class TTIRParser:
                 )
                 if producer is not None:
                     predicate_operation = producer.name
+                    predicate_producer_id = producer.node_id
                     if producer_location is not None:
                         _producer_operation, predicate_line, predicate_column = producer_location
+                        predicate_call_path = producer.source_call_path
                     # The producer's local signature normally describes its
                     # *input* operands (notably for comparisons), so it is not
                     # sound type evidence for the value feeding the memory
@@ -6581,6 +7201,9 @@ class TTIRParser:
                     predicate_line,
                     predicate_column,
                     predicate_is_i1,
+                    predicate_call_path,
+                    predicate_producer_id,
+                    operation.source_call_path,
                 )
             )
 
@@ -6592,10 +7215,7 @@ class TTIRParser:
         ) -> None:
             """Emit one exact direct value-edge receipt for a memory access."""
 
-            access_location = (
-                operation_source_locations.get(operation.node_id)
-                or memory_operation_locations.get(operation.node_id)
-            )
+            access_location = operation_source_locations.get(operation.node_id)
             if access_location is None:
                 return
             _access_operation, access_line, access_column = access_location
@@ -6627,6 +7247,7 @@ class TTIRParser:
                     owner_line,
                     owner_column,
                     owner is not None,
+                    operation.source_call_path,
                 )
             )
 
@@ -6643,7 +7264,8 @@ class TTIRParser:
                     else None
                 )
                 effect = MemoryEffect(
-                    "load", masked, predicate, other, operation.local_signature
+                    "load", masked, predicate, other, operation.local_signature,
+                    operation.source_call_path,
                 )
                 memory_effects.append(effect)
                 diagnostic_memory_transfers.append(effect)
@@ -6667,6 +7289,7 @@ class TTIRParser:
                     predicate,
                     direct_constant_ref(operation.operands[1]),
                     operation.local_signature,
+                    operation.source_call_path,
                 )
                 memory_effects.append(effect)
                 # A store value is not a load ``other=`` fill.  Keep the
@@ -6679,6 +7302,7 @@ class TTIRParser:
                         predicate,
                         None,
                         operation.local_signature,
+                        operation.source_call_path,
                     )
                 )
                 predicate_evidence(
@@ -7021,6 +7645,7 @@ class TTIRParser:
                     ],
                     ...,
                 ],
+                _SourceCallPath,
             ]
         ] = []
         for operation in operations:
@@ -7049,6 +7674,7 @@ class TTIRParser:
                     context,
                     pointer[2],
                     pointer[3],
+                    operation.source_call_path,
                 )
             )
 
@@ -7120,6 +7746,8 @@ class TTIRParser:
             diagnostic_memory_owner_evidence=tuple(
                 diagnostic_memory_owner_evidence
             ),
+            diagnostic_scalar_owner_graphs=scalar_owner_graphs,
+            diagnostic_tensor_owner_graphs=tensor_owner_graphs,
         )
 
     def _infer_access(
@@ -7336,6 +7964,8 @@ def parse_ttir(
     schedule: Mapping[str, Any] | None = None,
     representation_anchor_exemptions: frozenset[str] = frozenset(),
     runtime_values: Mapping[str, int | bool] | None = None,
+    external_math: Mapping[str, Any] | None = None,
+    external_math_source: str | None = None,
 ) -> TTIRFingerprint:
     """Parse TTIR and return its normalized Gate1 fingerprint."""
 
@@ -7345,6 +7975,8 @@ def parse_ttir(
         schedule=schedule,
         representation_anchor_exemptions=representation_anchor_exemptions,
         runtime_values=runtime_values,
+        external_math=external_math,
+        external_math_source=external_math_source,
     )
 
 
@@ -7395,6 +8027,8 @@ def fingerprint_ttir(
     schedule: Mapping[str, Any] | None = None,
     representation_anchor_exemptions: frozenset[str] = frozenset(),
     runtime_values: Mapping[str, int | bool] | None = None,
+    external_math: Mapping[str, Any] | None = None,
+    external_math_source: str | None = None,
 ) -> TTIRFingerprint:
     return parse_ttir(
         text,
@@ -7402,6 +8036,8 @@ def fingerprint_ttir(
         schedule=schedule,
         representation_anchor_exemptions=representation_anchor_exemptions,
         runtime_values=runtime_values,
+        external_math=external_math,
+        external_math_source=external_math_source,
     )
 
 

@@ -35,6 +35,7 @@ from intentir.ir.canonical_construction import (
     CANONICAL_C_WIRE_FIELDS,
     CANONICAL_J_WIRE_FIELDS,
     CanonicalHandleAllocator,
+    SOURCE_OWNER_TOKEN_PATTERN,
     canonical_archive_records,
     canonical_operation_records,
 )
@@ -1578,11 +1579,17 @@ class BoundaryAccess(StrictJSONMixin):
         ):
             if value is not None and (
                 not isinstance(value, str)
-                or re.fullmatch(r"so_[0-9a-f]{32}", value) is None
+                or re.fullmatch(
+                    SOURCE_OWNER_TOKEN_PATTERN
+                    if field_name == "semantic_owner_authorization"
+                    else r"so_[0-9a-f]{32}", value
+                ) is None
             ):
                 raise SchemaError(
                     f"BoundaryAccess.{field_name} must be an opaque Source authorization token"
                 )
+        if self.semantic_owner_authorization is not None and self.node_ref is None:
+            raise SchemaError("BoundaryAccess owner authorization requires its exact node_ref")
         if self.kind in {AccessKind.LOAD, AccessKind.STORE, AccessKind.UPDATE}:
             if self.index_expression is None:
                 raise SchemaError(

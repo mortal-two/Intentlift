@@ -176,6 +176,11 @@ def _section_catalog(schema: dict[str, Any]) -> None:
 def _authoring_brief(schema: dict[str, Any]) -> None:
     """Print one compact source-neutral navigation index, never a template."""
 
+    print(
+        "These sections describe the completed host artifact, not the Lift "
+        "submission. Author semantic rows from the mounted provider wire; "
+        "omit host-owned semantic_owner_authorization."
+    )
     _top(schema)
     _section_catalog(schema)
     _catalog(schema)

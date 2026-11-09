@@ -25,6 +25,10 @@ from intentir.ir.canonical_construction import (
     CanonicalHandleAllocator,
     SourceFacts,
     SourceTransferLedger,
+    SOURCE_OWNER_TOKEN_PATTERN,
+    validate_source_owner_binding,
+    project_host_launch_contract,
+    validate_host_launch_contract,
     canonical_authored_handle_declarations,
     canonical_boundary_records,
     canonical_operation_objects,
@@ -34,15 +38,24 @@ from intentir.ir.canonical_construction import (
     canonical_value_type_records as build_canonical_value_type_records,
     canonical_scope_records,
     canonical_artifact_envelope_error,
+    computed_guard_projection_supported,
+    is_canonical_ordinal,
     require_canonical_artifact_envelope,
 )
 from intentir.ir.dim_expr import validate_dimension_instantiation
 from intentir.ir.intent_op_contract import (
     CANONICAL_J_OPS,
     STRUCTURED_INTENT_OPS,
+    is_closed_boolean_dtype,
     validate_intent_op_structure,
 )
 from intentir.ir.value_dimension import validate_value_dimension_instantiation
+from intentir.ir.source_projection_contracts import (
+    matching_source_semantic_obligations,
+    provider_dimension_alias_map,
+    semantic_obligation_diagnostic,
+    validate_source_semantic_obligations,
+)
 from intentir.verify.gate1.model import (
     GATE1_ARTIFACT_MODEL_FIELDS,
     AliasSpec,
@@ -76,6 +89,7 @@ from .scrc_schema import (
     scrc_semantic_candidate_text_format,
     unique_access_guard_projection_axes,
 )
+from .direct_agent_context import build_direct_agent_mcp_snapshot
 
 
 SCRC_RELIFT_PROTOCOL = "llm_direct_pi_structured_source_aware_relift_v2"
@@ -238,10 +252,30 @@ class SCRCLiftRequest:
             raise TypeError("SCRC Lift request requires canonical construction")
         if self.construction.source_facts.digest != self.source_facts.digest:
             raise ValueError("SCRC Lift construction differs from SourceFacts")
+        if self.construction.source_facts.to_json() != self.source_facts.to_json():
+            raise ValueError("SCRC Lift construction is not the same SourceFacts authority")
         if not isinstance(self.source_text, str) or not self.source_text:
             raise ValueError("SCRC Lift request requires exact Source text")
         if not isinstance(self.source_compiler_view, Mapping):
             raise TypeError("SCRC Lift request requires the exact Source compiler view")
+        try:
+            canonicalized_view = SourceFacts.from_compiler_view(
+                self.source_compiler_view,
+                frontend=self.source_facts.frontend,
+                source_kind=self.source_facts.source_kind,
+                source_symbol=self.source_facts.source_symbol,
+                source_to_opaque=dict(self.source_facts.source_to_opaque),
+                source_digest=self.source_facts.source_digest,
+                source_slice_digest=self.source_facts.source_slice_digest,
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            raise ValueError(
+                "SCRC Lift request compiler view cannot be canonicalized"
+            ) from exc
+        if canonicalized_view.to_json() != self.source_facts.to_json():
+            raise ValueError(
+                "SCRC Lift request compiler view differs from SourceFacts authority"
+            )
         json.dumps(dict(self.source_compiler_view), sort_keys=True, allow_nan=False)
 
 
@@ -383,6 +417,7 @@ def _guidance_rows(
         return ()
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    row_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for item in value:
         if not isinstance(item, Mapping):
             if strict:
@@ -391,10 +426,39 @@ def _guidance_rows(
         row = dict(item)
         key = (str(row.get("rule_code", "")), str(row.get("path", "")))
         if key in seen:
+            existing = row_by_key[key]
+            def locator_items(raw: Any) -> list[Any]:
+                if isinstance(raw, (list, tuple)):
+                    return list(raw)
+                return [raw] if raw is not None else []
+
+            locators = safe_source_repair_locators(
+                [
+                    *locator_items(existing.get("repair_locators")),
+                    *locator_items(existing.get("repair_locator")),
+                    *locator_items(row.get("repair_locators")),
+                    *locator_items(row.get("repair_locator")),
+                ]
+            )
+            existing.pop("repair_locator", None)
+            if locators:
+                existing["repair_locators"] = locators
+            constraints = safe_expected_constraints(
+                [
+                    *(existing.get("expected_constraints", ())),
+                    *(row.get("expected_constraints", ())),
+                    *(existing.get("observed_refs_or_types", ())),
+                    *(row.get("observed_refs_or_types", ())),
+                ],
+                accept_unmarked=True,
+            )
+            if constraints:
+                existing["expected_constraints"] = constraints
             continue
         seen.add(key)
         json.dumps(row, sort_keys=True, allow_nan=False)
         rows.append(row)
+        row_by_key[key] = row
     return tuple(rows)
 
 
@@ -434,15 +498,14 @@ def _provider_guidance_projection(
     """
 
     def rule_path_projection(item: Mapping[str, Any]) -> dict[str, Any]:
-        projected: dict[str, Any] = {}
-        for key in ("source", "stage", "rule_code", "path", "status"):
-            value = item.get(key)
-            if key == "stage":
-                if isinstance(value, int) and not isinstance(value, bool):
-                    projected[key] = value
-            elif isinstance(value, str) and value:
-                projected[key] = value
-        return projected
+        # Guidance and diagnostics are the same host-owned reject-only
+        # evidence class.  Reusing the diagnostics projector prevents a
+        # second, permanently incomplete whitelist from silently dropping
+        # safe typed relations (for example expected shape/dtype) during
+        # relift.  The shared projector still removes candidate/source/row
+        # payloads and applies the same bounded depth/key/item rules.
+        projected = _provider_diagnostics_projection(item)
+        return projected if isinstance(projected, dict) else {}
 
     ordinary: list[dict[str, Any]] = []
     transfer_rows: list[dict[str, Any]] = []
@@ -557,6 +620,188 @@ _PROVIDER_DIAGNOSTIC_OMIT_KEYS = frozenset(
 )
 
 
+_SAFE_EXPECTED_CONSTRAINT = re.compile(r"[A-Za-z0-9_.*\[\](),:=<>+ /\-]{1,256}\Z")
+
+
+def safe_expected_constraints(
+    value: Any, *, accept_unmarked: bool = False
+) -> list[str]:
+    """Extract bounded host-authored constraints from generic reject diagnostics.
+
+    ``observed_refs_or_types`` mixes checker-authored expectations with
+    candidate-derived observations. Only the explicitly marked expected
+    clauses cross the provider boundary; observed values and candidate text
+    remain private. This is rule-agnostic so new validators do not need a
+    parallel allowlist to make useful repair guidance available.
+    """
+
+    if not isinstance(value, (list, tuple)):
+        return []
+    constraints: list[str] = []
+    for item in value[:_MAX_PROVIDER_DIAGNOSTIC_ITEMS]:
+        if not isinstance(item, str):
+            continue
+        if item.startswith("expected:"):
+            clause = item[len("expected:") :].strip()
+        elif accept_unmarked:
+            clause = item.strip()
+        else:
+            continue
+        if not _SAFE_EXPECTED_CONSTRAINT.fullmatch(clause):
+            continue
+        if clause not in constraints:
+            constraints.append(clause)
+    return constraints
+
+
+def safe_source_repair_locator(value: Any) -> dict[str, Any] | None:
+    """Keep only Source-issued locators needed to repair a rejected relation.
+
+    Candidate-local ids and operation rows are intentionally not accepted
+    here. A fresh Lift maps these stable Source graph positions onto its own
+    newly authored local labels.
+    """
+
+    if not isinstance(value, Mapping):
+        return None
+    result: dict[str, Any] = {}
+    access_label = value.get("access_label")
+    ordinal = value.get("ordinal")
+    if isinstance(access_label, str) and re.fullmatch(r"access[0-9]+", access_label):
+        result["access_label"] = access_label
+    if type(ordinal) is int and ordinal >= 0:
+        result["ordinal"] = ordinal
+    raw_requirements = value.get("owner_broadcast_requirements")
+    if isinstance(raw_requirements, list):
+        requirements: list[dict[str, Any]] = []
+        for row in raw_requirements[:_MAX_PROVIDER_DIAGNOSTIC_ITEMS]:
+            if not isinstance(row, Mapping):
+                continue
+            consumer = row.get("consumer_graph_node")
+            operand = row.get("operand_position")
+            axes = row.get("target_axes")
+            if (
+                type(consumer) is not int or consumer < 0
+                or type(operand) is not int or operand < 0
+                or not isinstance(axes, list)
+                or any(type(axis) is not int or axis < 0 for axis in axes)
+                or len(set(axes)) != len(axes)
+            ):
+                continue
+            requirements.append(
+                {
+                    "consumer_graph_node": consumer,
+                    "operand_position": operand,
+                    "target_axes": list(axes),
+                }
+            )
+        result["owner_broadcast_requirements"] = requirements
+    predicate_requirement = value.get("predicate_requirement")
+    if isinstance(predicate_requirement, str) and len(predicate_requirement) <= 512:
+        result["predicate_requirement"] = predicate_requirement
+    return result or None
+
+
+def safe_source_repair_locators(value: Any) -> list[dict[str, Any]]:
+    """Validate and de-duplicate one or more Source-only repair locators."""
+
+    candidates = value if isinstance(value, (list, tuple)) else (value,)
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        locator = safe_source_repair_locator(candidate)
+        if locator is None:
+            continue
+        key = json.dumps(locator, sort_keys=True, separators=(",", ":"))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(locator)
+        if len(result) >= _MAX_PROVIDER_DIAGNOSTIC_ITEMS:
+            break
+    return result
+
+
+def relift_repair_instruction(rule_code: Any, path: Any) -> str | None:
+    """Map a closed diagnostic code to one safe, field-specific repair action."""
+
+    if not isinstance(rule_code, str):
+        return None
+    if rule_code == "source_owner_broadcast_relation_missing":
+        return (
+            "For each Source locator in this access row's owner_broadcast_requirements, "
+            "map consumer_graph_node and operand_position onto the fresh graph's local "
+            "consumer result and operand result. Add exactly one j.boundary.broadcasts "
+            "row per locator, with axes copied exactly from target_axes; do not insert "
+            "a broadcast operation or infer a new relation."
+        )
+    if rule_code == "source_owner_broadcast_relation_ambiguous":
+        return (
+            "Use the Source owner_broadcast_requirements locator to identify the one "
+            "matching consumer/operand edge. Keep exactly one j.boundary.broadcasts "
+            "row for that fresh local edge and copy its target_axes exactly; do not "
+            "choose among candidate rows by shape alone."
+        )
+    if rule_code.startswith("source_owner_broadcast_"):
+        return (
+            "Repair only the j.boundary.broadcasts relation identified by the Source "
+            "owner_broadcast_requirements locator: bind its fresh local consumer and "
+            "operand, and use the exact Source target_axes. Keep the original pointwise "
+            "operand and fail closed if that mapping is not exact."
+        )
+    if rule_code == "source_owner_computed_guard_relation_missing":
+        return (
+            "For the Source access_label in this locator, add exactly one "
+            "j.boundary.access_guard_relations row: access_ref is that access label, "
+            "value_ref is its fresh local Source-compatible i1 result, polarity is "
+            "positive, and axes come only from the Source-proven target-axis relation. "
+            "Set that access row's predicate to the literal string 'true'; put the i1 "
+            "result only in value_ref."
+        )
+    if rule_code == "source_owner_computed_guard_value_unproved":
+        return (
+            "For the named Source access, set j.boundary.accesses[].predicate to the "
+            "literal string 'true'. Keep the computed i1 result only in the matching "
+            "access_guard_relations.value_ref; do not place the local value label in "
+            "predicate. Preserve the issued Source guard authorization."
+        )
+    if rule_code == "source_owner_computed_guard_projection_unproved":
+        return (
+            "Repair the matching j.boundary.access_guard_relations row using the "
+            "Source-proven access target-axis insertion exactly; do not reuse the "
+            "guard's retained axis or axes from a separate broadcast relation."
+        )
+    if rule_code.startswith("source_owner_computed_guard_"):
+        return (
+            "Use only the matching transfer row's predicate_requirement and existing "
+            "semantic_guard_authorization. Bind the required fresh local i1 producer "
+            "through one access_guard_relations row, with the access predicate set to "
+            "'true'; if Source facts do not prove the relation, leave it unclaimed."
+        )
+    if rule_code.startswith("gate1."):
+        category = rule_code.removeprefix("gate1.")
+        gate1_actions = {
+            "interface": "Check J.signature, output bindings, and region/result interfaces first; repair the first missing or extra interface edge before downstream values.",
+            "predicate_effect": "Check Source-visible predicates, masks, effect/value arms, and scope effect membership; preserve the complete control/effect construct and ordering.",
+            "op_multiset": "Compare operation and memory-transfer multiplicity in Source order; do not merge, duplicate, or remove an operation merely to match Replay.",
+            "dataflow": "Start at the first causal edge in the bounded Gate1 frontier; audit the complete producer/consumer and effect chain before downstream arithmetic.",
+            "reduction": "Check reduction axes, keepdims, associativity, identity, and recurrence together; do not replace the recurrence with an algebraically similar result.",
+        }
+        return gate1_actions.get(category)
+    if rule_code.startswith("candidate_decode_j_boundary_cross_contract_"):
+        return (
+            "Repair only the named Boundary-to-J cross-contract at the reported path. "
+            "Use the mounted canonical wire and current Source facts; preserve the "
+            "operation graph and do not copy or reconstruct the rejected artifact."
+        )
+    if rule_code == "candidate_decode_j_boundary_wire_model_rejected":
+        return (
+            "Repair the Boundary row grammar at the reported path using the mounted "
+            "schema. Do not add host-owned ids or fields, and resubmit a complete fresh J."
+        )
+    return None
+
+
 def _provider_diagnostics_projection(
     diagnostics: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -600,8 +845,38 @@ def _provider_diagnostics_projection(
             omitted = 0
             for raw_key, raw_value in value.items():
                 key = str(raw_key)
+                if key == "observed_refs_or_types":
+                    constraints = safe_expected_constraints(raw_value)
+                    if constraints:
+                        result["expected_constraints"] = constraints
+                    else:
+                        omitted += 1
+                    continue
+                if key == "expected_constraints":
+                    constraints = safe_expected_constraints(
+                        raw_value, accept_unmarked=True
+                    )
+                    if constraints:
+                        result[key] = constraints
+                    else:
+                        omitted += 1
+                    continue
                 if key in _PROVIDER_DIAGNOSTIC_OMIT_KEYS:
                     omitted += 1
+                    continue
+                if key == "repair_locator":
+                    safe_locator = safe_source_repair_locator(raw_value)
+                    if safe_locator is not None:
+                        result[key] = safe_locator
+                    else:
+                        omitted += 1
+                    continue
+                if key == "repair_locators":
+                    safe_locators = safe_source_repair_locators(raw_value)
+                    if safe_locators:
+                        result[key] = safe_locators
+                    else:
+                        omitted += 1
                     continue
                 if key == "diagnostic" and (
                     not isinstance(raw_value, str)
@@ -613,6 +888,11 @@ def _provider_diagnostics_projection(
                     omitted += 1
                     continue
                 result[key] = compact(raw_value, depth + 1)
+            instruction = relift_repair_instruction(
+                result.get("rule_code"), result.get("path")
+            )
+            if instruction is not None and "repair_instruction" not in result:
+                result["repair_instruction"] = instruction
             if omitted:
                 result["_provider_omitted_fields"] = omitted
             return result
@@ -718,12 +998,25 @@ def _relift_repair_checklist(
                 continue
             if not isinstance(path, str) or not path:
                 path = "<candidate>"
-            result.append(
-                {
-                    "rule_code": code,
-                    "path": path,
-                }
+            row = {"rule_code": code, "path": path}
+            constraints = safe_expected_constraints(
+                item.get("expected_constraints", ()),
+                accept_unmarked=True,
             )
+            constraints.extend(
+                safe_expected_constraints(item.get("observed_refs_or_types"))
+            )
+            if constraints:
+                row["expected_constraints"] = constraints
+            locators = safe_source_repair_locators(
+                item.get("repair_locators", item.get("repair_locator"))
+            )
+            if locators:
+                row["repair_locators"] = locators
+            instruction = item.get("repair_instruction")
+            if isinstance(instruction, str) and len(instruction) <= 1024:
+                row["repair_instruction"] = instruction
+            result.append(row)
         return result
 
     candidate_check = diagnostics.get("candidate_check")
@@ -745,6 +1038,11 @@ def _relift_repair_checklist(
     # every omitted sibling again from SourceFacts and the transfer ledger.
     def semantic_instruction(item: Mapping[str, Any]) -> str:
         code = str(item["rule_code"])
+        specific = item.get("repair_instruction") or relift_repair_instruction(
+            code, item.get("path")
+        )
+        if isinstance(specific, str):
+            return specific
         if code in _SOURCE_TRANSFER_GUIDANCE_CODES or code.startswith("source_"):
             return (
                 "Repair the named semantic boundary access occurrence: preserve its "
@@ -791,15 +1089,20 @@ def _relift_repair_checklist(
         }
     ]
     for item in current_rows:
-        checklist.append(
-            {
-                "priority": 10,
-                "mode": "repair",
-                "rule_code": item["rule_code"],
-                "path": item["path"],
-                "instruction": semantic_instruction(item),
-            }
-        )
+        checklist_item = {
+            "priority": 10,
+            "mode": "repair",
+            "rule_code": item["rule_code"],
+            "path": item["path"],
+            "instruction": semantic_instruction(item),
+        }
+        if "expected_constraints" in item:
+            checklist_item["expected_constraints"] = item[
+                "expected_constraints"
+            ]
+        if "repair_locators" in item:
+            checklist_item["repair_locators"] = item["repair_locators"]
+        checklist.append(checklist_item)
     seen_preserve: set[tuple[str, str]] = set(current_keys)
     for raw in open_guidance:
         if not isinstance(raw, Mapping):
@@ -819,11 +1122,26 @@ def _relift_repair_checklist(
                 "rule_code": code,
                 "path": path,
                 "instruction": (
-                    "Preserve this earlier semantic obligation unless the current "
-                    "diagnostic names the same semantic path."
+                    str(raw.get("repair_instruction"))
+                    if isinstance(raw.get("repair_instruction"), str)
+                    else "Preserve this earlier semantic obligation unless the "
+                    "current diagnostic names the same semantic path."
                 ),
             }
         )
+        locators = safe_source_repair_locators(
+            raw.get("repair_locators", raw.get("repair_locator"))
+        )
+        constraints = safe_expected_constraints(
+            raw.get("expected_constraints", ()), accept_unmarked=True
+        )
+        constraints.extend(
+            safe_expected_constraints(raw.get("observed_refs_or_types"))
+        )
+        if constraints:
+            checklist[-1]["expected_constraints"] = constraints
+        if locators:
+            checklist[-1]["repair_locators"] = locators
         if len(checklist) >= 13:
             break
     return checklist[:13]
@@ -1038,6 +1356,7 @@ class SCRCCompilerView:
     # Compiler-only options retain their public option name as role.
     schedule_roles: Mapping[str, str] = field(default_factory=dict)
     schedule_tile_coordinates: Mapping[str, str] = field(default_factory=dict)
+    host_launch_contract: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         values = dict(self.schedule_values)
@@ -1306,6 +1625,13 @@ class SCRCCompilerView:
         schedule_constexprs = constexpr_names - bound_names
         if schedule_constexprs - set(values):
             raise ValueError("schedule constexpr parameters require C values")
+        launch_contract = copy.deepcopy(dict(self.host_launch_contract))
+        validate_host_launch_contract(
+            launch_contract, arguments=[item.to_json() for item in self.arguments],
+            schedule_values=values, shape_coordinates=shape_coordinates,
+            tile_coordinates=tile_coordinates,
+        )
+        object.__setattr__(self, "host_launch_contract", launch_contract)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -1321,6 +1647,7 @@ class SCRCCompilerView:
             "compiler_slots": list(self.compiler_slots),
             "compiler_roles": dict(self.schedule_roles),
             "schedule_tile_coordinates": dict(self.schedule_tile_coordinates),
+            "host_launch_contract": copy.deepcopy(dict(self.host_launch_contract)),
             "aliases": [item.to_json() for item in self.aliases],
             "arguments": [item.to_json() for item in self.arguments],
             "shape_coordinates": dict(self.shape_coordinates),
@@ -1351,6 +1678,8 @@ class _SCRCLiftFailureReceipt:
     # descriptive diagnostic can contain source-facing context and must stay
     # inside this host-local exception boundary.
     source_failure_reason: str | None = None
+    provider_failure_origin: str | None = None
+    provider_error: Mapping[str, Any] | None = field(default=None, repr=False)
 
 
 class SCRCLiftError(RuntimeError):
@@ -1371,6 +1700,12 @@ class SCRCLiftError(RuntimeError):
             else None
         )
         self.provider_failure_class = _provider_preparation_failure(attempt)
+        self.provider_failure_origin = _provider_preparation_failure_origin(attempt)
+        self.provider_error = (
+            dict(attempt.provider_error)
+            if isinstance(attempt.provider_error, Mapping)
+            else None
+        )
         self.source_reconcile = (
             _provider_diagnostics_projection(attempt.source_reconcile)
             if isinstance(attempt.source_reconcile, Mapping)
@@ -1531,6 +1866,16 @@ def _rewrite_provider_dimension_aliases(
 
     allocator = construction.allocator
     canonical = tuple(allocator.declared("x"))
+    provider_to_canonical = {
+        local: source
+        for source, local in provider_dimension_alias_map(
+            [
+                {"ordinal": index, "local": f"dim{index}"}
+                for index, _handle in enumerate(canonical)
+            ],
+            canonical_dimensions=canonical,
+        ).items()
+    }
 
     def rewrite(value: Any, key: str | None = None) -> Any:
         if isinstance(value, Mapping):
@@ -1558,8 +1903,9 @@ def _rewrite_provider_dimension_aliases(
             return value
 
         def replace(match: re.Match[str]) -> str:
-            ordinal = int(match.group(1))
-            if ordinal >= len(canonical):
+            alias = match.group(0)
+            mapped = provider_to_canonical.get(alias)
+            if mapped is None:
                 raise CanonicalIngressError(
                     "provider dimension alias is not Source-declared",
                     candidate_check_diagnostics=(
@@ -1572,7 +1918,7 @@ def _rewrite_provider_dimension_aliases(
                         },
                     ),
                 )
-            return canonical[ordinal]
+            return mapped
 
         return _PROVIDER_DIMENSION_ALIAS_TOKEN.sub(replace, value)
 
@@ -2282,6 +2628,28 @@ def _semantic_candidate_surface_diagnostics(
     return _validated_ingress_diagnostics(diagnostics)
 
 
+def _private_source_owner_token(
+    access: Mapping[str, Any], construction: CanonicalConstruction,
+) -> str:
+    """Read existing authority by exact occurrence; never sign a claim."""
+    ordinal = access.get("ordinal")
+    if (
+        construction.transfer_ledger.status != "pass"
+        or not is_canonical_ordinal(ordinal)
+        or access.get("access_label") != f"access{ordinal}"
+    ):
+        raise ValueError("source_owner_receipt_unissued")
+    bindings = [row for row in construction.transfer_ledger.bindings if row.get("ordinal") == ordinal]
+    if len(bindings) != 1:
+        raise ValueError("source_owner_receipt_unissued")
+    authorizations = bindings[0].get("semantic_authorizations")
+    owner = authorizations.get("owner") if isinstance(authorizations, Mapping) else None
+    token = owner.get("token") if isinstance(owner, Mapping) else None
+    if not isinstance(owner, Mapping) or owner.get("status") != "pass" or not isinstance(token, str) or re.fullmatch(SOURCE_OWNER_TOKEN_PATTERN, token) is None:
+        raise ValueError("source_owner_receipt_unissued")
+    return token
+
+
 def _semantic_construction_submission_diagnostics(
     payload: Mapping[str, Any],
     construction: CanonicalConstruction,
@@ -2315,9 +2683,21 @@ def _semantic_construction_submission_diagnostics(
         if isinstance(output_requirements, Mapping)
         else None
     )
+    obligation_rows = (
+        requirements.get("obligations")
+        if isinstance(requirements, Mapping)
+        else None
+    )
+    try:
+        validated_obligations = validate_source_semantic_obligations(
+            obligation_rows,
+            construction.source_facts.digest,
+        )
+    except ValueError:
+        validated_obligations = []
     if not isinstance(expected_accesses, list) or not isinstance(
         expected_outputs, list
-    ):
+    ) or not validated_obligations:
         return (
             {
                 "rule_code": "semantic_construction_contract_unavailable",
@@ -2400,6 +2780,12 @@ def _semantic_construction_submission_diagnostics(
         actual = accesses[index]
         if not isinstance(actual, Mapping):
             continue
+        if "semantic_owner_authorization" in actual:
+            diagnostics.append({
+                "rule_code": "semantic_owner_authorization_is_host_owned",
+                "path": f"j.boundary.accesses[{index}].semantic_owner_authorization",
+                "observed_refs_or_types": ["omit:host verifies the declared node_ref"],
+            })
         expected_label = expected.get("access_label")
         if actual.get("access_label") != expected_label:
             diagnostics.append(
@@ -2549,10 +2935,6 @@ def _semantic_construction_submission_diagnostics(
                 source_semantics.get("semantic_authorizations")
                 if isinstance(source_semantics, Mapping) else None
             )
-            expected_owner = (
-                expected_authorizations.get("owner")
-                if isinstance(expected_authorizations, Mapping) else None
-            )
             expected_access_view = (
                 expected_authorizations.get("access_view")
                 if isinstance(expected_authorizations, Mapping) else None
@@ -2570,10 +2952,6 @@ def _semantic_construction_submission_diagnostics(
                             "observed_refs_or_types": ["expected:ledger-issued exact Source access receipt"],
                         }
                     )
-            expected_owner_family = (
-                expected_owner.get("operation_family")
-                if isinstance(expected_owner, Mapping) else None
-            )
             expected_guard = (
                 expected_authorizations.get("computed_guard")
                 if isinstance(expected_authorizations, Mapping) else None
@@ -2588,35 +2966,162 @@ def _semantic_construction_submission_diagnostics(
             )
             node_ref = actual.get("node_ref")
             if node_ref is not None:
-                if (
-                    not isinstance(expected_owner, Mapping)
-                    or not isinstance(expected_owner.get("token"), str)
-                    or actual.get("semantic_owner_authorization")
-                    != expected_owner.get("token")
-                ):
-                    diagnostics.append(
-                        {
-                            "rule_code": "semantic_owner_authorization_missing",
-                            "path": f"j.boundary.accesses[{index}].semantic_owner_authorization",
-                            "observed_refs_or_types": [
-                                "expected:ledger-issued opaque owner authorization"
-                            ],
-                        }
+                try:
+                    owner_token = _private_source_owner_token(actual, construction)
+                    seed_j = source_wire["artifact_seed"]["j"]
+                    seed_function = seed_j["intent"]["intent_function"]
+                    # Preflight runs before canonical ingress. Compare a
+                    # private alias-normalized view with the canonical Source
+                    # seed; never rewrite the submitted body as a repair.
+                    proof_view = copy.deepcopy(source_wire["artifact_seed"])
+                    proof_view["j"]["intent"]["intent_function"] = {
+                        **seed_function, "body": copy.deepcopy(body),
+                    }
+                    # Match the formal Source-seeded constructor: omitted
+                    # collections retain their Source seed defaults, whereas
+                    # every explicitly submitted field keeps its exact value.
+                    proof_view["j"]["boundary"].update(copy.deepcopy(dict(boundary)))
+                    candidate_pi = payload.get("pi")
+                    if isinstance(candidate_pi, Mapping):
+                        proof_view["pi"].update(copy.deepcopy(dict(candidate_pi)))
+                    _rewrite_provider_dimension_aliases(proof_view, construction)
+                    # The public contract permits omitting every domain so
+                    # Source can project the whole launch map atomically.
+                    # Owner preflight must see that same proved map; it must
+                    # not reject before the later construction projection.
+                    from .compiler_observation import materialize_source_program_domains
+                    projected = materialize_source_program_domains(
+                        proof_view,
+                        source_facts=construction.source_facts,
+                        ledger=construction.transfer_ledger,
                     )
-                operation = operations_by_local_id.get(node_ref)
-                if (
-                    operation is None
-                    or operation_family(operation) != expected_owner_family
-                ):
-                    diagnostics.append(
-                        {
-                            "rule_code": "semantic_owner_operation_family_mismatch",
-                            "path": f"j.boundary.accesses[{index}].node_ref",
-                            "observed_refs_or_types": [
-                                "expected:ledger-authorized local operation family"
-                            ],
-                        }
+                    if projected.get("status") != "pass":
+                        # The projector emits a closed reason code. Keep only
+                        # that bounded code, never candidate domain text.
+                        reason = projected.get("reason")
+                        safe_reason = (
+                            reason if isinstance(reason, str)
+                            and re.fullmatch(r"[a-z0-9_]{1,48}", reason)
+                            else "unproved"
+                        )
+                        raise ValueError(f"source_owner_domain_{safe_reason}")
+                    proof_view = projected["artifact"]
+                    proof_boundary = proof_view["j"]["boundary"]
+                    # Host-only proof view: do not change the submitted bytes
+                    # or author any producer, predicate, coordinate or value.
+                    proof_boundary["accesses"][index]["semantic_owner_authorization"] = owner_token
+                    validate_source_owner_binding(
+                        proof_view["j"]["intent"]["intent_function"],
+                        seed_j["signature"]["parameters"],
+                        proof_boundary["accesses"][index], proof_boundary,
+                        value_dimension_relations=proof_view["j"].get("value_dimension_relations"),
                     )
+                except (ValueError, TypeError, KeyError, RecursionError) as exc:
+                    # The owner validator raises closed rule identifiers for
+                    # its semantic obligations. Preserve only that bounded
+                    # identifier, never the rejected J row or exception text
+                    # from an arbitrary parser/library failure.
+                    owner_rule = (
+                        exc.args[0]
+                        if type(exc) is ValueError
+                        and len(exc.args) == 1
+                        and isinstance(exc.args[0], str)
+                        and re.fullmatch(r"source_owner_[a-z0-9_]{1,80}", exc.args[0])
+                        else "source_exact_owner_binding_failed"
+                    )
+                    owner_path = f"j.boundary.accesses[{index}].node_ref"
+                    if owner_rule.startswith((
+                        "source_owner_broadcast_",
+                        "source_owner_computed_guard_broadcast_",
+                    )):
+                        owner_path = "j.boundary.broadcasts"
+                    elif owner_rule == "source_owner_computed_guard_projection_unproved":
+                        owner_path = "j.boundary.access_guard_relations"
+                    elif owner_rule == "source_owner_reduction_boundary_mismatch":
+                        owner_path = "j.boundary.reductions"
+                    elif owner_rule.startswith("source_owner_computed_guard_coordinate_"):
+                        owner_path = "j.intent.intent_function.body"
+                    elif owner_rule.startswith("source_owner_scalar_load_index_") or owner_rule in {
+                        "source_owner_const_contract_unproved",
+                        "source_owner_explicit_broadcast_unsupported",
+                        "source_owner_pointwise_contract_unproved",
+                    }:
+                        owner_path = "j.intent.intent_function.body"
+                    elif owner_rule.startswith("source_owner_computed_guard_comparison_"):
+                        owner_path = "j.intent.intent_function.body"
+                    owner_expected = "expected:unique exact typed Source producer DAG"
+                    if owner_rule.endswith("broadcast_axis_type_unproved"):
+                        owner_expected = "expected:unquoted JSON integer target-axis positions"
+                    elif owner_rule == "source_owner_broadcast_relation_missing":
+                        owner_expected = "expected:one boundary.broadcasts row per outlined consumer/operand"
+                    elif owner_rule == "source_owner_computed_guard_projection_unproved":
+                        owner_expected = "expected:positive guard relation with axes complementary to the guarded tensor axis"
+                    elif owner_rule == "source_owner_reduction_boundary_mismatch":
+                        owner_expected = "expected:one reduction boundary with proved local tile axis and typed identity"
+                    elif owner_rule == "source_owner_scalar_load_index_producer_missing":
+                        owner_expected = "expected:prior local result of a scalar index const"
+                    elif owner_rule == "source_owner_scalar_load_index_contract_unproved":
+                        owner_expected = "expected:const operands=[]; attrs only value; type i32/i64 with shape=[]"
+                    elif owner_rule == "source_owner_const_contract_unproved":
+                        owner_expected = "expected:owner const with attrs only value and no operands"
+                    elif owner_rule == "source_owner_explicit_broadcast_unsupported":
+                        owner_expected = "expected:outlined owner broadcast on the consuming boundary relation"
+                    elif owner_rule == "source_owner_pointwise_contract_unproved":
+                        owner_expected = "expected:owner-supported map operation and exact attrs"
+                    elif owner_rule.startswith("source_owner_computed_guard_coordinate_"):
+                        owner_expected = "expected:prior iota with operands=[]; type i32[Source-bound dimension]; attrs n=that dimension"
+                    obligation_kind = (
+                        "source_owner_broadcast"
+                        if owner_rule.startswith((
+                            "source_owner_broadcast_",
+                            "source_owner_computed_guard_broadcast_",
+                        ))
+                        else "source_computed_guard"
+                        if owner_rule.startswith("source_owner_computed_guard_")
+                        else "program_domain"
+                        if owner_rule.startswith("source_owner_domain_")
+                        else "source_owner_producer"
+                    )
+                    locator = (
+                        {}
+                        if obligation_kind == "program_domain"
+                        else {"ordinal": expected_ordinal}
+                    )
+                    matching_obligations = matching_source_semantic_obligations(
+                        validated_obligations,
+                        construction.source_facts.digest,
+                        kind=obligation_kind,
+                        source_locator=locator,
+                    )
+                    if matching_obligations:
+                        for obligation in matching_obligations:
+                            diagnostic = semantic_obligation_diagnostic(
+                                obligation,
+                                construction.source_facts.digest,
+                                status="rejected",
+                            )
+                            diagnostic["obligation_rule_code"] = diagnostic[
+                                "rule_code"
+                            ]
+                            diagnostic["rule_code"] = owner_rule
+                            diagnostic["path"] = owner_path
+                            diagnostic["expected_constraints"] = [
+                                owner_expected.removeprefix("expected:")
+                            ]
+                            diagnostics.append(diagnostic)
+                    else:
+                        # Unknown rules stay fail-closed, but do not fabricate
+                        # an obligation identity which Source construction did
+                        # not issue.
+                        diagnostics.append({
+                            "rule_code": owner_rule,
+                            "path": owner_path,
+                            "observed_refs_or_types": [owner_expected],
+                            "repair_locator": {
+                                "access_label": expected_label,
+                                "ordinal": expected_ordinal,
+                            },
+                        })
             actual_guard_token = actual.get("semantic_guard_authorization")
             if actual_guard_token is not None and actual_guard_token != expected_guard_token:
                 diagnostics.append(
@@ -2655,7 +3160,7 @@ def _semantic_construction_submission_diagnostics(
                     diagnostics.append(
                         {
                             "rule_code": "semantic_guard_operation_family_mismatch",
-                            "path": f"j.boundary.access_guard_relations",
+                            "path": "j.boundary.access_guard_relations",
                             "observed_refs_or_types": [
                                 "expected:ledger-authorized local boolean operation family"
                             ],
@@ -2721,6 +3226,21 @@ def _provider_preparation_failure(
     failure_class = attempt.termination_status
     if isinstance(failure_class, str) and failure_class.startswith("provider_"):
         return failure_class
+    return None
+
+
+def _provider_preparation_failure_origin(
+    attempt: _SCRCLiftFailureReceipt | None,
+) -> str | None:
+    """Return the closed transport/event origin carried by an empty Lift."""
+
+    if attempt is None:
+        return None
+    origin = attempt.provider_failure_origin
+    if isinstance(origin, str) and re.fullmatch(
+        r"[a-z][a-z0-9_]{0,127}", origin
+    ) is not None:
+        return origin
     return None
 
 
@@ -3234,6 +3754,7 @@ def _anonymous_compiler_view(
             mapping[name]: coordinate
             for name, coordinate in view.schedule_tile_coordinates.items()
         },
+        "host_launch_contract": project_host_launch_contract(view.host_launch_contract, mapping),
         "aliases": [
             {
                 "left": mapping[item.left],
@@ -3319,103 +3840,165 @@ def _source_aware_build_scrc_lift_instructions(
     frontend: str | None = "triton",
     authoring_transport: str = "mcp",
 ) -> str:
-    """Return the high-signal provider contract.
-
-    The construction authority is transport-neutral, but the visible authoring
-    instruction must match the actual transport.  A direct Responses worker
-    has the Source-bound seed in its request body; it must not be told to read
-    MCP resources or submit a tool call it cannot make.  MCP/workspace workers
-    retain the resource and submission protocol.
-    """
+    """Route one fresh author to its transport's single schema authority."""
 
     if authoring_transport not in {"mcp", "responses"}:
         raise ValueError("Lift authoring transport must be 'mcp' or 'responses'")
     guidance = _frontend_lift_guidance(frontend)
     if authoring_transport == "responses":
-        # Direct Responses has no schema lookup.  Give it one Source-bound
-        # semantic entry and a short routing contract; exact row fields, types,
-        # enums and authorizations stay in that generated entry instead of
-        # being repeated as prose or sibling projections.
-        return f"""IntentIR Lift for one real Kernel. Return exactly one JSON
-object and no prose. Copy `semantic_authoring_entry.candidate_template`, then
-complete J and optional pi from that entry only. The anonymous Source is evidence,
-not an output template. A non-trivial Kernel requires one complete
-producer-before-consumer body.
+        entry = """Return one JSON object, no prose. Read the read-only
+`source_input_channel` first, then copy
+`semantic_authoring_entry.candidate_template`; complete J and optional pi using
+that entry's `compact_provider_wire` and `semantic_construction_requirements`.
+No MCP calls. Keep pi empty unless every row has a closed class and scope. Do
+not copy host-owned c or schema into the response; the host closes those fields
+from the input channel."""
+    else:
+        entry = """Use only the exposed MCP action. Read brief, then ledger;
+read each exposed missing `op:NAME` once before begin_candidate. Sequence:
+begin, graph, post-graph ledger read, accesses, outputs, finalize.
+Each declaration is one JSON value in its named *_text; no free JSON or patches.
+Brief owns operation/control/returns; ledger owns ordered boundary facts."""
+    return f"""One fresh IntentIR Lift; no prior candidate/response/draft/trajectory reuse.
+{entry}
 
-Use only `compact_provider_wire.operations` operation schemas, listed `t*`
-semantic operands, and local `op*/r*/dim*/access*` names. Every result needs its
-complete declared type; operands are listed `t*` values or prior local results.
-Never emit host-owned schema/C/ABI/signature rows or canonical
-`n*/v*/x*/p*/c*/a*/e*` handles.
+Before returning, apply this compact admission gate. If any item cannot be
+proved from the supplied Source/ledger/outline, leave that claim unproved;
+never invent a node, owner, producer, predicate, coordinate, identity or
+partition:
+1. Every owner-required access has exactly one Source-matching local `node_ref`
+   and producer; `effect_node_ref` is the required same local op, or the exact
+   template value for non-owner rows.
+2. Every outlined operation, operand order, load occurrence, cast, reduction,
+   store value, shape and dtype is mirrored once in J. No duplicate roots or
+   ambiguous producer IDs are allowed.
+3. Every broadcast consumer/operand has exactly one boundary relation with the
+   Source target-axis spelling; scalar broadcasts still require their row.
+4. Follow each transfer row's `predicate_requirement` and
+   `semantic_guard_authorization` exactly. A computed guard needs one
+   Source-compatible i1 `map_binary(lt)` producer and one positive access
+   relation; never infer missing axis/domain facts or claim an unproved guard.
+5. Every load coordinate, domain, predicate, fill, reduction axis/combiner and
+   typed dataflow is Source-proven; no numeric run-parameter equality is proof.
+6. Each logical output has one exact final binding. Multiple physical stores
+   require a complete, disjoint, gap-free Source-proven partition with matching
+   effect/target/predicate/dtype/shape; one store is never promoted to owner.
+7. Run a final reference check: all IDs resolve, all operands dominate, all
+   required rows are present, and every listed Source output has exactly one
+   matching `j.boundary.output_mappings` row; when outputs are listed, an
+   empty output-mapping array is invalid. No host-owned token/ABI/C/handle
+   field is submitted. Return JSON only.
 
-`semantic_construction_requirements` is the sole access/output checklist. Emit
-every required row in its declared order. For each access, copy fixed
-`wire_template` fields exactly and author only fields named provider-owned;
-`index_expression` must have the listed tensor rank and use only admitted
-dim*/t*/prior-result inputs. Use a local owner or guard only where that exact row
-declares the relation and authorization; never invent, move or reuse a receipt.
+If `relift` is present, follow each current diagnostic's
+`repair_instruction` and `deterministic_repair_checklist`. Treat
+`repair_locators` as Source facts and map them only onto this fresh graph's
+local labels. Preserve every `open_guidance` obligation unless explicitly
+resolved; absence from a newer diagnostic is not proof of repair.
+`resolved_guidance` is history, not permission to reuse prior content. Build a
+wholly fresh J from current Source/ledger/outline; never copy a prior
+candidate, draft, response, trajectory, Replay source or repair base.
 
-Follow `program_domain_requirements` atomically: omit all domains for complete
-Source projection, or submit the complete exact provider map; never submit a
-partial map. Follow the closed gather/scatter, update and result-relation schemas
-in `compact_provider_wire`; host derives index_bounds but never invents an update
-or one-of ownership claim. Keep pi empty unless every submitted normalization row
-uses a closed wire class and scope.
+Complete typed, producer-ordered SSA and loop/branch wiring; use admitted ops,
+listed t* inputs/prior results and local op*/r*/dim*/access* names. No host
+schema/C/ABI/signatures or canonical n*/v*/x*/p*/c*/a*/e* handles.
+Source and {guidance["layout_reference"]} are evidence, not output/Replay templates.
 
-Preserve control, transfer/effect order, fills and output order. Treat
-{guidance["layout_reference"]} only as evidence. This is a fresh attempt: no prior
-candidate, response, trajectory or rejected draft is a template."""
-    first_turn = """Use the one exposed MCP action. Fresh entry reads the brief,
-then ledger; an exposed missing `op:NAME` lookup is mandatory once before
-`begin_candidate`. Follow only: begin, graph, post-graph
-ledger read, accesses, outputs, finalize. Each declaration is one JSON value
-in its named `*_text`; free candidate JSON and patches are invalid."""
-    return f"""IntentIR Lift: author one anonymous semantic candidate through
-MCP. Source is alpha-renamed; mounted schema and CandidateCheck fail closed.
-Submit J only: never prose, patch, or delta.
+Emit required access/output rows in order. Copy only the fixed fields, labels,
+ordinals, nulls and provider-visible access/guard receipts in wire_template;
+fill only provider-owned fields. For an owner-required store or update,
+node_ref and effect_node_ref are the same one local op* id; for every other
+row preserve the template's effect_node_ref, including null. Do not submit
+boundary.effects: the host builds that table from these checked row fields.
+Omit semantic_owner_authorization entirely:
+the host checks node_ref against its private Source ledger and attaches the
+owner receipt only to the completed internal artifact.
+For an issued owner authoring_outline, mirror its logical typed DAG in J:
+preserve operation/operand order, shared producers, shapes, load occurrences,
+casts, broadcasts, reductions and store value; bind node_ref to its unique root.
+When several outlined stores target one output, each root is a physical slice
+producer, not the final logical output; preserve every outlined coordinate and
+let the canonical functional partition proof establish the final binding.
+When `source_logical_output_assembly_requirements` is present, author exactly
+one top-level canonical `concat` using its Source-proven axis, ordered slice
+operands, operand type and result type. The concat is the logical-output
+assembly; a single slice or output mapping is never sufficient.
+In the transfer ledger this appears as source_owner_authoring_outline. The
+begin_candidate receipt may also expose the same outline under the matching
+output ordinal. The outline is guidance, not a J row or permission to infer
+missing semantics.
+Every outlined broadcast needs its exact boundary.broadcasts relation on the
+consuming operation and operand; implicit pointwise broadcasting is insufficient
+for Source owner proof. Keep the original operand on that consuming operation;
+an explicit broadcast_in_dim operation is not this owner profile's proof.
+For rank-bearing operands, its TARGET axes are the
+complement of the outline's logical broadcast source-axis positions. For a
+scalar operand, keep the relation row even though J accepts implicit scalar
+broadcast; the scalar has an empty input map regardless of [] or listed axes.
+Copy each outline target_axes array into the corresponding
+`j.boundary.broadcasts[]` row's `axes` field as unquoted JSON integer
+positions. `target_axes` is an outline field, not a J boundary field; never
+write quoted numerals, dim* or x* dimension labels as axes.
+Each transfer-row owner_broadcast_requirements entry locates the consuming
+outline graph node and operand position; author a boundary.broadcasts row with
+your corresponding local consumer id and operand result. Its target_axes are
+the Source-proven rank-insertion spelling, not host-authored J content.
+index_expression is a Python list literal of exact tensor rank: each axis is
+one logical coordinate name from program_domain_requirements.domain_coordinates
+or an in-range integer for a proved static slice. A dim* label is an extent,
+not a coordinate; do not use arithmetic or a flat pointer offset here.
+When an access row has index_expression_requirement, use that exact proven
+string as its index_expression; keep authoring the field in the access row.
+In an issued owner outline, store.coordinates axisN means the proved coordinate
+for store.shape[N]; integer coordinates remain that exact integer slice.
+Never invent owners or transfer receipts. Predicate placeholders require prior
+i1 results except relation-backed computed guards, whose access predicate is
+literal "true".
+For an owner outline's symbolic-axis lt guard, author map_binary(fn=lt) with
+an i1 result shaped ONLY by that one symbolic axis. Its ordered operands are
+an i32 iota of that exact dimension and the Source-bound scalar i32 value
+whose value_dimension_relations row equates it to that dimension. The iota
+has operands=[], type dtype=i32 with shape=[that dimension], and attrs
+containing n=that dimension (optionally dtype=i32); n is not the tile
+capacity or an input value label. A declared
+broadcast on this comparison may expand only that scalar operand (either []
+or [0]); a coordinate-operand row may only restate identity with axes=[].
+Bind the i1 result to the same access with a positive
+`access_guard_relations` row. Its `axes` are the access TARGET axes inserted
+when expanding the one-axis i1 guard to the full tensor: for a two-axis
+access guarded along axis 1 use [0], and along axis 0 use [1]. They are not
+the guard's retained axis or the `boundary.broadcasts` operand axes;
+do not compare an already expanded two-dimensional guard. With a relation,
+the boundary access `predicate` is the literal string "true"; the i1 value
+belongs only in `access_guard_relations.value_ref`, not also in `predicate`.
+If those existing facts cannot be expressed, leave the claim unproved.
+For an outlined scalar load from a rank-one cache at a fixed coordinate,
+author a scalar `gather` with attrs `axis=0,mode=take` and a prior scalar
+i32/i64 `const` index equal to that Source-proven coordinate. The index
+`const` must have operands=[], type shape=[], and attrs containing only the
+integer `value` (omit optional attrs dtype/shape); pass its result as the
+gather's second operand. Do not use a bare input value or infer an index not
+present in the outline.
+Supply every consumer_extensions edge and matching reduction contract. In
+the supported owner-padding profile their frontend-local `tile_axis` is 0
+on both rows, even when Layer-A `reduce.attrs.axes` names logical axis 1;
+the reduction identity and typed outside value must match the existing
+Source owner obligation exactly.
 
-{first_turn}
-
-J owns Source-visible typed SSA, domains, accesses/effects/predicates/fills, regions,
-outputs, and value/dimension relations. Brief owns Source operation/control/
-returns; ledger owns ordered access/effect/predicate/fill/owner facts. Copy each
-wire template, access label, and ordinal exactly; access never uses an op id.
-For every access, emit every `required_fields` member, including an explicit null
-`effect_node_ref` when the exact row template requires null. Only when that row's
-`provider_owned_relations` declares an owner, fill `node_ref` and
-`effect_node_ref` with the exact same legal provider-local operation `id`; never
-use canonical `n*` or choose an owner for a row whose template is null. Replace
-the exact opaque semantic authorization fields only where the row template lists
-them; never invent or copy a token to a different access. Replace
-`<provider_local_boolean_result>` only with its earlier local i1 result label;
-never use a boolean literal, expression, Source name, or canonical handle.
-Host derives handles/scopes and access/effect ids, ABI/C, returns, attachments,
-typed index_bounds from an already-valid gather/scatter operation, and other pi;
-it never supplies missing operation, operand, axis, effect, or update semantics.
-For every authored scatter, submit its exact `boundary.updates` row with the same
-local operation id and matching base, indices, values, axis, combiner, duplicate
-policy, and order; host only rewrites that id to canonical n*.
-When updates exist, submit exactly one result relation per output. Only a direct
-output of an overwrite + `one_of` scatter may use `one_of_updates`, and it must
-name that same local scatter id; deterministic/combine updates and every other
-output use exact/tolerance without `update_node_ref`. Host may derive only the
-exact/tolerance class from a closed typed producer graph; it never creates a
-one_of_updates relation.
-For every access, author `index_expression` as a logical expression of exactly
-the accessed tensor rank, using only listed dim*/t* inputs and earlier local
-results; transfer-ledger index metadata defines the available inputs and rank,
-not coordinates to copy. Copy every other non-provider-owned wire-template field
-exactly.
-Domains have an atomic provenance rule. When the mounted
-`program_domain_requirements.status` is pass, either omit `domains` so host can
-atomically project the complete Source-proven launch-domain map, or submit one
-complete zero-based rectangular d* domain per listed dim*. Never submit a partial
-map: after any provider domain exists, host may only reuse exact rows and will not
-add, alter, or reinterpret a missing domain. The listed `required_dimensions` is
-the complete coverage set; do not infer it from tensor rank or concrete extent.
-Preserve producer order and complete loop/branch wiring. Treat
-{guidance["layout_reference"]} only as evidence, never observer/Replay code.
-Omit host rows and commentary."""
+If program_domain_requirements.status is pass, omit domains entirely: the host
+projects the complete Source map. Never submit a partial domain map.
+Every scatter needs its exact update row. Host derives index_bounds, ordinary
+exact/tolerance result relations, returns and output attachments from the
+closed graph; leave result_relations empty unless an actual one_of update
+requires its explicit one_of_updates ownership relation.
+When multiple Source-owned stores jointly realize one output-only scatter,
+the scatter base, values, and result must each have the exact full logical
+output dtype and symbolic shape; indices have that same shape and an integer
+dtype. Form values from the already authored, typed store value slices in
+their Source-proven coordinates. A row slice or current Harness shape is not
+the complete logical output. If this full relation cannot be expressed,
+leave the partition unproved.
+Preserve control, transfer/effect order, predicates, fills, outputs and
+value/dimension relations."""
 
 
 def build_scrc_lift_instructions(
@@ -3498,6 +4081,15 @@ def _build_user_input(
         ],
         "compact_provider_wire": copy.deepcopy(dict(compact_wire)),
     }
+    # Direct Responses has no resource-read round trip.  Give it one snapshot
+    # of the same provider-visible MCP Source/Harness views instead of keeping
+    # a second, reduced prompt-only fact list.  The snapshot is context only;
+    # the provider still authors only semantic J/pi.
+    payload["source_input_channel"] = build_direct_agent_mcp_snapshot(
+        source_wire=source_wire,
+        anonymous_source=anonymous_source,
+        compiler_view=compiler_view,
+    )
     if compiler_view is not None:
         # Compiler/Harness ABI rows are host-owned construction facts.  Direct
         # Responses sees only the selected frontend label; publishing the full
@@ -3581,7 +4173,13 @@ def _prompt_material(
     )
     user = _build_user_input(
         anonymous_source,
-        anonymous_view,
+        (
+            compiler_view.to_json()
+            if isinstance(compiler_view, SCRCCompilerView)
+            else dict(compiler_view)
+            if isinstance(compiler_view, Mapping)
+            else None
+        ),
         relift_context,
         source_kind,
         frontend,
@@ -3658,6 +4256,8 @@ def prepare_scrc_lift(
         (
             compiler_view.to_json()
             if isinstance(compiler_view, SCRCCompilerView)
+            else dict(compiler_view)
+            if isinstance(compiler_view, Mapping)
             else None
         ),
         source_facts,
@@ -6155,7 +6755,7 @@ def _repair_result_relation_fields(
 
 
 _NONEXACT_OUTPUT_UNARY_OPS = frozenset(
-    {"sigmoid", "exp", "log", "rsqrt", "sqrt", "sin", "cos", "tanh", "erf"}
+    {"sigmoid", "exp", "log", "rsqrt", "rsqrt_ftz", "sqrt", "sin", "cos", "tanh", "erf"}
 )
 
 
@@ -6577,7 +7177,16 @@ def _seed_semantic_candidate_envelope(
         )
     candidate_j = payload.get("j")
     if not isinstance(candidate_j, Mapping):
-        raise ValueError("candidate semantic surface lacks j")
+        raise CanonicalIngressError(
+            "semantic candidate lacks j",
+            candidate_check_diagnostics=(
+                {
+                    "rule_code": "semantic_j_required_path_missing",
+                    "path": "j",
+                    "observed_refs_or_types": ["expected:object"],
+                },
+            ),
+        )
     candidate_intent = candidate_j.get("intent")
     candidate_function = (
         candidate_intent.get("intent_function")
@@ -6588,14 +7197,35 @@ def _seed_semantic_candidate_envelope(
     if not isinstance(candidate_function, Mapping) or not isinstance(
         candidate_boundary, Mapping
     ):
+        missing_path = (
+            "j.intent.intent_function"
+            if not isinstance(candidate_function, Mapping)
+            else "j.boundary"
+        )
         raise CanonicalIngressError(
             "semantic candidate lacks required J structure",
-            candidate_check_diagnostics=surface_diagnostics,
+            candidate_check_diagnostics=(
+                {
+                    "rule_code": (
+                        "semantic_intent_function_missing"
+                        if missing_path == "j.intent.intent_function"
+                        else "semantic_boundary_missing"
+                    ),
+                    "path": missing_path,
+                    "observed_refs_or_types": ["expected:object"],
+                },
+            ),
         )
     if not isinstance(candidate_function.get("body"), list):
         raise CanonicalIngressError(
             "semantic candidate lacks a function body",
-            candidate_check_diagnostics=surface_diagnostics,
+            candidate_check_diagnostics=(
+                {
+                    "rule_code": "semantic_intent_body_missing",
+                    "path": "j.intent.intent_function.body",
+                    "observed_refs_or_types": ["expected:array"],
+                },
+            ),
         )
 
     seed = canonical_source_wire_seed(construction)
@@ -7224,14 +7854,14 @@ def _materialize_computed_access_predicate_guards(
         if (
             predicate_type is None
             or target_type is None
-            or predicate_type[0] not in {"i1", "bool"}
+            or not is_closed_boolean_dtype(predicate_type[0])
         ):
             continue
         # A guard relation's ``axes`` uses canonical broadcast-in-dim
         # terminology: it lists *inserted target axes*, not the source axes
         # which happen to match.  For [x0] -> [x0, x1], for example, the
         # unique relation is axes=[1], not axes=[0].
-        if access.get("kind") not in {"load", "store"}:
+        if not computed_guard_projection_supported(access.get("kind")):
             # Updates have no closed guard representation. Preserve the exact
             # provider-authored predicate and reject rather than erasing the
             # physical mask with a host-authored ``true`` predicate.
@@ -8789,43 +9419,21 @@ def _canonical_construction_transaction(
     )
 
 
-def _synchronize_scrc_candidate(
-    payload: Mapping[str, Any],
+def _construct_source_seeded_candidate(
+    original: dict[str, Any],
     request: SCRCLiftRequest,
     *,
-    observation: Mapping[str, Any] | None = None,
-) -> tuple[dict[str, Any], tuple[Mapping[str, Any], ...]]:
-    """Build one canonical ingress candidate transactionally.
+    construction: CanonicalConstruction,
+    repairs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Validate provider claims, then project the trusted seed and handles.
 
-    The provider authors semantic J and any provider-owned pi choices; MCP may
-    omit every host-owned pi row.  This synchronizer applies only closed
-    wire/ABI/Source facts already present in the candidate or trusted observer,
-    including exact Source-proven program/tile projection.  All edits happen on
-    private copies; callers receive a fully synchronized copy or an explicit
-    ingress rejection.  It must never fall back to the untouched provider
-    artifact after the constructor has failed, because that would create a
-    second admission path around the one canonical construction authority.  The
-    Every backend crosses this same construction boundary; an incomplete
-    candidate is rejected rather than merged with prior candidate state.
+    The synchronizer supplies a private copy and its observed construction.
+    Submission checks still precede all writes. This intermediate mapping is
+    not accepted: the Source-transfer transaction and strict decoder remain
+    mandatory. This function neither invents nor signs semantic receipts.
     """
 
-    original = copy.deepcopy(dict(payload))
-    repairs: list[dict[str, Any]] = []
-    # Authoring requirements are exposed from the observed Source occurrence
-    # ledger before the provider writes accesses.  Apply that same authority
-    # before semantic submission preflight and canonical construction; using
-    # the pre-observation request here makes a complete MCP declaration appear
-    # to have the wrong arity at finalize.
-    observed_construction = _construction_with_source_observation(
-        request,
-        observation,
-    )
-    construction = (
-        request.construction
-        if observed_construction.authority_digest
-        == request.construction.authority_digest
-        else observed_construction
-    )
     try:
         provider_namespace_diagnostics = _provider_semantic_namespace_diagnostics(
             original
@@ -8857,6 +9465,13 @@ def _synchronize_scrc_candidate(
                 original, construction
             ),
         )
+        # Semantic submission has already passed exact owner verification.
+        # Carry its existing private Source receipt only in the host artifact
+        # so independent decoders/Boundary/fallback keep the same fail-closed
+        # contract. No receipt is synthesized from provider text or a hash.
+        for access in working["j"]["boundary"].get("accesses", ()):
+            if isinstance(access, dict) and access.get("node_ref") is not None:
+                access["semantic_owner_authorization"] = _private_source_owner_token(access, construction)
         _run_canonical_construction_phase(
             rule_code="canonical_source_construction_unavailable",
             path="<canonical-constructor>",
@@ -8879,6 +9494,22 @@ def _synchronize_scrc_candidate(
             "semantic candidate cannot form the canonical Source-owned artifact",
             candidate_check_diagnostics=_canonical_constructor_failure_diagnostic(exc),
         ) from exc
+    return working
+
+
+def _close_candidate_source_transfers(
+    working: dict[str, Any],
+    *,
+    construction: CanonicalConstruction,
+    observation: Mapping[str, Any] | None,
+    repairs: list[dict[str, Any]],
+) -> tuple[dict[str, Any], tuple[Mapping[str, Any], ...]]:
+    """Close existing Source facts against the private candidate transaction.
+
+    Order/reallocation/rebinding, fills, domains, pi and guard projection all
+    retain their existing checks. Return the final copy only after every phase
+    succeeds; never recover from failure with the seed or a previous candidate.
+    """
 
     # Source-ledger edits are part of canonical construction, rather than an
     # optional TTIR-only postscript.  The observer can refine the immutable
@@ -8898,6 +9529,7 @@ def _synchronize_scrc_candidate(
             python_interface = observation.get("python_interface")
             fingerprint = fingerprint_ttir(
                 ttir,
+                external_math=observation.get("_external_math"),
                 python_interface=(
                     python_interface if isinstance(python_interface, Mapping) else None
                 ),
@@ -9256,6 +9888,57 @@ def _synchronize_scrc_candidate(
     return source_working, tuple([*repairs, *source_repairs])
 
 
+def _synchronize_scrc_candidate(
+    payload: Mapping[str, Any],
+    request: SCRCLiftRequest,
+    *,
+    observation: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], tuple[Mapping[str, Any], ...]]:
+    """Build one canonical ingress candidate transactionally.
+
+    The provider authors semantic J and any provider-owned pi choices; MCP may
+    omit every host-owned pi row.  This synchronizer applies only closed
+    wire/ABI/Source facts already present in the candidate or trusted observer,
+    including exact Source-proven program/tile projection.  All edits happen on
+    private copies; callers receive a fully synchronized copy or an explicit
+    ingress rejection.  It must never fall back to the untouched provider
+    artifact after the constructor has failed, because that would create a
+    second admission path around the one canonical construction authority.
+    Every backend crosses this same construction boundary; an incomplete
+    candidate is rejected rather than merged with prior candidate state.
+    """
+
+    original = copy.deepcopy(dict(payload))
+    repairs: list[dict[str, Any]] = []
+    # Authoring requirements are exposed from the observed Source occurrence
+    # ledger before the provider writes accesses.  Apply that same authority
+    # before semantic submission preflight and canonical construction; using
+    # the pre-observation request here makes a complete MCP declaration appear
+    # to have the wrong arity at finalize.
+    observed_construction = _construction_with_source_observation(
+        request,
+        observation,
+    )
+    construction = (
+        request.construction
+        if observed_construction.authority_digest
+        == request.construction.authority_digest
+        else observed_construction
+    )
+    working = _construct_source_seeded_candidate(
+        original,
+        request,
+        construction=construction,
+        repairs=repairs,
+    )
+    return _close_candidate_source_transfers(
+        working,
+        construction=construction,
+        observation=observation,
+        repairs=repairs,
+    )
+
+
 def _construct_scrc_candidate(
     response_text: str,
     request: SCRCLiftRequest,
@@ -9369,6 +10052,7 @@ def _construction_with_source_observation(
     return request.construction.with_observation(
         fingerprint_ttir(
             ttir,
+            external_math=observation.get("_external_math"),
             python_interface=(
                 python_interface if isinstance(python_interface, Mapping) else None
             ),
@@ -9413,42 +10097,226 @@ def _source_authoring_blockers(
             },
         )
 
-    blockers: list[dict[str, str]] = []
-    for index, row in enumerate(rows):
-        if not isinstance(row, Mapping) or row.get("masked") is not True:
-            continue
-        if row.get("predicate") is not None:
-            continue
-        authorizations = row.get("semantic_authorizations")
-        guard = (
-            authorizations.get("computed_guard")
-            if isinstance(authorizations, Mapping)
-            else None
+    # Do not spend an authoring turn when the host cannot close the launch
+    # domain that the provider would have to consume.  This is deliberately a
+    # preflight over the Source-owned wire seed: it does not inspect a prior
+    # candidate and it does not manufacture a J domain.  The detailed
+    # projector reason stays private; the lifecycle receives one stable
+    # Source-preparation class.
+    if any(
+        occurrence.kind in {"load", "store"}
+        and any(
+            re.fullmatch(r"program_axis:[xyz]", atom)
+            for atoms, _coefficient in occurrence.address_terms
+            for atom in atoms
         )
-        if not isinstance(guard, Mapping):
-            blockers.append(
+        for occurrence in construction.transfer_ledger.occurrences
+    ):
+        from .compiler_observation import materialize_source_program_domains
+
+        seed = source_wire.get("artifact_seed")
+        if not isinstance(seed, Mapping):
+            return (
                 {
-                    "rule_code": "source_computed_guard_authorization_unavailable",
-                    "path": f"semantic_transfer_projection.occurrences[{index}].predicate",
-                }
+                    "rule_code": "source_program_domain_projection_unavailable",
+                    "path": "pi.program_bindings",
+                },
             )
+        projection = materialize_source_program_domains(
+            seed,
+            source_facts=construction.source_facts,
+            ledger=construction.transfer_ledger,
+        )
+        if not isinstance(projection, Mapping) or projection.get("status") != "pass":
+            return (
+                {
+                    "rule_code": "source_program_domain_projection_unavailable",
+                    "path": "pi.program_bindings",
+                },
+            )
+
+    bindings = {
+        row["ordinal"]: row
+        for row in construction.transfer_ledger.bindings
+    }
+    occurrences = {
+        item.ordinal: item for item in construction.transfer_ledger.occurrences
+    }
+    blockers: list[dict[str, str]] = []
+
+    def private_public_authorization_matches(
+        private: object,
+        public: object,
+        *,
+        owner: bool = False,
+    ) -> bool:
+        """Join one host receipt with its provider-facing projection.
+
+        ``semantic_transfer_projection`` is intentionally sanitized.  In
+        particular, it omits ``status`` and ``compiler_attestation`` and it
+        never carries a Source owner token.  The old preflight read the
+        sanitized row and consequently treated a valid computed-guard receipt
+        as missing.  Keep the join host-local: validate the public contract
+        against the authoritative ledger receipt without putting private
+        fields back on the provider wire.
+        """
+
+        if not isinstance(private, Mapping):
+            return public is None
+        private_status = private.get("status")
+        if private_status == "unavailable":
+            return public is None and set(private) == {"status", "reason"}
+        if private_status != "pass":
+            return False
+        token = private.get("token")
+        family = private.get("operation_family")
+        if (
+            not isinstance(token, str)
+            or not isinstance(family, str)
+            or not isinstance(public, Mapping)
+        ):
+            return False
+        if owner:
+            # Owner tokens are host-private.  The public row may carry the
+            # signed authoring outline, but never the token itself.
+            expected_keys = {"operation_family"}
+            outline = private.get("authoring_outline")
+            if outline is not None:
+                expected_keys.add("authoring_outline")
+            if set(public) != expected_keys:
+                return False
+            if public.get("operation_family") != family or "token" in public:
+                return False
+            return outline is None or public.get("authoring_outline") == outline
+        if set(public) != {"token", "operation_family"}:
+            return False
+        return (
+            public.get("token") == token
+            and public.get("operation_family") == family
+        )
+
+    def add_projection_blocker(index: int, reason: str) -> None:
+        if not re.fullmatch(r"source_[a-z0-9_]+", reason):
+            reason = "source_private_public_projection_mismatch"
+        blockers.append(
+            {
+                "rule_code": reason,
+                "path": (
+                    "semantic_transfer_projection.occurrences["
+                    f"{index}].semantic_authorizations"
+                ),
+            }
+        )
+
+    # The public occurrence array is a projection, not an authority.  Join it
+    # to the private ledger by ordinal before checking any authoring blocker.
+    # This catches stale/reordered/tampered public rows while allowing the
+    # private receipt to remain private.
+    if len(rows) != len(construction.transfer_ledger.occurrences):
+        return (
+            {
+                "rule_code": "source_private_public_projection_mismatch",
+                "path": "semantic_transfer_projection.occurrences",
+            },
+        )
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            add_projection_blocker(index, "source_private_public_projection_mismatch")
             continue
-        if row.get("kind") != "load":
-            owner = (
-                authorizations.get("owner")
-                if isinstance(authorizations, Mapping)
-                else None
-            )
-            if isinstance(owner, Mapping) and isinstance(owner.get("token"), str):
-                # The output-only guarded-store profile requires the provider
-                # to retain the exact Source-attested value producer as the
-                # access/effect node.  Source preparation only admits the row;
-                # CandidateCheck and FunctionalBoundary still require the
-                # complete authored guard, type, output and effect relation.
-                continue
+        ordinal = row.get("ordinal")
+        occurrence = occurrences.get(ordinal)
+        private_binding = bindings.get(ordinal)
+        if (
+            not is_canonical_ordinal(ordinal)
+            or ordinal != index
+            or occurrence is None
+            or not isinstance(private_binding, Mapping)
+            or row.get("access_label") != f"access{ordinal}"
+            or row.get("kind") != occurrence.kind
+            or row.get("tensor") != occurrence.logical_ref
+            or row.get("masked") is not occurrence.masked
+        ):
+            add_projection_blocker(index, "source_private_public_projection_mismatch")
+            continue
+        private_authorizations = private_binding.get("semantic_authorizations")
+        authorizations = row.get("semantic_authorizations")
+        if not isinstance(private_authorizations, Mapping) or not isinstance(
+            authorizations, Mapping
+        ):
+            add_projection_blocker(index, "source_private_public_projection_mismatch")
+            continue
+        projection_mismatch = False
+        for authorization_name, owner_authorization in (
+            ("access_view", False),
+            ("owner", True),
+            ("computed_guard", False),
+        ):
+            if not private_public_authorization_matches(
+                private_authorizations.get(authorization_name),
+                authorizations.get(authorization_name),
+                owner=owner_authorization,
+            ):
+                add_projection_blocker(index, "source_private_public_projection_mismatch")
+                projection_mismatch = True
+                break
+        if projection_mismatch:
+            continue
+        # Every physical write is a final semantic obligation, not only a
+        # masked or multiply-used store.  A simple unmasked store can still be
+        # attached to the wrong J producer or output, so allowing it without
+        # the exact Source/TTIR owner receipt would leave a gap in the
+        # Source->J authorization chain.  Updates are included here and stay
+        # fail-closed until their typed logical-update proof exists.
+        needs_owner = bool(
+            occurrence is not None
+            and occurrence.kind in {"store", "update"}
+        )
+        owner = private_authorizations.get("owner")
+        if needs_owner and not (
+            isinstance(owner, Mapping) and owner.get("status") == "pass" and isinstance(owner.get("token"), str)
+            and re.fullmatch(SOURCE_OWNER_TOKEN_PATTERN, owner["token"]) is not None
+        ):
+            private_owner = owner if isinstance(owner, Mapping) else {}
+            reason = private_owner.get("reason", "source_exact_owner_binding_unavailable")
+            if not isinstance(reason, str) or re.fullmatch(r"source_[a-z0-9_]+", reason) is None:
+                reason = "source_exact_owner_binding_unavailable"
+            blockers.append({
+                "rule_code": reason,
+                "path": f"semantic_transfer_projection.occurrences[{index}].semantic_authorizations.owner",
+            })
+        if row.get("masked") is not True or row.get("predicate") is not None:
+            continue
+        # The public guard projection intentionally has no status or
+        # compiler_attestation.  Use the private ledger receipt for the
+        # authorization decision; the public/private join above already
+        # verified that any exposed token/family is the matching one.
+        guard = private_authorizations.get("computed_guard")
+        # A mapping-shaped ``unavailable`` receipt is not an authorization.
+        # The previous check treated any Mapping as sufficient, allowing a
+        # masked access with no Source predicate to reach the provider even
+        # when the compiler-side i1 projection had failed.  Require the same
+        # closed receipt shape that the ledger and semantic validator consume;
+        # do not synthesize a guard or ask the provider to invent one.
+        guard_valid = (
+            isinstance(guard, Mapping)
+            and guard.get("status") == "pass"
+            and isinstance(guard.get("token"), str)
+            and re.fullmatch(r"so_[0-9a-f]{32}", guard["token"]) is not None
+            and isinstance(guard.get("operation_family"), str)
+            and isinstance(guard.get("compiler_attestation"), str)
+            and re.fullmatch(r"sc_[0-9a-f]{32}", guard["compiler_attestation"]) is not None
+        )
+        if not guard_valid:
+            private_guard = guard
+            reason = private_guard.get("reason") if isinstance(private_guard, Mapping) else None
+            if reason not in {
+                "source_predicate_access_anchor_unavailable",
+                "source_compiler_predicate_access_projection_unavailable",
+            }:
+                reason = "source_computed_guard_authorization_unavailable"
             blockers.append(
                 {
-                    "rule_code": "source_masked_store_owner_authorization_unavailable",
+                    "rule_code": reason,
                     "path": f"semantic_transfer_projection.occurrences[{index}].predicate",
                 }
             )
@@ -9463,10 +10331,9 @@ def _reconcile_source_candidate(
 ) -> dict[str, Any]:
     """Run the shared Source-aware necessary-condition preflight.
 
-    Direct Responses Lift has no local MCP construction tool, so the same
-    source-observer facts used by the CLI owner are evaluated locally.  The
-    result is reject-only diagnostic evidence; it never edits or completes J,
-    C, or pi and never certifies a candidate.
+    Both Responses and MCP evaluate the same Source-observer facts after
+    strict decode. The result is reject-only diagnostic evidence; it never
+    edits or completes J, C, or pi and never certifies a candidate.
     """
 
     try:
@@ -9540,9 +10407,40 @@ def _decode_scrc_lift_artifact_core(
     required_schema: str,
     allocator: CanonicalHandleAllocator,
 ) -> Gate1Artifact:
-    """Shared source-free Decode core used by Runner and CandidateCheck."""
+    """Parse raw text and invoke the shared strict construction boundary.
+
+    Parsing alone confers no candidate acceptance or Source authorization.
+    Runner and CandidateCheck both retain every strict construction check.
+    """
 
     payload = _json_object(response_text)
+    return _construct_checked_scrc_artifact(
+        payload,
+        expected_parameters=expected_parameters,
+        expected_tensors=expected_tensors,
+        expected_dimensions=expected_dimensions,
+        trusted_compiler_facts=trusted_compiler_facts,
+        required_schema=required_schema,
+        allocator=allocator,
+    )
+
+
+def _construct_checked_scrc_artifact(
+    payload: Mapping[str, Any],
+    *,
+    expected_parameters: tuple[str, ...],
+    expected_tensors: tuple[str, ...],
+    expected_dimensions: tuple[str, ...],
+    trusted_compiler_facts: Mapping[str, Any] | None,
+    required_schema: str,
+    allocator: CanonicalHandleAllocator,
+) -> Gate1Artifact:
+    """Construct the strict model, not an accepted lifecycle artifact.
+
+    No permissive/pending mode: model, canonicalization, schema, anonymous
+    contract and compiler contract remain mandatory and ordered. The caller
+    still owes TypeCheck, Source authorization and the subsequent Gate chain.
+    """
     try:
         parsed_artifact = Gate1Artifact.from_json(payload)
     except Exception as exc:
@@ -9576,6 +10474,49 @@ def _decode_scrc_lift_artifact_core(
     return artifact
 
 
+def _inspect_unaccepted_scrc_candidate(
+    response_text: str,
+    *,
+    trusted_compiler_facts: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Inspect raw candidate structure without constructing an artifact.
+
+    An empty diagnostic list permits the existing allocator/decode path only;
+    it is not CandidateCheck/TypeCheck success or an authorization receipt.
+    Failed inputs return no usable payload and are never repaired here.
+    """
+    try:
+        payload = _json_object(response_text)
+    except Exception as exc:
+        return {}, [
+            {
+                "rule_code": "candidate_json_parse_rejected",
+                "path": "<candidate>",
+                "observed_refs_or_types": [
+                    _bounded_candidate_diagnostic_text(
+                        f"{type(exc).__name__}: complete one closed JSON "
+                        "{schema,j,c,pi} root before submission"
+                    )
+                ],
+            }
+        ]
+    # Preserve root -> schema -> namespace diagnostic precedence. The schema
+    # check remains exactly the existing one, including its dependency policy;
+    # strict construction cannot be skipped if it reports no diagnostics.
+    diagnostics = _candidate_wire_envelope_diagnostics(response_text)
+    if diagnostics:
+        return {}, diagnostics
+    diagnostics = _candidate_json_schema_diagnostics(response_text)
+    if diagnostics:
+        return {}, diagnostics
+    diagnostics = _candidate_physical_namespace_diagnostics(
+        payload, trusted_compiler_facts,
+    )
+    if diagnostics:
+        return {}, diagnostics
+    return payload, []
+
+
 def check_scrc_lift_candidate(
     response_text: str,
     context: SCRCCandidateCheckContext,
@@ -9602,58 +10543,15 @@ def check_scrc_lift_candidate(
                 }
             ],
         }
-    # A truncated/non-JSON provider reply cannot establish *any* candidate
-    # surface.  Classifying it as an allocator failure hid the actual repair
-    # action from the next fresh Lift turn and incorrectly suggested that a
-    # valid J declaration table had been inspected.  Keep this fail-closed:
-    # do not append a brace or otherwise repair provider text here.
-    try:
-        candidate_payload = _json_object(response_text)
-    except Exception as exc:
-        return {
-            "protocol": CANDIDATE_CHECK_PROTOCOL,
-            "status": "fail",
-            "diagnostics": [
-                {
-                    "rule_code": "candidate_json_parse_rejected",
-                    "path": "<candidate>",
-                    "observed_refs_or_types": [
-                        _bounded_candidate_diagnostic_text(
-                            f"{type(exc).__name__}: complete one closed JSON "
-                            "{schema,j,c,pi} root before submission"
-                        )
-                    ],
-                }
-            ],
-        }
-    wire_diagnostics = _candidate_wire_envelope_diagnostics(response_text)
-    if wire_diagnostics:
-        return {
-            "protocol": CANDIDATE_CHECK_PROTOCOL,
-            "status": "fail",
-            "diagnostics": wire_diagnostics,
-        }
-
-    # Schema is the first semantic admission boundary after the exact root
-    # check.  In particular, a malformed operation id must be reported at its
-    # authored path instead of being obscured by the allocator that consumes
-    # the same n*/v* declaration table later.
-    schema_diagnostics = _candidate_json_schema_diagnostics(response_text)
-    if schema_diagnostics:
-        return {
-            "protocol": CANDIDATE_CHECK_PROTOCOL,
-            "status": "fail",
-            "diagnostics": schema_diagnostics,
-        }
-    namespace_diagnostics = _candidate_physical_namespace_diagnostics(
-        candidate_payload,
-        context.trusted_compiler_facts,
+    candidate_payload, surface_diagnostics = _inspect_unaccepted_scrc_candidate(
+        response_text,
+        trusted_compiler_facts=context.trusted_compiler_facts,
     )
-    if namespace_diagnostics:
+    if surface_diagnostics:
         return {
             "protocol": CANDIDATE_CHECK_PROTOCOL,
             "status": "fail",
-            "diagnostics": namespace_diagnostics,
+            "diagnostics": surface_diagnostics,
         }
 
     # Only a schema-valid canonical root may enter candidate-local allocator
@@ -10876,14 +11774,13 @@ def _safe_candidate_surface_diagnostics(
             context,
             allocator=allocator,
         )
-    except Exception:  # pragma: no cover - exercised by malformed real responses
+    except Exception as exc:  # pragma: no cover - exercised by malformed real responses
         return [
             {
                 "rule_code": "candidate_surface_diagnostics_failed",
                 "path": "<candidate>",
                 "observed_refs_or_types": [
-                    "candidate surface contains a malformed row; supplemental "
-                    "construction diagnostics are unavailable"
+                    "exception:" + type(exc).__name__,
                 ],
             }
         ]
@@ -10915,11 +11812,48 @@ def _candidate_typecheck_rule_code(code: str, detail: str) -> str:
     contracts without gaining a rejected-candidate repair base.
     """
 
+    if code == "access_guard_relation_invalid":
+        lowered = detail.casefold()
+        if "one (access_ref, value_ref) pair may be declared only once" in lowered:
+            return "access_guard_relation_duplicate"
+        if "value_ref must name a real typed layer-a declaration" in lowered:
+            return "access_guard_value_ref_unbound"
+        if "access guard value_ref must have canonical dtype i1" in lowered:
+            return "access_guard_value_type_invalid"
+        if "relation-bound computed guard must not also appear" in lowered:
+            return "access_guard_predicate_double_claim"
+        if "access guard axes must be strictly increasing and unique" in lowered:
+            return "access_guard_axes_invalid"
+        if "guard shape cannot project to the access target" in lowered:
+            return "access_guard_projection_invalid"
+        if "access target must have one closed layer-a tensor type" in lowered:
+            return "access_guard_target_type_unproved"
+        if "relation-guarded load requires an explicit fill_value" in lowered:
+            return "access_guard_load_fill_missing"
+        if "access-guard relation v1 has no closed update merge contract" in lowered:
+            return "access_guard_update_unsupported"
+        return code
     if code != "functional_boundary_incomplete":
         return code
+    if re.fullmatch(r"source_owner_[a-z0-9_]{1,80}", detail):
+        return detail
+    if detail in {
+        "functional_logical_update_output_type_unclosed",
+        "functional_logical_update_base_type_mismatch",
+        "functional_logical_update_values_type_mismatch",
+        "functional_logical_update_result_type_mismatch",
+        "functional_logical_update_indices_shape_mismatch",
+        "functional_logical_update_indices_dtype_invalid",
+    }:
+        return detail
     lowered = detail.casefold()
     if "multiple distinct node_ref=null access views" in lowered:
         return "functional_boundary_access_view_ambiguous"
+    if (
+        "node-less computed guarded load requires an explicit consumer extension"
+        in lowered
+    ):
+        return "functional_boundary_guarded_load_consumer_extension_missing"
     if "computed layer-a predicate references" in lowered:
         return "functional_boundary_predicate_computed_reference"
     if "predicate upper bound is not an access axis" in lowered:
@@ -11805,12 +12739,20 @@ def extract_scrc_artifact(
     # resulting occurrence ledger is then serialized in the direct Responses
     # canonical seed, rather than being discovered only after an already
     # authored candidate reaches ingress repair.
+    from .compiler_observation import source_preparation_failure_reason
+
     source_observation = _source_ttir_observation_for_request(request)
     observed_construction = _construction_with_source_observation(
         request,
         source_observation,
     )
     if observed_construction.transfer_ledger.status != "pass":
+        # The observer diagnostic may contain Source or host paths. Carry only
+        # its closed rule code, or a deterministic status class, to the public
+        # lifecycle receipt.
+        observation_rule = source_preparation_failure_reason(
+            source_observation, observed_construction.transfer_ledger,
+        )
         attempt = _SCRCLiftFailureReceipt(
             diagnostic=(
                 "Source preparation did not produce a closed transfer ledger: "
@@ -11819,13 +12761,13 @@ def extract_scrc_artifact(
             response_text="",
             attempts=0,
             termination_status="source_preparation_transfer_ledger_unavailable",
-            source_failure_reason=observed_construction.transfer_ledger.reason,
+            source_failure_reason=observation_rule,
         )
         raise SCRCLiftError(attempt)
     authoring_blockers = _source_authoring_blockers(observed_construction)
     if authoring_blockers:
         attempt = _SCRCLiftFailureReceipt(
-            diagnostic="Source preparation has no legal predicate authoring representation",
+            diagnostic="Source preparation lacks a required exact owner or predicate authorization",
             response_text="",
             attempts=0,
             termination_status="source_preparation_authorization_unavailable",
@@ -11856,6 +12798,11 @@ def extract_scrc_artifact(
             user,
             provider=resolved_provider,
             effort=resolved_effort,
+            # A real SCRC lifecycle treats overload/rate/transport/HTTP
+            # failures as terminal infrastructure stops. Do not hide one
+            # behind an in-place transport retry; another Lift call is legal
+            # only after a completed candidate rejection.
+            max_retries=1,
             # The full artifact schema is not a provider authoring schema: it
             # contains host-owned schema/C/ABI/handle/scope rows.  The compact
             # Source-sized schema is projected from that same canonical wire
@@ -11874,6 +12821,8 @@ def extract_scrc_artifact(
             response_text="",
             attempts=getattr(exc, "attempts", 1),
             termination_status=getattr(exc, "failure_class", None),
+            provider_failure_origin=getattr(exc, "failure_origin", None),
+            provider_error=getattr(exc, "safe_error_envelope", None),
         )
         raise SCRCLiftError(
             attempt,
@@ -11903,11 +12852,18 @@ def extract_scrc_artifact(
     except CanonicalIngressError as exc:
         diagnostics = list(exc.candidate_check_diagnostics)
         if not diagnostics:
+            # An empty diagnostic is an internal classification defect, not a
+            # reason to claim that the provider omitted host-owned c/schema.
+            # Keep the lifecycle fail-closed, but expose the stable semantic
+            # ingress class so the next fresh authoring turn can distinguish
+            # it from CandidateCheck, TypeCheck, Replay, or Gate failures.
             diagnostics = [
                 {
-                    "rule_code": "canonical_constructor_rejected",
+                    "rule_code": "canonical_constructor_unclassified",
                     "path": "<canonical-constructor>",
-                    "observed_refs_or_types": ["CanonicalIngressError"],
+                    "observed_refs_or_types": [
+                        "expected:closed_semantic_j_surface"
+                    ],
                 }
             ]
         candidate_check = {
@@ -12115,6 +13071,17 @@ class ResponsesSCRCRelifter:
                     evidence={
                         "failure_class": "lift_provider_preparation",
                         "provider_failure_class": exc.provider_failure_class,
+                        **(
+                            {"provider_failure_origin": exc.provider_failure_origin}
+                            if exc.provider_failure_origin is not None
+                            else {}
+                        ),
+                        **(
+                            {"provider_error": dict(exc.provider_error)}
+                            if isinstance(exc.provider_error, Mapping)
+                            and exc.provider_error
+                            else {}
+                        ),
                         "candidate_present": False,
                     },
                 ) from exc
@@ -12249,6 +13216,21 @@ class ResponsesSCRCLiftAdapter:
                                 "rule_code": "lift_provider_generation_failed",
                                 "path": "<lift-provider>",
                                 "provider_failure_class": provider_failure,
+                            **(
+                                {
+                                    "provider_failure_origin": (
+                                        exc.provider_failure_origin
+                                    )
+                                }
+                                if exc.provider_failure_origin is not None
+                                else {}
+                            ),
+                                **(
+                                    {"provider_error": dict(exc.provider_error)}
+                                    if isinstance(exc.provider_error, Mapping)
+                                    and exc.provider_error
+                                    else {}
+                                ),
                                 "physical_provider_calls": exc.physical_calls,
                             }
                         ],

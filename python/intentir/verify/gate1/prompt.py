@@ -38,7 +38,13 @@ PUBLIC_FRONTEND_CONTEXT = {
         "tool_access": ["public_document_lookup"],
         "compile_entry_contract": (
             "Write one self-contained public Triton module with exactly one "
-            "@triton.jit function named scrc_k0. Its parameters are the declared "
+            "@triton.jit entry function named scrc_k0. The module must contain "
+            "exact `import triton` and `import triton.language as tl` statements; "
+            "the only optional import is "
+            "`from triton.language.extra.cuda import libdevice`. Its top level may "
+            "contain only those imports and `@triton.jit` function definitions, "
+            "with no launch, specialization assignment, prose, or Markdown fence. "
+            "Its parameters are the declared "
             "J.signature handles, followed in order by complete C slots whose kind "
             "is constexpr and which remain annotated tl.constexpr. If U_f contains "
             "callable_abi_order, use that exact anonymous declaration order instead "
@@ -1116,7 +1122,8 @@ def _concise_instructions(
         "kernel templates are unavailable. The packet's U_f gives the callable ABI "
         "and, when present, a closed source-blind representation contract. Its "
         "compile_entry_contract is the exact target API, ABI, control and structural "
-        "ingress contract; follow it completely."
+        "ingress contract; follow it completely. For Triton, audit its exact imports, "
+        "top-level-only JIT definitions, and required scrc_k0 entry before returning."
         + projection_clause
         + structure_ledger
         + implementation_clause

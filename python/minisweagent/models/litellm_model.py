@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -191,11 +192,33 @@ _SECRET_KEYS = {
     "refresh_token",
 }
 
+_PRIVATE_DISPLAY_KEYS = {
+    "api_base",
+    "base_url",
+    "proxy",
+    "proxy_url",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "run_root",
+    "evidence_path",
+    "workspace",
+    "cwd",
+    "path",
+    "model",
+    "model_name",
+}
+
+_PRIVATE_URL = re.compile(r"(?i)https?://[^\s\"'<>]+")
+_PRIVATE_ABSOLUTE_PATH = re.compile(r"(?<![A-Za-z0-9_])/(?:[^\s\"']+/){1,}[^\s\"']*")
+
 
 def _redact_secrets(value: Any, *, key: str = "") -> Any:
     """Return JSON-safe model configuration without provider credentials."""
 
     normalized_key = key.casefold().replace("-", "_")
+    if normalized_key in _PRIVATE_DISPLAY_KEYS:
+        return "<redacted>"
     if normalized_key in _SECRET_KEYS or normalized_key.endswith("_api_key"):
         return "<redacted>"
     if isinstance(value, dict):
@@ -207,4 +230,7 @@ def _redact_secrets(value: Any, *, key: str = "") -> Any:
         return [_redact_secrets(item) for item in value]
     if isinstance(value, tuple):
         return [_redact_secrets(item) for item in value]
+    if isinstance(value, str):
+        value = _PRIVATE_URL.sub("<redacted-url>", value)
+        value = _PRIVATE_ABSOLUTE_PATH.sub("<redacted-path>", value)
     return value

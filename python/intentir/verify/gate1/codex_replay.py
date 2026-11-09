@@ -50,15 +50,21 @@ from .replay import (
 
 CODEX_CLI_REPLAY_BACKEND = "openai.codex-cli.intentir-replay.v67"
 
-_INITIAL_PROMPT = """Own one fresh source-blind IntentIR Replay in the isolated /workspace. `input/` is immutable; only `output/`, `work/`, and `tmp/` are writable. Source, pi, non-C Harness/compiler facts, Gate results, prior Replay, sibling state, repository, and network do not exist.
+_INITIAL_PROMPT = """One fresh source-blind Replay in /workspace. input/ is immutable;
+write only output/, work/, tmp/. No Source, pi, non-C Harness/compiler facts,
+Gate results, prior/sibling state, repository or network.
 
-Read `input/compiler-index.intent`, complete `input/semantic-program.intent`, `input/frontend.json`, and accepted `input/c.json` when present before drafting. When frontend has a representation contract, read its complete address and program bindings. J/S_J is the sole semantic authority; C is exact implementation binding only. `semantic_query` and `packet_query` only cross-reference one named J/C handle after those files are read.
+Before drafting, read completely: input/compiler-index.intent,
+input/semantic-program.intent, input/frontend.json (including representation
+address/program bindings), input/c.json if present, input/REPLAY_CONTRACT.md,
+and input/TOOL.md. These own the semantic, ABI, lowering and tool rules.
+J/S_J alone owns semantics; C only binds implementation. Query tools may then
+cross-reference one named J/C handle, never replace reading the complete input.
 
-Then read `input/REPLAY_CONTRACT.md` and `input/TOOL.md` completely: they contain the closed ownership, ABI, lowering, tool, compile, and submission rules and are not optional guidance. Compile the complete S_J into one `output/replay.source`. Own target APIs, mapping, addressing, layout, loops, control, memory, synchronization, and structure, but never change J semantics, use Source/pi, or infer a source recipe.
-
-Preserve each authored access/effect and keep domain guards separate from access predicates. Callable order comes only from `callable_abi_order`; C compiler slots stay outside it. A J access/domain/predicate/loop scalar remains runtime only when the contract says so; a pointwise scalar may remain specializable.
-
-Compile and inspect only owned source, then call `submit_replay` once on exact final bytes. Diagnostics reject but never construct code, semantics, or Gate evidence. A rejected submission ends this episode; never continue its thread or use its source as a repair base. Do not claim Gate1, Gate2, or certification.
+Compile all S_J to output/replay.source. Choose target realization without
+changing J. Compile/inspect only your source; submit_replay once on final bytes.
+Diagnostics only reject. Rejection ends the episode: no continuation or repair
+from rejected source. Never claim Gate1, Gate2 or certification.
 """
 
 
@@ -817,6 +823,7 @@ class CodexCLIReplayWriter:
                     try:
                         fingerprint = fingerprint_ttir(
                             result.ttir,
+                            external_math=result.external_math,
                             python_interface=result.python_interface,
                             schedule=case.schedule,
                         )

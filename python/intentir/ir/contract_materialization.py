@@ -24,7 +24,13 @@ from intentir.ir.canonical_j import (
     j_elaboration,
 )
 from intentir.ir.contract_ir import CanonicalContractIR, project_contract_ir
-from intentir.ir.intent_op_contract import _broadcast_projection
+from intentir.ir.canonical_construction import (
+    unique_exact_rank_insertion_projection,
+)
+from intentir.ir.intent_op_contract import (
+    _broadcast_projection,
+    is_closed_boolean_dtype,
+)
 from intentir.ir.model import IntentOp
 from intentir.verify.gate1.model import AliasKind, SemanticArchive
 
@@ -559,28 +565,22 @@ def project_contract_materialization(
                     guard_type is None
                     or target_type is None
                     or not guard_type.is_tensor
-                    or guard_type.dtype is None
-                    or guard_type.dtype.casefold() != "i1"
+                    or not is_closed_boolean_dtype(guard_type.dtype)
                     or result_type != target_type
                 ):
                     raise ContractMaterializationError(
                         "output-only guarded store requires exact i1 guard and "
                         "output result types"
                     )
-                try:
-                    _broadcast_projection(
-                        list(guard_type.shape),
-                        axes,
-                        list(target_type.shape),
-                        unit_dimensions=direct_unit_dimension_refs(
-                            canonical.dimension_constraints
-                        ),
-                    )
-                except (NotImplementedError, ValueError) as exc:
+                projected_axes = unique_exact_rank_insertion_projection(
+                    guard_type.shape,
+                    target_type.shape,
+                )
+                if projected_axes != axes:
                     raise ContractMaterializationError(
                         "output-only guarded store guard cannot project to its "
-                        f"output: {exc}"
-                    ) from exc
+                        "output through the canonical exact rank-insertion rule"
+                    )
             if relation.value_ref in operation.operands:
                 register_broadcast(
                     result=operation.result,

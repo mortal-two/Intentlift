@@ -19,6 +19,27 @@ import shlex
 import sys
 from typing import Any, Mapping, Sequence
 
+try:
+    from source_store_partition import validate_source_store_partition_assembly
+    from source_projection_contracts import (
+        is_canonical_ordinal as _is_canonical_ordinal,
+        owner_broadcast_requirements,
+        provider_dimension_alias_map,
+        provider_shape_from_canonical,
+        validate_source_semantic_obligations,
+    )
+except ImportError:
+    from intentir.extraction.lifters.source_store_partition import (
+        validate_source_store_partition_assembly,
+    )
+    from intentir.ir.source_projection_contracts import (
+        is_canonical_ordinal as _is_canonical_ordinal,
+        owner_broadcast_requirements,
+        provider_dimension_alias_map,
+        provider_shape_from_canonical,
+        validate_source_semantic_obligations,
+    )
+
 
 MAX_OUTPUT_CHARS = 10_000
 # The Lift observation wrapper may encode the MCP result once more before it
@@ -231,14 +252,165 @@ def _validate_semantic_mcp_write_projection(
             row is not None
             and (
                 not isinstance(row, Mapping)
-                or set(row) != {"field", "json_container"}
+                or set(row)
+                not in (
+                    {"field", "json_container"},
+                    {"field", "json_container", "pattern"},
+                )
                 or not isinstance(row.get("field"), str)
                 or row.get("json_container") not in {"array", "object"}
+                or "pattern" in row
+                and (
+                    not isinstance(row.get("pattern"), str)
+                    or row.get("json_container") != "array"
+                    or not row.get("pattern")
+                )
             )
             for row in arguments.values()
         )
     ):
         raise ValueError("canonical MCP semantic write projection is malformed")
+
+
+def _validate_source_store_projection(
+    required_access_rows: list[Any],
+    required_output_rows: list[Any],
+    output_construction: list[Any],
+    dimension_aliases: Mapping[str, str],
+) -> None:
+    """Validate the Source store locator against its same mounted projection.
+
+    ``source_store_requirements`` and ``source_store_partition_requirement``
+    are navigation projections, not proofs.  They nevertheless must remain
+    exact projections of the Source-authorized access rows.  This reader has
+    no host constructor available, so it joins the public requirement rows
+    back to the public ``source_semantics``/owner outline already mounted in
+    the same transaction.  It never invents a missing store, coordinate, or
+    logical output binding; any incomplete join rejects the mounted bundle.
+    """
+
+    if len(required_output_rows) != len(output_construction):
+        raise ValueError("canonical Source output projection cardinality is inconsistent")
+
+    for output_ordinal, (required_row, output_row) in enumerate(
+        zip(required_output_rows, output_construction, strict=True)
+    ):
+        if not isinstance(required_row, Mapping) or not isinstance(output_row, Mapping):
+            raise ValueError("canonical Source output store projection is malformed")
+        output_name = output_row.get("output")
+        if not isinstance(output_name, str) or not output_name:
+            raise ValueError("canonical Source output store projection lacks output")
+
+        raw_stores = required_row.get("source_store_requirements")
+        raw_partition = required_row.get("source_store_partition_requirement")
+        if raw_stores is None:
+            if raw_partition is not None:
+                raise ValueError(
+                    "canonical Source partition locator lacks store requirements"
+                )
+            continue
+        if (
+            not isinstance(raw_stores, list)
+            or not raw_stores
+            or len({
+                item.get("ordinal")
+                for item in raw_stores
+                if isinstance(item, Mapping)
+            })
+            != len(raw_stores)
+        ):
+            raise ValueError(
+                f"canonical Source store requirements are malformed at output {output_ordinal}"
+            )
+
+        expected_stores: list[dict[str, Any]] = []
+        for access_row in required_access_rows:
+            if not isinstance(access_row, Mapping):
+                raise ValueError("canonical Source access requirements are malformed")
+            access_ordinal = access_row.get("ordinal")
+            if not _is_canonical_ordinal(access_ordinal):
+                raise ValueError("canonical Source access ordinal is malformed")
+            source = access_row.get("source_semantics")
+            if not isinstance(source, Mapping):
+                continue
+            if source.get("kind") not in {"store", "update"}:
+                continue
+            if source.get("tensor") != output_name:
+                continue
+            authorizations = source.get("semantic_authorizations")
+            owner = (
+                authorizations.get("owner")
+                if isinstance(authorizations, Mapping)
+                else None
+            )
+            outline = (
+                owner.get("authoring_outline")
+                if isinstance(owner, Mapping)
+                else None
+            )
+            store = outline.get("store") if isinstance(outline, Mapping) else None
+            coordinates = store.get("coordinates") if isinstance(store, Mapping) else None
+            family = owner.get("operation_family") if isinstance(owner, Mapping) else None
+            if (
+                not isinstance(family, str)
+                or not family
+                or not isinstance(coordinates, list)
+            ):
+                # An unclosed owner outline is not a physical-store locator.
+                # It remains fail-closed at the owner/Source admission layer;
+                # do not manufacture a partial expected row here.
+                continue
+            expected_stores.append(
+                {
+                    "ordinal": access_ordinal,
+                    "kind": source.get("kind"),
+                    "operation_family": family,
+                    "coordinates": copy.deepcopy(coordinates),
+                }
+            )
+
+        if raw_stores != expected_stores:
+            raise ValueError(
+                f"canonical Source store requirements are not access-bound at output {output_ordinal}"
+            )
+
+        if len(raw_stores) > 1:
+            if (
+                not isinstance(raw_partition, Mapping)
+                or set(raw_partition)
+                not in (
+                    {"output", "store_ordinals", "store_coordinates", "relation"},
+                    {
+                        "output",
+                        "store_ordinals",
+                        "store_coordinates",
+                        "relation",
+                        "assembly",
+                    },
+                )
+                or raw_partition.get("output") != output_name
+                or raw_partition.get("relation")
+                != "physical_store_slices_require_complete_logical_output_binding"
+                or raw_partition.get("store_ordinals")
+                != [item["ordinal"] for item in expected_stores]
+                or raw_partition.get("store_coordinates")
+                != [item["coordinates"] for item in expected_stores]
+            ):
+                raise ValueError(
+                    f"canonical Source partition locator is not store-bound at output {output_ordinal}"
+                )
+            validate_source_store_partition_assembly(
+                raw_partition,
+                access_rows=required_access_rows,
+                output_name=output_name,
+                output_type=output_row.get("output_type"),
+                expected_stores=expected_stores,
+                dimension_aliases=dimension_aliases,
+            )
+        elif raw_partition is not None:
+            raise ValueError(
+                f"canonical Source partition locator is unnecessary at output {output_ordinal}"
+            )
 
 
 def _canonical_wire_check(input_root: Path) -> None:
@@ -314,8 +486,86 @@ def _mounted_source_wire_seed(
             raise ValueError(
                 "Source-bound canonical ledger differs from construction authority"
             )
+        if bundle.get("source_facts_digest") != construction.get(
+            "source_facts_digest"
+        ):
+            raise ValueError(
+                "Source-bound SourceFacts digest differs from construction authority"
+            )
+        source_facts = construction.get("source_facts")
+        expected_slice = (
+            source_facts.get("source_slice_digest")
+            if isinstance(source_facts, Mapping)
+            else None
+        )
+        if bundle.get("source_slice_digest") != expected_slice:
+            raise ValueError(
+                "Source-bound Source slice digest differs from construction authority"
+            )
+        _validate_host_launch_contract_receipt(bundle, construction)
         _validate_source_seed_mechanical_rows(seed, construction)
     return seed
+
+
+def _validate_host_launch_contract_receipt(
+    bundle: Mapping[str, Any], construction: Mapping[str, Any]
+) -> None:
+    """Validate the mounted digest receipt without rebuilding the contract."""
+
+    receipt = bundle.get("host_launch_contract")
+    facts = construction.get("source_facts")
+    ledger = construction.get("transfer_ledger")
+    if not isinstance(receipt, Mapping) or not isinstance(facts, Mapping):
+        raise ValueError("mounted host launch contract receipt is unavailable")
+    compiler_facts = facts.get("compiler_facts")
+    if not isinstance(compiler_facts, Mapping):
+        raise ValueError("mounted SourceFacts compiler facts are unavailable")
+    contract = compiler_facts.get("host_launch_contract")
+    source_facts_digest = construction.get("source_facts_digest")
+    if receipt.get("source_facts_digest") != source_facts_digest:
+        raise ValueError("mounted host launch receipt has the wrong SourceFacts digest")
+    if not isinstance(contract, Mapping) or not contract:
+        if receipt.get("status") != "unavailable":
+            raise ValueError("mounted host launch receipt falsely claims availability")
+        if not isinstance(ledger, Mapping):
+            raise ValueError("mounted construction lacks transfer ledger")
+        ledger_digest = hashlib.sha256(
+            json.dumps(
+                dict(ledger),
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        if receipt.get("transfer_ledger_digest") != ledger_digest:
+            raise ValueError("mounted unavailable host receipt transfer lineage disagrees")
+        return
+    if receipt.get("status") != "pass":
+        raise ValueError("mounted host launch receipt is not closed")
+    contract_digest = hashlib.sha256(
+        json.dumps(
+            dict(contract),
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if receipt.get("contract_digest") != contract_digest:
+        raise ValueError("mounted host launch receipt contract digest disagrees")
+    if receipt.get("source_digest") != facts.get("source_digest"):
+        raise ValueError("mounted host launch receipt source digest disagrees")
+    if not isinstance(ledger, Mapping):
+        raise ValueError("mounted construction lacks transfer ledger")
+    ledger_digest = hashlib.sha256(
+        json.dumps(
+            dict(ledger),
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if receipt.get("transfer_ledger_digest") != ledger_digest:
+        raise ValueError("mounted host launch receipt transfer lineage disagrees")
 
 
 def _validate_source_seed_mechanical_rows(
@@ -534,6 +784,30 @@ def _mounted_canonical_construction(input_root: Path) -> dict[str, Any] | None:
         ).encode("utf-8")
     ).hexdigest()
     if authority_digest != expected_digest:
+        return None
+    source_facts = value["source_facts"]
+    transfer_ledger = value["transfer_ledger"]
+    source_facts_digest = hashlib.sha256(
+        json.dumps(
+            source_facts,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if value.get("source_facts_digest") != source_facts_digest:
+        return None
+    transfer_ledger_digest = hashlib.sha256(
+        json.dumps(
+            transfer_ledger,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if value.get("transfer_ledger_digest") != transfer_ledger_digest:
+        return None
+    if transfer_ledger.get("source_facts_digest") != source_facts_digest:
         return None
     return value
 
@@ -1030,9 +1304,7 @@ def _source_semantic_spine(input_root: Path) -> dict[str, Any]:
             role = row.get("role") if isinstance(row, Mapping) else None
             value_type = row.get("value_type") if isinstance(row, Mapping) else None
             if (
-                not isinstance(ordinal, int)
-                or isinstance(ordinal, bool)
-                or ordinal < 0
+                not _is_canonical_ordinal(ordinal)
                 or not isinstance(provider_ref, str)
                 or re.fullmatch(r"t[0-9]+", provider_ref) is None
                 or role not in {"tensor", "scalar", "shape_scalar"}
@@ -1135,6 +1407,30 @@ def _source_semantic_spine(input_root: Path) -> dict[str, Any]:
             )
         }
         local_count = 0
+        # Give each existing expression node one deterministic Source-only
+        # value occurrence.  The previous compact view used labels such as
+        # ``binary:mul`` and ``call:sum`` for nested expressions; repeated
+        # expressions consequently had ambiguous operands and no matching
+        # producer result.  These labels are occurrence identities, not J
+        # ids, and are used only to preserve the AST's existing dataflow.
+        source_expression_refs: dict[int, str] = {}
+        source_expression_index = 0
+        for expression in ast.walk(function):
+            if isinstance(
+                expression,
+                (
+                    ast.BinOp,
+                    ast.BoolOp,
+                    ast.Compare,
+                    ast.UnaryOp,
+                    ast.IfExp,
+                    ast.Call,
+                ),
+            ):
+                source_expression_refs[id(expression)] = (
+                    f"sx{function_ordinal}_{source_expression_index}"
+                )
+                source_expression_index += 1
 
         def alias_for_name(name: str) -> str:
             nonlocal local_count
@@ -1146,6 +1442,9 @@ def _source_semantic_spine(input_root: Path) -> dict[str, Any]:
         def value_ref(node: ast.AST | None) -> str:
             if node is None:
                 return "none"
+            expression_ref = source_expression_refs.get(id(node))
+            if expression_ref is not None:
+                return expression_ref
             if isinstance(node, ast.Name):
                 return alias_for_name(node.id)
             if isinstance(node, ast.Constant):
@@ -1532,6 +1831,9 @@ def _source_semantic_spine(input_root: Path) -> dict[str, Any]:
                         unclassified_calls.add("unknown_operator")
                 if nested_keywords:
                     nested_item["keyword_names"] = nested_keywords
+                child_ref = source_expression_refs.get(id(child))
+                if child_ref is not None:
+                    nested_item["result"] = child_ref
                 nested.append(nested_item)
             if nested:
                 item["nested_operations"] = nested
@@ -1667,6 +1969,118 @@ def _source_semantic_spine(input_root: Path) -> dict[str, Any]:
             unclassified_calls.add("unresolved_helper_call_graph")
             break
         pending_bindings = remaining
+    # The hierarchical ``operations`` view is useful for Source navigation,
+    # but it is too easy for a provider to mistake a nested leaf for part of
+    # its parent.  Add a deterministic, Source-owned flat view.  These refs
+    # are fact identities only; they are never provider/J labels and never
+    # create an operation absent from the AST.
+    source_fact_ordinal = 0
+    operation_requirements: list[dict[str, Any]] = []
+    for operation in operations:
+        facts = [operation]
+        nested = operation.get("nested_operations")
+        if isinstance(nested, list):
+            facts.extend(item for item in nested if isinstance(item, Mapping))
+        for fact in facts:
+            source_ref = f"s{source_fact_ordinal}"
+            source_fact_ordinal += 1
+            fact["source_ref"] = source_ref
+            family = required_operation_family(
+                fact.get("kind"), fact.get("operator")
+            )
+            if family is None:
+                continue
+            operands = fact.get("operands")
+            row: dict[str, Any] = {
+                "source_ref": source_ref,
+                "source_order": len(operation_requirements),
+                # ``canonical_op`` is the canonical family identity.  Do not
+                # publish the same value a second time under ``family``: the
+                # provider-facing projection must have one authoritative
+                # spelling while the host-side counters remain separate.
+                "canonical_op": family,
+                "operands": copy.deepcopy(operands)
+                if isinstance(operands, list)
+                else [],
+            }
+            # Preserve the existing Source assignment target when the AST
+            # fact has one.  This is a read-only Source fact that lets the
+            # provider connect a top-level producer to the already-projected
+            # Source value flow; it is not a J id/result and is never copied
+            # into the submitted graph verbatim.
+            result = fact.get("result")
+            if isinstance(result, str) and result:
+                row["result"] = result
+            if family in {"map_binary", "map_unary", "reduce"}:
+                row["canonical_attrs"] = {"fn": fact.get("operator")}
+            else:
+                # These leaves have no schema-derived ``fn`` attribute, so
+                # retain their Source operator explicitly.
+                row["operator"] = fact.get("operator")
+            units = (
+                2
+                if fact.get("kind") == "fused_multiply_add"
+                else max(1, len(operands) - 1)
+                if fact.get("kind") in {"compare", "boolean"}
+                and isinstance(operands, list)
+                else 1
+            )
+            if units > 1:
+                row["source_unit_count"] = units
+            operation_requirements.append(row)
+    # The flat AST walk above is Source-navigation order, not necessarily
+    # producer order: an outer expression is recorded before its nested
+    # operands.  Derive exact producer edges only from the unique expression
+    # occurrence refs already present in each row's operands/results, then
+    # expose a stable topological order.  These refs remain Source fact
+    # locators; they are never provider/J labels.  Operands without a
+    # canonical operation producer (for example, a transfer-owned load) stay
+    # external and are resolved through the existing transfer ledger.
+    source_result_refs = {
+        row["result"]: row["source_ref"]
+        for row in operation_requirements
+        if isinstance(row.get("result"), str)
+        and re.fullmatch(r"sx[0-9]+_[0-9]+", row["result"]) is not None
+    }
+    operation_dependencies: dict[str, set[str]] = {}
+    operation_rows_by_ref = {
+        row["source_ref"]: row for row in operation_requirements
+    }
+    for row in operation_requirements:
+        source_ref = row["source_ref"]
+        operands = row.get("operands")
+        dependencies = sorted(
+            {
+                source_result_refs[operand]
+                for operand in operands
+                if isinstance(operand, str)
+                and operand in source_result_refs
+                and source_result_refs[operand] != source_ref
+            }
+        ) if isinstance(operands, list) else []
+        row["source_dependencies"] = dependencies
+        operation_dependencies[source_ref] = set(dependencies)
+    ordered_operation_requirements: list[dict[str, Any]] = []
+    remaining_operation_refs = set(operation_rows_by_ref)
+    while remaining_operation_refs:
+        ready = sorted(
+            (
+                source_ref
+                for source_ref in remaining_operation_refs
+                if operation_dependencies[source_ref].isdisjoint(
+                    remaining_operation_refs
+                )
+            ),
+            key=lambda source_ref: operation_rows_by_ref[source_ref]["source_order"],
+        )
+        if not ready:
+            unclassified_calls.add("cyclic_source_operation_requirements")
+            break
+        source_ref = ready[0]
+        ordered_operation_requirements.append(operation_rows_by_ref[source_ref])
+        remaining_operation_refs.remove(source_ref)
+    if not remaining_operation_refs:
+        operation_requirements = ordered_operation_requirements
     required_operation_families: dict[str, int] = {}
     required_operation_attributes: dict[tuple[str, str, str], int] = {}
     for operation in operations:
@@ -1743,14 +2157,14 @@ def _source_semantic_spine(input_root: Path) -> dict[str, Any]:
         "reason": "source_operation_family_unavailable" if unclassified_calls else None,
         "unclassified_calls": sorted(unclassified_calls),
         "entry_scope": "entry",
-        "operation_order": "deterministic Source traversal order",
+        "operation_order": "Source order",
         "entry_argument_projection": entry_argument_projection,
         "helper_call_bindings": helper_call_bindings,
         "alias_convention": (
-            "default scope=entry_scope; helper aliases only navigate; legal J operands "
-            "are entry_argument_projection.provider_ref"
+            "helper aliases navigate; J inputs use entry_argument_projection.provider_ref"
         ),
         "operations": operations,
+        "operation_requirements": operation_requirements,
         "required_operation_families": {
             name: required_operation_families[name]
             for name in sorted(required_operation_families)
@@ -1774,7 +2188,7 @@ def _source_semantic_spine(input_root: Path) -> dict[str, Any]:
         # first complete graph declaration.
         "basic_operation_contracts": sorted(required_contracts),
         "missing_operation_contracts": [],
-        "authority": "deterministic AST facts; not Source text, TTIR, or J",
+        "authority": "Source AST facts only; not text, TTIR, or J",
     }
 
 
@@ -1832,10 +2246,41 @@ def _source_brief(input_root: Path) -> None:
         }
     framework = _j_framework_value(input_root)
     semantic_spine = _source_semantic_spine(input_root)
+    source_operation_requirements: list[dict[str, Any]] | None = None
+    source_operation_dependencies: list[list[int]] | None = None
+    if isinstance(semantic_spine, Mapping):
+        # ``operation_requirements`` is the compact provider-facing flat
+        # projection.  Keep the richer hierarchical AST walk host-side; the
+        # provider must not reconstruct it from nested summaries.
+        semantic_spine = dict(semantic_spine)
+        raw_operation_requirements = semantic_spine.get("operation_requirements")
+        if isinstance(raw_operation_requirements, list):
+            source_operation_requirements = copy.deepcopy(raw_operation_requirements)
+            requirement_positions = {
+                row.get("source_ref"): index
+                for index, row in enumerate(source_operation_requirements)
+                if isinstance(row, Mapping)
+            }
+            source_operation_dependencies = []
+            for index, row in enumerate(source_operation_requirements):
+                if not isinstance(row, Mapping):
+                    raise ValueError("canonical Source operation requirement is malformed")
+                for dependency in row.get("source_dependencies", ()):
+                    producer_index = requirement_positions.get(dependency)
+                    if producer_index is None or producer_index >= index:
+                        raise ValueError(
+                            "canonical Source operation dependency order is malformed"
+                        )
+                    source_operation_dependencies.append([index, producer_index])
+                row.pop("source_order", None)
+                row.pop("source_dependencies", None)
+        semantic_spine.pop("operations", None)
+        semantic_spine.pop("operation_requirements", None)
     semantic_contract = framework.get("semantic_candidate_contract")
     mcp_write_protocol = framework.get("mcp_write_protocol")
     transfer_projection = framework.get("semantic_transfer_projection")
     construction_identity = framework.get("construction_identity")
+    host_launch_receipt = framework.get("host_launch_contract")
     if not isinstance(transfer_projection, Mapping):
         raise ValueError("canonical framework lacks semantic transfer projection")
     transfer_occurrences = transfer_projection.get("occurrences")
@@ -1860,6 +2305,14 @@ def _source_brief(input_root: Path) -> None:
         or any(not isinstance(value, str) or not value for value in construction_identity.values())
     ):
         raise ValueError("canonical framework lacks construction identity")
+    if (
+        not isinstance(host_launch_receipt, Mapping)
+        or host_launch_receipt.get("source_facts_digest")
+        != construction_identity.get("source_facts_digest")
+        or transfer_projection.get("host_launch_contract")
+        != host_launch_receipt
+    ):
+        raise ValueError("canonical framework host launch receipt is not transfer-bound")
     semantic_template = semantic_contract.get("template")
     operation_namespace = semantic_contract.get("operation_namespace")
     if not isinstance(semantic_template, Mapping):
@@ -1878,6 +2331,8 @@ def _source_brief(input_root: Path) -> None:
         or any(name not in compact_operations for name in basic_leaves)
     ):
         raise ValueError("canonical framework lacks compact basic operation leaves")
+    if source_operation_requirements is None:
+        raise ValueError("canonical Source operation requirements are unavailable")
     _validate_semantic_mcp_write_projection(semantic_contract, mcp_write_protocol)
     # The first authoring entry is intentionally semantic-only.  Publishing a
     # complete artifact-shaped seed here made providers copy host-owned schema,
@@ -1916,6 +2371,7 @@ def _source_brief(input_root: Path) -> None:
             raise ValueError("canonical semantic construction requirements are malformed")
         access_count = accesses.get("count")
         output_count = outputs.get("count")
+        obligations = requirements.get("obligations")
         if (
             isinstance(access_count, bool)
             or not isinstance(access_count, int)
@@ -1923,8 +2379,172 @@ def _source_brief(input_root: Path) -> None:
             or isinstance(output_count, bool)
             or not isinstance(output_count, int)
             or output_count < 0
+            or not isinstance(obligations, list)
+            or not obligations
         ):
             raise ValueError("canonical semantic construction row counts are malformed")
+        for obligation in obligations:
+            stage = obligation.get("stage") if isinstance(obligation, Mapping) else None
+            if not isinstance(stage, str):
+                raise ValueError("canonical semantic obligation stage is malformed")
+        typed_outputs: list[dict[str, Any]] = []
+        output_rows = outputs.get("rows")
+        if not isinstance(output_rows, list) or len(output_rows) != output_count:
+            raise ValueError("canonical semantic output rows are malformed")
+        for ordinal, row in enumerate(output_rows):
+            output_type = row.get("output_type") if isinstance(row, Mapping) else None
+            dtype = output_type.get("dtype") if isinstance(output_type, Mapping) else None
+            shape = output_type.get("shape") if isinstance(output_type, Mapping) else None
+            if (
+                not isinstance(dtype, str)
+                or not dtype
+                or not isinstance(shape, list)
+                or len(shape) > 16
+                or any(
+                    not (
+                        isinstance(extent, str) and bool(extent)
+                        or isinstance(extent, int)
+                        and not isinstance(extent, bool)
+                        and extent >= 0
+                    )
+                    for extent in shape
+                )
+            ):
+                raise ValueError("canonical semantic output type is malformed")
+            typed_outputs.append(
+                {
+                    "ordinal": ordinal,
+                    # Keep the Source brief's typed-output row identical to
+                    # the ``begin_candidate`` receipt.  Both are projections
+                    # of the same Source ABI obligation, and the graph
+                    # ingress/feedback contract consumes the flat
+                    # ``dtype``/``shape`` pair.  A nested ``output_type``
+                    # spelling here made the Agent translate the same fact
+                    # between two wire shapes before it could author a typed
+                    # producer; no producer or output binding is inferred by
+                    # this normalization.
+                    "dtype": dtype[:64],
+                    "shape": copy.deepcopy(shape),
+                }
+            )
+            source_store_requirements = row.get("source_store_requirements")
+            if source_store_requirements is not None:
+                if (
+                    not isinstance(source_store_requirements, list)
+                    or not source_store_requirements
+                    or any(
+                        not isinstance(item, Mapping)
+                        or set(item)
+                        != {"ordinal", "kind", "operation_family", "coordinates"}
+                        or not _is_canonical_ordinal(item.get("ordinal"))
+                        or item.get("kind") not in {"store", "update"}
+                        or not isinstance(item.get("operation_family"), str)
+                        or not item.get("operation_family")
+                        or not isinstance(item.get("coordinates"), list)
+                        or any(
+                            not (
+                                isinstance(coordinate, int)
+                                and not isinstance(coordinate, bool)
+                            )
+                            and not (
+                                isinstance(coordinate, str)
+                                and (
+                                    re.fullmatch(r"axis[0-9]+", coordinate) is not None
+                                    or re.fullmatch(r"[0-9]+", coordinate) is not None
+                                )
+                            )
+                            for coordinate in item.get("coordinates", ())
+                        )
+                        for item in source_store_requirements
+                    )
+                    or len({item["ordinal"] for item in source_store_requirements})
+                    != len(source_store_requirements)
+                ):
+                    raise ValueError(
+                        "canonical semantic output store requirements are malformed"
+                    )
+                typed_outputs[-1]["source_store_requirements"] = copy.deepcopy(
+                    source_store_requirements
+                )
+            partition_requirement = row.get(
+                "source_store_partition_requirement"
+            )
+            if partition_requirement is not None:
+                if (
+                    not isinstance(partition_requirement, Mapping)
+                    or set(partition_requirement)
+                    not in (
+                        {
+                            "output",
+                            "store_ordinals",
+                            "store_coordinates",
+                            "relation",
+                        },
+                        {
+                            "output",
+                            "store_ordinals",
+                            "store_coordinates",
+                            "relation",
+                            "assembly",
+                        },
+                    )
+                    or partition_requirement.get("output") != row.get("output")
+                    or partition_requirement.get("relation")
+                    != "physical_store_slices_require_complete_logical_output_binding"
+                    or not isinstance(
+                        partition_requirement.get("store_ordinals"), list
+                    )
+                    or not isinstance(
+                        partition_requirement.get("store_coordinates"), list
+                    )
+                    or len(partition_requirement["store_ordinals"])
+                    != len(partition_requirement["store_coordinates"])
+                    or not partition_requirement["store_ordinals"]
+                    or any(
+                        not _is_canonical_ordinal(item)
+                        for item in partition_requirement["store_ordinals"]
+                    )
+                    or any(
+                        not isinstance(item, list)
+                        for item in partition_requirement["store_coordinates"]
+                    )
+                ):
+                    raise ValueError(
+                        "canonical semantic output partition requirement is malformed"
+                    )
+                assembly = partition_requirement.get("assembly")
+                if assembly is not None:
+                    if (
+                        not isinstance(assembly, Mapping)
+                        or set(assembly)
+                        != {
+                            "canonical_op",
+                            "axis",
+                            "operand_store_ordinals",
+                            "operand_coordinates",
+                            "operand_type",
+                            "result_type",
+                        }
+                        or assembly.get("canonical_op") != "concat"
+                        or type(assembly.get("axis")) is not int
+                        or assembly.get("result_type")
+                        != {"dtype": dtype, "shape": copy.deepcopy(shape)}
+                        or not isinstance(assembly.get("operand_type"), Mapping)
+                        or assembly["operand_type"].get("dtype") != dtype
+                        or not isinstance(assembly.get("operand_type", {}).get("shape"), list)
+                        or not isinstance(assembly.get("operand_store_ordinals"), list)
+                        or not isinstance(assembly.get("operand_coordinates"), list)
+                        or len(assembly["operand_store_ordinals"])
+                        != len(assembly["operand_coordinates"])
+                        or len(assembly["operand_store_ordinals"])
+                        != len(source_store_requirements or ())
+                    ):
+                        raise ValueError(
+                            "canonical semantic output assembly requirement is malformed"
+                        )
+                typed_outputs[-1]["source_store_partition_requirement"] = (
+                    copy.deepcopy(dict(partition_requirement))
+                )
         return {
             "authority": requirements.get("authority"),
             "source_transfer": {
@@ -1940,9 +2560,17 @@ def _source_brief(input_root: Path) -> None:
             "semantic_required": {
                 "operation_body": {"required": True},
                 "accesses": {"count": access_count, "order": "Source ordinal"},
-                "outputs": {"count": output_count, "order": "Source output ABI order"},
+                "outputs": {
+                    "count": output_count,
+                    "order": "Source output ABI order",
+                    "typed_output_requirements": typed_outputs,
+                },
             },
-            "detail_resource": "intentir://lift/source/transfer-ledger",
+            "obligations": {
+                "count": len(obligations),
+                "resource": "semantic-transfer",
+                "resolution": "host_validator_only",
+            },
         }
 
     def brief_write_protocol(protocol: Mapping[str, Any]) -> dict[str, Any]:
@@ -1969,7 +2597,6 @@ def _source_brief(input_root: Path) -> None:
             "authority": protocol.get("authority"),
             "steps": copy.deepcopy(steps),
             "required_steps": copy.deepcopy(required_steps),
-            "tool_arguments": copy.deepcopy(dict(arguments)),
         }
 
     framework_projection: dict[str, Any] = {
@@ -1977,6 +2604,9 @@ def _source_brief(input_root: Path) -> None:
         # lifecycle compares the two before opening construction, then binds
         # a graph-after-ledger reread to the same mounted transaction.
         "construction_identity": copy.deepcopy(dict(construction_identity)),
+        # The exact host launch receipt is revalidated and carried by the
+        # mandatory transfer-ledger read. Repeating it in the first brief
+        # consumes authoring context without adding an Agent-owned choice.
         "semantic_candidate": copy.deepcopy(dict(semantic_template)),
         "operation_namespace": copy.deepcopy(dict(operation_namespace)),
         "mcp_write_protocol": brief_write_protocol(mcp_write_protocol),
@@ -1989,6 +2619,12 @@ def _source_brief(input_root: Path) -> None:
         "provider_dimension_aliases": copy.deepcopy(
             framework.get("provider_dimension_aliases", [])
         ),
+        "source_operation_requirements": source_operation_requirements,
+        # Encode expression producer edges once as [consumer_index,
+        # producer_index] pairs. This is the same Source-derived relation as
+        # the per-row begin receipt, without repeating a long field name on
+        # every operation row in the bounded first-turn brief.
+        "source_operation_dependencies": source_operation_dependencies,
         "source_transfer_counts": {
             "occurrences": len(transfer_occurrences),
         },
@@ -2046,42 +2682,23 @@ def _source_brief(input_root: Path) -> None:
                     prior[key] = value[:256]
             graph = preparation.get("operation_graph_failure")
             if isinstance(graph, Mapping):
-                safe_graph: dict[str, Any] = {}
-                for key, value in graph.items():
-                    if key in {
-                        "failure_count", "attempt", "operation_rows", "row_index",
-                        "result_rank", "expected_rank", "output_ordinal",
-                        "access_ordinal", "function_visible_matching_value_count",
-                        "function_visible_compatible_boolean_result_count",
-                        "direct_single_result_consumer_id_count",
-                        "required_operation_count", "actual_operation_count",
-                    } and isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-                        safe_graph[key] = value
-                    elif key in {
-                        "last_rule_code", "json_container", "declaration_sha256",
-                        "operation", "field", "attribute", "required_attribute_value",
-                    } and isinstance(value, str) and value:
-                        safe_graph[key] = value[:256]
-                    elif key in {"allowed_fields", "required_fields"} and isinstance(value, list) and all(
-                        isinstance(item, str) and item for item in value
-                    ):
-                        safe_graph[key] = list(value[:32])
-                    elif key == "required_output_type" and isinstance(value, Mapping):
-                        dtype = value.get("dtype")
-                        shape = value.get("shape")
-                        if (
-                            isinstance(dtype, str)
-                            and isinstance(shape, list)
-                            and all(
-                                isinstance(item, (str, int))
-                                and not isinstance(item, bool)
-                                for item in shape
-                            )
-                        ):
-                            safe_graph[key] = {
-                                "dtype": dtype[:64],
-                                "shape": list(shape[:16]),
-                            }
+                # ``feedback_frontier.json`` is produced from the host's
+                # already-sanitized preparation receipt.  Copy that bounded
+                # diagnostic object as one opaque relation envelope instead
+                # of maintaining a second field whitelist here.  The host
+                # projector is the single authority for dropping candidate,
+                # Source, declaration and operation payloads; preserving the
+                # envelope keeps future safe relation fields synchronized.
+                try:
+                    safe_graph = copy.deepcopy(dict(graph))
+                    json.dumps(
+                        safe_graph,
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    )
+                except (TypeError, ValueError, UnicodeError):
+                    safe_graph = {}
                 if safe_graph:
                     prior["operation_graph_failure"] = safe_graph
             if prior:
@@ -2145,6 +2762,132 @@ def _source_brief(input_root: Path) -> None:
         entry.pop("basic_operation_leaves", None)
         brief["semantic_authoring_entry"] = entry
     if brief_size() > MAX_OUTPUT_CHARS:
+        # ``source_store_requirements`` is a Source-authorized navigation aid,
+        # not a required first-turn contract.  The complete rows remain in the
+        # mounted canonical Source bundle and are revalidated into the
+        # begin_candidate typed-output receipt.  Drop only this duplicated
+        # first-turn copy when the bounded brief would otherwise be rejected;
+        # retain output dtype/shape and every operation/access obligation.
+        entry = brief.get("semantic_authoring_entry")
+        requirements = (
+            entry.get("semantic_construction_requirements")
+            if isinstance(entry, Mapping)
+            else None
+        )
+        semantic_required = (
+            requirements.get("semantic_required")
+            if isinstance(requirements, Mapping)
+            else None
+        )
+        outputs = (
+            semantic_required.get("outputs")
+            if isinstance(semantic_required, Mapping)
+            else None
+        )
+        typed_output_requirements = (
+            outputs.get("typed_output_requirements")
+            if isinstance(outputs, Mapping)
+            else None
+        )
+        if (
+            not isinstance(entry, Mapping)
+            or not isinstance(requirements, Mapping)
+            or not isinstance(semantic_required, Mapping)
+            or not isinstance(outputs, Mapping)
+            or not isinstance(typed_output_requirements, list)
+        ):
+            raise ValueError("source brief semantic construction summary is malformed")
+        compact_requirements = copy.deepcopy(dict(requirements))
+        compact_required = dict(compact_requirements["semantic_required"])
+        compact_outputs = dict(compact_required["outputs"])
+        compact_typed_outputs: list[dict[str, Any]] = []
+        for row in typed_output_requirements:
+            if not isinstance(row, Mapping):
+                raise ValueError("source brief typed output requirements are malformed")
+            compact_row = dict(row)
+            compact_row.pop("source_store_requirements", None)
+            # The complete partition locator is revalidated and carried by
+            # begin_candidate.  Keeping this duplicate in the first-turn
+            # brief can push a real kernel over the fixed MCP output budget;
+            # remove only the duplicate, never the mounted Source bundle or
+            # the begin receipt that the construction phase consumes.
+            # The complete partition proof is revalidated from the mounted
+            # bundle and carried by begin_candidate.required_slots.  It is a
+            # duplicate on the first-turn brief; remove the whole copy so a
+            # large real kernel cannot lose its operation spine to prompt
+            # budget pressure.  This does not remove the requirement from the
+            # MCP transaction or weaken its graph check.
+            compact_row.pop("source_store_partition_requirement", None)
+            compact_typed_outputs.append(compact_row)
+        compact_outputs["typed_output_requirements"] = compact_typed_outputs
+        compact_required["outputs"] = compact_outputs
+        compact_requirements["semantic_required"] = compact_required
+        compact_entry = dict(entry)
+        compact_entry["semantic_construction_requirements"] = compact_requirements
+        brief["semantic_authoring_entry"] = compact_entry
+    if brief_size() > MAX_OUTPUT_CHARS:
+        # These descriptions explain the projection but do not carry a
+        # semantic obligation.  Keep the structured Source argument map,
+        # operation rows, family counts and attributes; remove only prose
+        # labels when a large real kernel still exceeds the fixed MCP result
+        # budget after the optional store-navigation copy was deferred.
+        entry = brief.get("semantic_authoring_entry")
+        spine = entry.get("source_semantic_spine") if isinstance(entry, Mapping) else None
+        if not isinstance(entry, Mapping) or not isinstance(spine, Mapping):
+            raise ValueError("source brief semantic spine is malformed")
+        compact_entry = dict(entry)
+        compact_spine = dict(spine)
+        for field in ("entry_scope", "operation_order", "alias_convention", "authority"):
+            compact_spine.pop(field, None)
+        compact_entry["source_semantic_spine"] = compact_spine
+        brief["semantic_authoring_entry"] = compact_entry
+    if brief_size() > MAX_OUTPUT_CHARS:
+        # A fresh retry may also carry a bounded preparation frontier.  Keep
+        # only the rule-level fields needed to choose the next legal action;
+        # the full Source facts and current typed receipts remain authoritative
+        # elsewhere.  Never let historical diagnostic prose make the current
+        # semantic entry unreadable.
+        prior = brief.get("prior_authoring_feedback")
+        if isinstance(prior, Mapping):
+            compact_prior: dict[str, Any] = {}
+            for field in (
+                "failure_class",
+                "attempted_step",
+                "next_legal_action",
+            ):
+                value = prior.get(field)
+                if isinstance(value, str) and value:
+                    compact_prior[field] = value[:96]
+            graph = prior.get("operation_graph_failure")
+            if isinstance(graph, Mapping):
+                # The mounted frontier is already a bounded, host-sanitized
+                # relation envelope.  Retain it as a whole during brief
+                # compaction so adding one safe relation (shape, dtype,
+                # predicate, or future type contract) cannot silently split
+                # the direct and MCP feedback paths.
+                try:
+                    compact_graph = copy.deepcopy(dict(graph))
+                    json.dumps(
+                        compact_graph,
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    )
+                except (TypeError, ValueError, UnicodeError):
+                    compact_graph = {}
+                if compact_graph:
+                    compact_prior["operation_graph_failure"] = compact_graph
+            if compact_prior:
+                brief["prior_authoring_feedback"] = compact_prior
+            else:
+                brief.pop("prior_authoring_feedback", None)
+    if brief_size() > MAX_OUTPUT_CHARS:
+        # Prior feedback is diagnostic convenience only.  If a large source
+        # projection still leaves no room after the bounded reduction above,
+        # start the fresh owner from current Source facts rather than rejecting
+        # the semantic entry or exposing an unbounded history payload.
+        brief.pop("prior_authoring_feedback", None)
+    if brief_size() > MAX_OUTPUT_CHARS:
         raise ValueError("source brief exceeds the bounded semantic entry budget")
     _emit_compact_json(brief)
 
@@ -2163,8 +2906,15 @@ def _semantic_transfer(input_root: Path, start: int, count: int) -> None:
         if isinstance(transfer_projection, Mapping)
         else None
     )
+    host_launch_receipt = (
+        transfer_projection.get("host_launch_contract")
+        if isinstance(transfer_projection, Mapping)
+        else None
+    )
     if not isinstance(requirements, Mapping) or not isinstance(projection_occurrences, list):
         raise ValueError("canonical framework lacks semantic construction requirements")
+    if not isinstance(host_launch_receipt, Mapping):
+        raise ValueError("canonical semantic transfer lacks host launch receipt")
     if (
         not isinstance(construction_identity, Mapping)
         or set(construction_identity)
@@ -2177,6 +2927,10 @@ def _semantic_transfer(input_root: Path, start: int, count: int) -> None:
         or any(not isinstance(value, str) or not value for value in construction_identity.values())
     ):
         raise ValueError("canonical semantic transfer identity is malformed")
+    obligation_rows = validate_source_semantic_obligations(
+        requirements.get("obligations"),
+        construction_identity["source_facts_digest"],
+    )
     semantic_required = requirements.get("semantic_required")
     accesses = (
         semantic_required.get("accesses")
@@ -2218,16 +2972,70 @@ def _semantic_transfer(input_root: Path, start: int, count: int) -> None:
             "provider_owned_expression_fields"
         )
         provider_relations = wire_row.get("provider_owned_relations")
+        source_authorizations = source.get("semantic_authorizations")
+        source_owner = (
+            source_authorizations.get("owner")
+            if isinstance(source_authorizations, Mapping)
+            else None
+        )
+        source_owner_outline = (
+            source_owner.get("authoring_outline")
+            if isinstance(source_owner, Mapping)
+            else None
+        )
+        if source_owner_outline is not None and (
+            not isinstance(source_owner_outline, Mapping)
+            or set(source_owner_outline) != {"store", "graph"}
+            or not isinstance(source_owner_outline.get("store"), Mapping)
+            or not isinstance(source_owner_outline.get("graph"), list)
+        ):
+            raise ValueError("canonical Source owner outline is malformed")
+        broadcast_requirements = (
+            owner_broadcast_requirements(source_owner_outline)
+            if isinstance(source_owner_outline, Mapping)
+            else None
+        )
+        if (
+            broadcast_requirements is not None
+            and source.get("owner_broadcast_requirements")
+            != broadcast_requirements
+        ):
+            raise ValueError("canonical Source owner broadcast projection is inconsistent")
         if (
             not isinstance(required, list)
             or not isinstance(source, Mapping)
             or not isinstance(template, Mapping)
             or not isinstance(provider_fields, list)
             or not isinstance(provider_owned, list)
-            or provider_owned_expressions != ["index_expression"]
+            or any(
+                not isinstance(field, str)
+                or field not in required
+                or field not in template
+                for field in provider_owned
+            )
+            or not isinstance(provider_owned_expressions, list)
+            or any(
+                not isinstance(field, str)
+                or field not in required
+                or field not in template
+                or field in provider_owned
+                for field in provider_owned_expressions
+            )
             or not isinstance(provider_relations, Mapping)
             or wire_row.get("ordinal") != source_row.get("ordinal")
             or wire_row.get("access_label") != source_row.get("access_label")
+            or source_row.get("index_expression_requirement")
+            != wire_row.get("index_expression_requirement")
+            or (
+                wire_row.get("index_expression_requirement") is not None
+                and (
+                    not isinstance(
+                        wire_row.get("index_expression_requirement"), str
+                    )
+                    or not wire_row.get("index_expression_requirement")
+                    or "index_expression" not in provider_owned_expressions
+                )
+            )
             or template.get("access_label") != wire_row.get("access_label")
             or template.get("ordinal") != wire_row.get("ordinal")
             or "id" in template
@@ -2259,7 +3067,7 @@ def _semantic_transfer(input_root: Path, start: int, count: int) -> None:
                     resolved[field] = copy.deepcopy(value)
         else:
             unresolved.append("closed_source_transfer_ledger")
-        return {
+        result = {
             "ordinal": wire_row.get("ordinal"),
             "access_label": wire_row.get("access_label"),
             "provider_fields": list(provider_fields),
@@ -2270,12 +3078,36 @@ def _semantic_transfer(input_root: Path, start: int, count: int) -> None:
             "wire_template": copy.deepcopy(dict(template)),
             "resolved_fields": resolved,
             "unresolved_fields": unresolved,
-            "next_legal_action": (
-                "host_source_binding_required"
-                if unresolved
-                else "declare_accesses"
-            ),
+            # Provider-owned expressions and local labels are intentionally
+            # unresolved at this read. They are authoring obligations, not a
+            # failed host Source binding (the blocked-ledger branch below is).
+            "next_legal_action": "declare_accesses",
         }
+        access_obligations = [
+            copy.deepcopy(row)
+            for row in obligation_rows
+            if row["source_locator"].get("ordinal") == wire_row.get("ordinal")
+        ]
+        if not access_obligations:
+            raise ValueError("canonical semantic access has no obligation contract")
+        result["obligations"] = access_obligations
+        predicate_requirement = wire_row.get("predicate_requirement")
+        if isinstance(predicate_requirement, str):
+            result["predicate_requirement"] = predicate_requirement
+        index_requirement = wire_row.get("index_expression_requirement")
+        if isinstance(index_requirement, str):
+            result["index_expression_requirement"] = index_requirement
+        if source_owner_outline is not None:
+            # This is an existing Source-issued committed outline. It contains
+            # only the logical typed DAG and store relation; owner tokens and
+            # host handles are never copied into the provider surface.
+            result["source_owner_authoring_outline"] = copy.deepcopy(
+                dict(source_owner_outline)
+            )
+            result["owner_broadcast_requirements"] = copy.deepcopy(
+                broadcast_requirements
+            )
+        return result
 
     if transfer_status != "pass":
         # An ambiguous Source ledger is a host preparation failure, never an
@@ -2288,6 +3120,7 @@ def _semantic_transfer(input_root: Path, start: int, count: int) -> None:
                 "status": transfer_status,
                 "reason": transfer_reason,
                 "construction_identity": copy.deepcopy(dict(construction_identity)),
+                "host_launch_contract": copy.deepcopy(dict(host_launch_receipt)),
                 "occurrences": [
                     compact_access(source_row, wire_row, blocked=True)
                     for source_row, wire_row in zip(
@@ -2304,27 +3137,6 @@ def _semantic_transfer(input_root: Path, start: int, count: int) -> None:
         return
     first = start - 1
 
-    access_page = [
-        compact_access(source_row, wire_row)
-        for source_row, wire_row in zip(
-            access_rows[first : first + count],
-            projection_occurrences[first : first + count],
-            strict=True,
-        )
-        if isinstance(source_row, Mapping) and isinstance(wire_row, Mapping)
-    ]
-    output_page = [
-        {
-            "ordinal": first + offset,
-            "output": row.get("output"),
-            "output_type": copy.deepcopy(row.get("output_type")),
-            "required_fields": ["value"],
-            "wire_template": copy.deepcopy(row.get("wire_template")),
-        }
-        for offset, row in enumerate(output_rows[first : first + count])
-        if isinstance(row, Mapping)
-    ]
-
     def page(rows: list[Any], total: int) -> dict[str, Any]:
         next_start = start + len(rows)
         return {
@@ -2335,16 +3147,63 @@ def _semantic_transfer(input_root: Path, start: int, count: int) -> None:
             "rows": rows,
         }
 
-    _emit_compact_json(
-        {
+    # ``count`` is a requested upper bound, not a promise that the complete
+    # page fits the MCP output limit. In particular, owner outlines can make
+    # a nine-occurrence ledger larger than the fixed 10k character ceiling.
+    # Choose the largest prefix that fits, preserving every row and its order.
+    for page_count in range(count, 0, -1):
+        access_page = [
+            compact_access(source_row, wire_row)
+            for source_row, wire_row in zip(
+                access_rows[first : first + page_count],
+                projection_occurrences[first : first + page_count],
+                strict=True,
+            )
+            if isinstance(source_row, Mapping) and isinstance(wire_row, Mapping)
+        ]
+        output_page = [
+            {
+                "ordinal": first + offset,
+                "output": row.get("output"),
+                "output_type": copy.deepcopy(row.get("output_type")),
+                "required_fields": ["value"],
+                "wire_template": copy.deepcopy(row.get("wire_template")),
+                "obligations": [
+                    copy.deepcopy(obligation)
+                    for obligation in obligation_rows
+                    if obligation["source_locator"].get("output_ordinal")
+                    == first + offset
+                ],
+            }
+            for offset, row in enumerate(output_rows[first : first + page_count])
+            if isinstance(row, Mapping)
+        ]
+        payload = {
             "kind": "canonical_semantic_transfer_ledger",
             "status": "pass",
             "construction_identity": copy.deepcopy(dict(construction_identity)),
+            "host_launch_contract": copy.deepcopy(dict(host_launch_receipt)),
             "accesses": page(access_page, len(access_rows)),
             "outputs": page(output_page, len(output_rows)),
             "next_legal_action": "begin_candidate_then_declare_accesses",
         }
-    )
+        next_starts = [
+            item["next_start"]
+            for item in (payload["accesses"], payload["outputs"])
+            if item["next_start"] is not None
+        ]
+        # Access and output rows are two independently sized Source-order
+        # projections sharing one page cursor.  Once one side is exhausted,
+        # its next_start is None; the live side must still be allowed to
+        # continue.  Use the greatest live cursor so no occurrence page is
+        # dropped and let the exhausted side return an explicitly empty page.
+        payload["next_start"] = max(next_starts) if next_starts else None
+        if payload["next_start"] is not None:
+            payload["next_legal_action"] = "read_next_transfer_page"
+        if len(json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))) <= MAX_OUTPUT_CHARS:
+            _emit_compact_json(payload)
+            return
+    raise ValueError("one semantic transfer row exceeds the MCP output limit")
 
 
 _SOURCE_MEMORY_CALLS = frozenset(
@@ -3555,13 +4414,20 @@ def _semantic_construction_identity(
     source_facts_digest = (
         digest(source_facts) if isinstance(source_facts, Mapping) else None
     )
+    declared_source_facts_digest = construction.get("source_facts_digest")
+    declared_transfer_ledger_digest = construction.get("transfer_ledger_digest")
+    transfer_ledger_digest = (
+        digest(transfer_ledger) if isinstance(transfer_ledger, Mapping) else None
+    )
     if (
         not isinstance(authority_digest, str)
         or not authority_digest
         or not isinstance(source_facts_digest, str)
         or not source_facts_digest
+        or declared_source_facts_digest != source_facts_digest
         or ledger_source_facts_digest != source_facts_digest
         or not isinstance(transfer_ledger, Mapping)
+        or declared_transfer_ledger_digest != transfer_ledger_digest
         or not isinstance(allocator, Mapping)
     ):
         raise ValueError("canonical construction identity is malformed")
@@ -3604,6 +4470,23 @@ def _j_framework_from_source_seed(
     source_facts = construction.get("source_facts")
     if not isinstance(allocator, Mapping) or not isinstance(source_facts, Mapping):
         raise TypeError("mounted canonical construction authority is incomplete")
+    source_bundle = _load_json(
+        input_root / "schema" / "canonical_source_wire_bundle.json"
+    )
+    provider_dimension_aliases = source_bundle.get("provider_dimension_aliases")
+    dimension_aliases = provider_dimension_alias_map(
+        provider_dimension_aliases,
+        canonical_dimensions=allocator.get("x"),
+    )
+    host_launch_receipt = source_bundle.get("host_launch_contract")
+    transfer_projection = source_bundle.get("semantic_transfer_projection")
+    if (
+        not isinstance(host_launch_receipt, Mapping)
+        or not isinstance(transfer_projection, Mapping)
+        or transfer_projection.get("host_launch_contract")
+        != host_launch_receipt
+    ):
+        raise ValueError("canonical host launch receipt is not transfer-bound")
     namespace_order = profile.get("namespace_order")
     source_owned = profile.get("source_owned_namespaces")
     candidate_owned = profile.get("candidate_owned_namespaces")
@@ -3646,6 +4529,16 @@ def _j_framework_from_source_seed(
         raise ValueError(
             "canonical Source wire bundle lacks semantic construction requirements"
         )
+    source_facts_digest = source_bundle.get("source_facts_digest")
+    semantic_obligations = semantic_construction_requirements.get("obligations")
+    try:
+        validate_source_semantic_obligations(
+            semantic_obligations, source_facts_digest
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "canonical Source wire bundle lacks a closed semantic obligation contract"
+        ) from exc
     output_construction = source_bundle.get("output_construction")
     if not isinstance(output_construction, list) or any(
         not isinstance(row, Mapping) for row in output_construction
@@ -3653,6 +4546,36 @@ def _j_framework_from_source_seed(
         raise ValueError("canonical Source wire bundle lacks output construction")
     if any("abi_carrier" in row for row in output_construction):
         raise ValueError("canonical Source output projection leaked ABI carrier")
+    if len(output_construction) != len(outputs):
+        raise ValueError("canonical Source output projection cardinality is inconsistent")
+    for output_ordinal, (output_row, seed_row) in enumerate(
+        zip(output_construction, outputs, strict=True)
+    ):
+        if not isinstance(seed_row, Mapping):
+            raise ValueError("canonical Source seed output declaration is malformed")
+        seed_name = seed_row.get("name")
+        seed_dtype = seed_row.get("dtype")
+        seed_shape = seed_row.get("shape")
+        if (
+            not isinstance(seed_name, str)
+            or not isinstance(seed_dtype, str)
+            or not isinstance(seed_shape, list)
+        ):
+            raise ValueError("canonical Source seed output declaration is malformed")
+        try:
+            provider_shape = provider_shape_from_canonical(
+                seed_shape, dimension_aliases
+            )
+        except ValueError as exc:
+            raise ValueError("canonical Source seed output dimension is malformed") from exc
+        if (
+            output_row.get("output") != seed_name
+            or output_row.get("output_type")
+            != {"dtype": seed_dtype, "shape": provider_shape}
+        ):
+            raise ValueError(
+                f"canonical Source output construction is not seed-bound at ordinal {output_ordinal}"
+            )
     submission = semantic_construction_requirements.get("submission")
     semantic_required = semantic_construction_requirements.get("semantic_required")
     construction_sections = (
@@ -3676,21 +4599,230 @@ def _j_framework_from_source_seed(
         or not isinstance(semantic_required, Mapping)
     ):
         raise ValueError("canonical semantic construction requirements are malformed")
-    provider_dimension_aliases = source_bundle.get("provider_dimension_aliases")
-    if not isinstance(provider_dimension_aliases, list) or any(
-        not isinstance(row, Mapping)
-        or not isinstance(row.get("local"), str)
-        or not isinstance(row.get("ordinal"), int)
-        or row.get("ordinal") < 0
-        for row in provider_dimension_aliases
+
+    # Validate the public occurrence projection against the private ledger
+    # before any brief, framework, or transfer page is exposed.  The ledger is
+    # authoritative but its receipts must never be returned to the provider;
+    # this function only performs an internal join and emits the sanitized
+    # projection below.
+    projected_occurrences = semantic_transfer_projection.get("occurrences")
+    private_ledger = source_bundle.get("source_transfer_ledger")
+    private_occurrences = (
+        private_ledger.get("occurrences")
+        if isinstance(private_ledger, Mapping)
+        else None
+    )
+    private_bindings = (
+        private_ledger.get("bindings")
+        if isinstance(private_ledger, Mapping)
+        else None
+    )
+    required_accesses = (
+        semantic_required.get("accesses")
+        if isinstance(semantic_required, Mapping)
+        else None
+    )
+    required_access_rows = (
+        required_accesses.get("rows")
+        if isinstance(required_accesses, Mapping)
+        else None
+    )
+    required_outputs = (
+        semantic_required.get("outputs")
+        if isinstance(semantic_required, Mapping)
+        else None
+    )
+    required_output_rows = (
+        required_outputs.get("rows")
+        if isinstance(required_outputs, Mapping)
+        else None
+    )
+    if (
+        not isinstance(projected_occurrences, list)
+        or not isinstance(private_occurrences, list)
+        or not isinstance(private_bindings, list)
+        or not isinstance(required_access_rows, list)
+        or len(projected_occurrences) != len(private_occurrences)
+        or len(projected_occurrences) != len(private_bindings)
+        or len(projected_occurrences) != len(required_access_rows)
+        or not isinstance(required_output_rows, list)
+        or len(required_output_rows) != len(output_construction)
     ):
-        raise ValueError("canonical Source wire bundle lacks dimension aliases")
-    if [row["ordinal"] for row in provider_dimension_aliases] != list(
-        range(len(provider_dimension_aliases))
-    ) or [row["local"] for row in provider_dimension_aliases] != [
-        f"dim{index}" for index in range(len(provider_dimension_aliases))
-    ]:
-        raise ValueError("canonical Source dimension aliases are not dense")
+        raise ValueError("canonical Source projection cardinality is inconsistent")
+
+    _validate_source_store_projection(
+        required_access_rows,
+        required_output_rows,
+        output_construction,
+        dimension_aliases,
+    )
+
+    def public_authorization_matches_private(
+        private: object,
+        public: object,
+        *,
+        owner: bool = False,
+    ) -> bool:
+        if not isinstance(private, Mapping):
+            return public is None
+        status = private.get("status")
+        if status == "unavailable":
+            return public is None and set(private) == {"status", "reason"}
+        if status != "pass" or not isinstance(public, Mapping):
+            return False
+        family = private.get("operation_family")
+        token = private.get("token")
+        if not isinstance(family, str) or not isinstance(token, str):
+            return False
+        if owner:
+            expected = {"operation_family"}
+            outline = private.get("authoring_outline")
+            if outline is not None:
+                expected.add("authoring_outline")
+            return (
+                set(public) == expected
+                and "token" not in public
+                and public.get("operation_family") == family
+                and (outline is None or public.get("authoring_outline") == outline)
+            )
+        return (
+            set(public) == {"token", "operation_family"}
+            and public.get("token") == token
+            and public.get("operation_family") == family
+        )
+
+    for ordinal, (private_row, private_binding, wire_row, requirement_row) in enumerate(
+        zip(
+            private_occurrences,
+            private_bindings,
+            projected_occurrences,
+            required_access_rows,
+            strict=True,
+        )
+    ):
+        private_auth = (
+            private_binding.get("semantic_authorizations")
+            if isinstance(private_binding, Mapping)
+            else None
+        )
+        public_auth = (
+            wire_row.get("semantic_authorizations")
+            if isinstance(wire_row, Mapping)
+            else None
+        )
+        if (
+            not isinstance(private_row, Mapping)
+            or not isinstance(private_binding, Mapping)
+            or not isinstance(wire_row, Mapping)
+            or not isinstance(requirement_row, Mapping)
+            or not _is_canonical_ordinal(private_row.get("ordinal"))
+            or not _is_canonical_ordinal(private_binding.get("ordinal"))
+            or not _is_canonical_ordinal(wire_row.get("ordinal"))
+            or not _is_canonical_ordinal(requirement_row.get("ordinal"))
+            or private_row.get("ordinal") != ordinal
+            or private_binding.get("ordinal") != ordinal
+            or wire_row.get("ordinal") != ordinal
+            or requirement_row.get("ordinal") != ordinal
+            or wire_row.get("access_label") != f"access{ordinal}"
+            or requirement_row.get("access_label") != f"access{ordinal}"
+            or wire_row.get("kind") != private_row.get("kind")
+            or wire_row.get("masked") != private_row.get("masked")
+            or wire_row.get("tensor") != private_row.get("logical_ref")
+            or not isinstance(private_auth, Mapping)
+            or set(private_auth) != {"access_view", "owner", "computed_guard"}
+            or not isinstance(public_auth, Mapping)
+            or re.search(
+                r"(?<![A-Za-z0-9_])so_[0-9a-f]{32}_[0-9a-f]{64}(?![A-Za-z0-9_])",
+                json.dumps(wire_row, sort_keys=True, ensure_ascii=False),
+            )
+            or any(
+                isinstance(value, Mapping)
+                and (
+                    "status" in value
+                    or "compiler_attestation" in value
+                    or (name == "owner" and "token" in value)
+                )
+                for name, value in public_auth.items()
+            )
+            or not all(
+                public_authorization_matches_private(
+                    private_auth.get(name),
+                    public_auth.get(name),
+                    owner=name == "owner",
+                )
+                for name in ("access_view", "owner", "computed_guard")
+            )
+        ):
+            raise ValueError("canonical Source authorization projection is inconsistent")
+        source_semantics = requirement_row.get("source_semantics")
+        owner_outline = (
+            public_auth.get("owner", {}).get("authoring_outline")
+            if isinstance(public_auth.get("owner"), Mapping)
+            else None
+        )
+        expected_broadcasts = (
+            owner_broadcast_requirements(owner_outline)
+            if isinstance(owner_outline, Mapping)
+            else None
+        )
+        if (
+            not isinstance(source_semantics, Mapping)
+            or source_semantics.get("kind") != wire_row.get("kind")
+            or source_semantics.get("tensor") != wire_row.get("tensor")
+            or source_semantics.get("masked") != wire_row.get("masked")
+            or source_semantics.get("predicate") != wire_row.get("predicate")
+            or source_semantics.get("fill_value") != wire_row.get("fill_value")
+            or source_semantics.get("index") != wire_row.get("index")
+            or source_semantics.get("effect_order") != wire_row.get("effect_order")
+            or source_semantics.get("predicate_requirement")
+            != wire_row.get("predicate_requirement")
+            or source_semantics.get("pi_binding") != wire_row.get("pi_binding")
+            or source_semantics.get("semantic_authorizations") != public_auth
+            or (
+                expected_broadcasts is not None
+                and source_semantics.get("owner_broadcast_requirements")
+                != expected_broadcasts
+            )
+            or (
+                expected_broadcasts is None
+                and "owner_broadcast_requirements" in source_semantics
+            )
+            or any(
+                requirement_row.get(field) != wire_row.get(field)
+                for field in (
+                    "provider_fields",
+                    "provider_owned_fields",
+                    "provider_owned_expression_fields",
+                    "provider_owned_relations",
+                    "required_fields",
+                    "wire_template",
+                )
+            )
+        ):
+            raise ValueError("canonical Source requirements are not projection-bound")
+
+    for ordinal, (required_row, output_row) in enumerate(
+        zip(required_output_rows, output_construction, strict=True)
+    ):
+        if (
+            not isinstance(required_row, Mapping)
+            or not isinstance(output_row, Mapping)
+            or required_row.get("output") != output_row.get("output")
+            or required_row.get("output_type") != output_row.get("output_type")
+            or required_row.get("required_fields") != ["value"]
+            or required_row.get("wire_template") != {"value": "<local_result_or_source_t>"}
+        ):
+            raise ValueError(
+                f"canonical Source output projection is inconsistent at ordinal {ordinal}"
+            )
+    canonical_dimensions = allocator.get("x")
+    try:
+        provider_dimension_alias_map(
+            provider_dimension_aliases,
+            canonical_dimensions=canonical_dimensions,
+        )
+    except ValueError as exc:
+        raise ValueError("canonical Source dimension aliases are not allocator-bound") from exc
     # TTIR is an optional frontend observation.  The canonical J seed is built
     # from SourceFacts, the transfer ledger, and the allocator, so a workload
     # whose compiler observation is unavailable must still be able to read its
@@ -3801,6 +4933,7 @@ def _j_framework_from_source_seed(
         "semantic_transfer_projection": copy.deepcopy(
             dict(semantic_transfer_projection)
         ),
+        "host_launch_contract": copy.deepcopy(dict(host_launch_receipt)),
         "construction_identity": construction_identity,
         "source_transfer_counts": {
             "occurrences": len(semantic_transfer_projection.get("occurrences", ())),

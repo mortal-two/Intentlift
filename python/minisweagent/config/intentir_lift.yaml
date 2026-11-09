@@ -1,54 +1,91 @@
 agent:
   system_template: |
-    Own one fresh source-aware Lift. Only bounded MCP facts and rule-level
-    prior feedback are visible; CandidateCheck, Decode, TypeCheck,
-    SourceReconcile, Replay, Gate1, and Gate2 are external.
+    Fresh semantic MCP Lift. Use only the currently exposed mcp_call_tool action;
+    do not read files, emit prose/free JSON/C/pi, or reuse any old artifact.
+    Critical multi-store join: each physical-store owner root is one slice;
+    assembly.operand_store_ordinals[i] selects that exact owner root, and one
+    new top-level concat consumes those fresh slice results in listed order and
+    produces the exact assembly.result_type. Slice roots alone are incomplete.
+    At every turn perform exactly the exposed action. On failure, use only
+    rule_code, rule_path, expected_relation, actual_relation, repair_scope and
+    next_legal_action from that response; change only the stated scope.
 
-    Use only `mcp_call_tool` and its exposed action: no prose, files, free
-    candidate/artifact/patch, C, or pi JSON. A semantic entry reads the brief
-    then ledger. `prior_authoring_feedback` is rule-only, never a candidate or
-    template. If the brief lists missing operation leaves, look up exactly that
-    full `op:NAME` set in one call before begin.
-    Every attempt starts from the semantic entry. Never use a previous
-    candidate, rejected draft, trajectory, session, or repair base.
+    Required order: brief → transfer ledger → one exact schema lookup only if
+    exposed → begin_candidate → operation graph → required transfer reread →
+    accesses → outputs → boundary → finalize. Never skip, repeat, or reorder an
+    exposed read/write. Finalize once; a failed owner is not a repair base.
 
-    The brief authorizes Source semantics/control/returns; the ledger alone
-    authorizes ordered accesses, owners, fills, and output slots. Follow the
-    exposed chain only: begin, non-empty graph, post-graph ledger read,
-    accesses, outputs, finalize. A lookup is only `{items:["op:NAME"]}` and
-    every declaration is one JSON value in its named argument.
+    Declare only Source-visible J semantics: canonical operation names, typed
+    provider-local SSA values, Source-order accesses, proven predicates/fills,
+    and output value choices. Use only names and relations exposed by MCP.
+    Preserve Source producer order, masks, domains, and types. Do not invent
+    predicates, owners, coordinates, operations, padding, identities, or ids.
 
-    Author Source-visible J only: typed SSA graph, domains, accesses,
-    predicates/fills, control, output selections, and J-proven normalization.
-    Host owns canonical handles/scopes and access/effect ids, ABI/C,
-    returns/attachments, typed rows, and other pi. The provider explicitly
-    authors each paired effect kind/target/node owner with its access. Each
-    output selects one local result or `t*`.
+    Every graph call replaces the whole body; it never appends. Submit one
+    complete non-empty producer-order graph in one call, never a row or patch.
+    Include exactly one row per item in begin receipt
+    `source_operation_requirements`, every
+    listed owner DAG, and all required family/attribute counts. Use canonical_op
+    as op; preserve source_dependencies and exact Source attrs. Source refs are
+    locators, not J ids/results/operands. Give every row operands as an array
+    (use [] for zero-input ops) and fresh local id/result labels. The host
+    never fills missing rows, producers, owners, or results.
+    Make each typed_output_requirement visible as an exact typed graph result
+    or Source input before output mapping; mapping cannot create/promote it.
+    For `operation_graph_must_expose_each_source_output_type`, use the returned
+    `required_output_type`; matching-value count is diagnostic only. Rebuild
+    from the current Source producer chain; never choose a producer by type
+    alone, add a dummy row, or copy a rejected graph. Preserve full Responses
+    tool history.
+    For shape/type errors, use only the returned expected dtype/shape and
+    repair rule on the named row; preserve op/attrs/operands/result and resend
+    the complete graph. Never infer a broadcast or alter another row.
+    Symbolic extents must be listed provider_dimension_aliases[].local values
+    (`dimN`); integer extents stay literal. Never use argument/tensor/ABI/SSA
+    labels as extents or rename an unknown dimension by guess. For mask errors
+    distinguish `no_boolean_result` from `no_exact_shape_projection` and use
+    only an existing Source-proven i1 relation. Missing family counts locate
+    Source obligations; they never permit dummy rows. Rebuild from current
+    Source facts, never from a rejected graph.
+    A Source requirement is one leaf, not a parent/example. Preserve its
+    canonical result relation with a fresh local label; copy canonical_attrs.fn
+    exactly for map/reduce operations. Expand source_unit_count only by its
+    Source-proven relation. Boundary transfers are accesses; program_id is
+    host-projected.
+    Mirror each source_owner_producer_requirement using its transfer ordinal
+    and exact source_owner_authoring_outline.graph. For a physical_store_slice,
+    its root owns only that slice. If logical assembly is listed, make one
+    top-level concat over the exact ordered fresh slice roots and use only the
+    specified axis/result type. Do not substitute a same-shaped value or
+    promote one slice to the logical output.
+    For each transfer-row owner_broadcast_requirements entry, map its graph
+    consumer and operand position to the corresponding local operation and
+    operand result; copy target_axes exactly into boundary.broadcasts.axes.
+    For a transfer-row predicate_requirement, use only its existing Source
+    proof and semantic_guard_authorization. A computed guard needs one
+    access_guard_relations row: access_ref=Source access_label,
+    value_ref=its local i1 result, polarity=positive, axes=the unique
+    Source-proven target-axis insertion; set that access predicate to "true".
+    Match its op/axis/extent to the exposed Source facts; never infer them.
+    After a successful graph, reread the transfer ledger before declaring
+    accesses or outputs; do not expect begin_candidate to contain those rows.
+    For access rows, copy fixed Source fields exactly. If
+    `index_expression` is provider-owned, submit a real local expression,
+    never `<...>` or null; provider-owned predicate/node/effect labels must be
+    local labels already proven by the graph.
 
-    Use only Source `t*`, local `id`/`result`, `dim*`, and exact `access*`.
-    `op` is canonical but `id` is local; accesses use their label+ordinal, not
-    an op id. Operands use only `provider_ref` (`t*`), never `argN`, `localN`,
-    attributes, calls, or dimensions; every result has a full type. Never emit
-    canonical ids, ABI/C rows, returns, or `p*` as a logical tensor/index.
-
-    Preserve proven order, control, typed addresses, and fills. A predicate is
-    an earlier typed bool with one guard projection; a masked load names its
-    direct single-result consumer. Do not invent any of these. Every ABI output
-    needs a visible input or typed result; affine accesses stay accesses and
-    iota/gather/scatter need proven typed integer indexing. Capacity masks are
-    predicates, never dimensions/iota; keep frontend facts outside J/C/pi.
+    Host owns schema, canonical ids, scopes, effects, ABI/C, returns and pi.
+    Never emit host n*/v*/x*/p*/c*/a*/e* ids, owner tokens, or TTIR/Triton
+    operation spellings. If a response says no progress, stop the current
+    authoring path; do not try a different whole graph.
   instance_template: |
-    Start as a new owner. This receipt has only bounded MCP resource metadata,
-    never Source, Harness, feedback, schema, or candidate content:
+    Fresh owner. Read only the currently exposed MCP resource/tool, follow its
+    next_legal_action, and submit one complete semantic candidate through the
+    ordered chain. Use bounded failure metadata for local correction only.
 
     <mcp-startup-receipt>
     {{ startup_context }}
     </mcp-startup-receipt>
-
-    Read brief and ledger before authoring. Prior feedback is rule-only. Do not request
-    Source, reconstruct host mechanics, copy observer/Replay aliases into J/C/pi,
-    create files, or restart unchanged work. Frontends stay separate; CUDA is
-    never parsed as Python. End only with `finalize_candidate`.
   # The dynamic MCP surface exposes one legal transaction edge per turn.
   # Entry reads brief then transfer ledger, and reads the exact bounded set of
   # missing operation leaves in one call when the Source spine requires it.
@@ -95,19 +132,21 @@ model:
   # never yield a partial candidate or repair base.
   routine_timeout_seconds: null
   semantic_initial_turns: 0
-  compact_tool_history: true
+  # MCP tool calls and their outputs are semantic conversation state. They
+  # must be resent in full on every stateless Responses request.
+  compact_tool_history: false
   compact_tool_arguments_over_chars: 2048
   compact_tool_outputs_keep_recent: 4
   compact_workspace_mirrors: false
-  compact_response_history_keep_recent: 4
-  # Keep Responses requests stateless across all selectable transports. The
-  # bounded local MCP history is the only carry-over within a fresh Lift.
+  compact_response_history_keep_recent: 0
+  # Keep Responses requests stateless: no server-side state and no response-id
+  # continuation. The complete local history is the only carry-over.
   use_previous_response_id: false
   observation_template: |
-    {%- if output.output | length < 8000 -%}
+    {%- if output.output | length < 12000 -%}
     {"returncode": {{ output.returncode }}, "output": {{ output.output | tojson }}{% if output.exception_info %}, "exception": {{ output.exception_info | tojson }}{% endif %}}
     {%- else -%}
-    {"returncode": {{ output.returncode }}, "output_head": {{ output.output[:4000] | tojson }}, "output_tail": {{ output.output[-4000:] | tojson }}, "elided_chars": {{ output.output | length - 8000 }}}
+    {"returncode": {{ output.returncode }}, "output_head": {{ output.output[:6000] | tojson }}, "output_tail": {{ output.output[-6000:] | tojson }}, "elided_chars": {{ output.output | length - 12000 }}}
     {%- endif %}
   format_error_template: |
     MCP call error: {{ error }}
@@ -121,15 +160,14 @@ model:
     # Accept only a stream with a completed Responses envelope; a closed
     # function-call item cannot replace a missing completion event.
     stream: true
+    store: false
   retry_attempts: 1
   retry_timeouts: false
-  # An incomplete Responses stream is a Lift preparation failure.  It has no
-  # candidate or semantic evidence, so return it directly instead of spending
-  # another provider attempt or logical Lift call.
-  # One retry is transport-only: it is used only when the remote Responses
-  # stream itself fails before a completed model turn. It never reuses a
-  # partial candidate and never consumes another logical Lift invocation.
-  transient_retry_attempts: 1
+  # A retryable SSE/stream-incomplete failure may use two additional physical
+  # requests in this same logical turn. The third consecutive failed SSE
+  # attempt is terminal; it never creates a candidate or repair base.
+  transient_retry_attempts: 0
+  sse_retry_attempts: 2
   use_global_model_stats: false
   cost_tracking: ignore_errors
 environment:

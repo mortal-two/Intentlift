@@ -106,17 +106,19 @@ model:
     max_retries: 0
     parallel_tool_calls: false
   # Same source-blind episode and exact message packet; no new semantic input.
-  # One physical provider attempt belongs to one Replay model turn. A timeout
-  # is fail-closed and is recorded as provider infrastructure failure.
+  # A retryable SSE/stream-incomplete failure may use two additional physical
+  # requests in this same logical turn. The third consecutive failed SSE
+  # attempt is fail-closed and cannot become Replay source.
   retry_attempts: 1
-  # One relay/service failure may be retried at the transport layer without
-  # creating a second logical Replay episode or changing the submitted source.
-  transient_retry_attempts: 1
+  # Non-SSE provider failures remain terminal. Only the dedicated SSE budget
+  # below may repeat the same exact Replay turn without changing its source.
+  transient_retry_attempts: 0
   # Hard per-episode transport budgets. They are enforced immediately before
   # each real provider request, including retry/fallback calls inside one
   # logical turn; exhaustion ends Replay fail-closed.
   physical_provider_call_limit: 32
-  transport_retry_limit: 1
+  transport_retry_limit: 2
+  sse_retry_attempts: 2
   retry_timeouts: false
   use_global_model_stats: false
   cost_tracking: ignore_errors

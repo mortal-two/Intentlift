@@ -35,6 +35,7 @@ from intentir.ir.intent_op_contract import (
     is_closed_dtype,
     is_closed_floating_dtype,
     is_closed_integer_dtype,
+    is_consumer_reduction_identity,
     is_non_boolean_integer_dtype,
     is_ragged_carrier_dtype,
     IntentOpContractError,
@@ -2070,7 +2071,6 @@ def _check_known_operation_contracts(
             operands = operation.get("operands")
             result = operation.get("result")
             fields = attrs.get("fields")
-            declared = operation.get("type")
             attrs_ok = _known_exact_attrs(
                 attrs,
                 allowed=frozenset({"fields"}),
@@ -4083,8 +4083,7 @@ def _check_access_guard_relations(
             continue
         if (
             not guard_type.is_tensor
-            or guard_type.dtype is None
-            or guard_type.dtype.casefold() != "i1"
+            or not is_closed_boolean_dtype(guard_type.dtype)
         ):
             reject(
                 index,
@@ -5547,32 +5546,6 @@ def _same_closed_scalar(left: Any, right: Any) -> bool:
     )
 
 
-def _is_consumer_identity(fn: str, dtype: str, value: Any) -> bool:
-    if fn == "sum":
-        return value == "ZERO" or (
-            not isinstance(value, bool)
-            and isinstance(value, (int, float))
-            and float(value) == 0.0
-        )
-    if fn == "prod":
-        return (
-            not isinstance(value, bool)
-            and isinstance(value, (int, float))
-            and float(value) == 1.0
-        )
-    if fn == "any":
-        return value is False or value == "false"
-    if fn == "all":
-        return value is True or value == "true"
-    if not _floating_dtype(dtype):
-        return False
-    if fn == "max":
-        return isinstance(value, str) and value in {"NEG_INF", "-inf"}
-    if fn == "min":
-        return isinstance(value, str) and value in {"POS_INF", "+inf", "inf"}
-    return False
-
-
 def _consumer_dependency_path(
     j: SemanticArchive,
     *,
@@ -5587,7 +5560,6 @@ def _consumer_dependency_path(
     access, so a same-tensor sibling access cannot silently satisfy it.
     """
 
-    intent = j.intent.to_json()["intent_function"]
     path_to_ref = {path: ref for ref, path in j.node_ids.items()}
     producers: dict[str, tuple[str | None, Mapping[str, Any]]] = {}
     for path, operation in _canonical_operation_items(j):
@@ -5638,48 +5610,6 @@ def _consumer_dependency_path(
         return result
 
     return visit(operand)
-
-
-def _consumer_extension_candidates(
-    j: SemanticArchive,
-    *,
-    operand: str,
-) -> tuple[
-    dict[str, tuple[Any, tuple[Mapping[str, Any], ...]]],
-    tuple[str, ...],
-]:
-    """Resolve access provenance, preferring exact access.node_ref evidence."""
-
-    by_tensor: dict[
-        str,
-        list[tuple[Any, tuple[Mapping[str, Any], ...]]],
-    ] = {}
-    for access in j.boundary.accesses:
-        if access.kind.value != "load" or access.predicate is None:
-            continue
-        found, path = _consumer_dependency_path(
-            j,
-            operand=operand,
-            access_node_ref=access.node_ref,
-            access_tensor=access.tensor,
-        )
-        if found:
-            by_tensor.setdefault(access.tensor, []).append((access, path))
-
-    selected: dict[str, tuple[Any, tuple[Mapping[str, Any], ...]]] = {}
-    ambiguous: list[str] = []
-    for tensor, candidates in by_tensor.items():
-        node_bound = [item for item in candidates if item[0].node_ref is not None]
-        if node_bound:
-            for access, path in node_bound:
-                selected[access.access_id] = (access, path)
-            continue
-        if len(candidates) != 1:
-            ambiguous.append(tensor)
-            continue
-        access, path = candidates[0]
-        selected[access.access_id] = (access, path)
-    return selected, tuple(sorted(ambiguous))
 
 
 def _validate_consumer_path(
@@ -5862,7 +5792,7 @@ def _check_consumer_extensions(
                     extension.outside.dtype,
                 )
             )
-        if not _is_consumer_identity(
+        if not is_consumer_reduction_identity(
             str(fn), extension.outside.dtype, extension.outside.value
         ):
             diagnostics.append(
@@ -5884,21 +5814,25 @@ def _check_consumer_extensions(
                 )
             )
             continue
-        candidates, ambiguous = _consumer_extension_candidates(j, operand=operand)
-        selected = candidates.get(extension.access_ref)
-        if selected is None or access.tensor in ambiguous:
+        found, selected_path = _consumer_dependency_path(
+            j,
+            operand=operand,
+            access_node_ref=access.node_ref,
+            access_tensor=access.tensor,
+        )
+        if not found:
             diagnostics.append(
                 TypeCheckDiagnostic(
                     TypeCheckErrorCode.CONSUMER_EXTENSION_INVALID,
                     f"{path}.access_ref",
-                    "access provenance does not unambiguously reach this "
-                    "consumer operand",
+                    "selected access provenance does not reach this consumer "
+                    "operand",
                     extension.access_ref,
                 )
             )
             continue
         path_issue = _validate_consumer_path(
-            selected[1],
+            selected_path,
             outside_value=extension.outside.value,
             outside_dtype=extension.outside.dtype,
         )
@@ -6786,9 +6720,6 @@ def type_check(
         diagnostics,
         required=require_program_axes,
     )
-    authorizations = {
-        item.auth_id: item for item in j.boundary.realization_authorizations
-    }
     valid_subjects = {
         ref
         for ref, anchor in anchors.items()

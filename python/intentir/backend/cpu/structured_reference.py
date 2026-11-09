@@ -271,6 +271,28 @@ def _round_away_from_zero(value: np.ndarray) -> np.ndarray:
     return np.copysign(magnitude, array).astype(array.dtype, copy=False)
 
 
+def _rsqrt_ftz_f32(value: np.ndarray) -> np.ndarray:
+    """Reference f32 rsqrt with signed subnormal input/output flush.
+
+    Approximation error remains governed by the existing Gate2 comparison
+    policy; the FTZ branch itself is an explicit J semantic obligation.
+    """
+    array = np.asarray(value, dtype=np.float32)
+    tiny = np.finfo(np.float32).tiny
+    operand = np.where(
+        np.abs(array) < tiny,
+        np.copysign(np.float32(0), array),
+        array,
+    )
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        result = np.asarray(np.reciprocal(np.sqrt(operand)), dtype=np.float32)
+    return np.where(
+        np.abs(result) < tiny,
+        np.copysign(np.float32(0), result),
+        result,
+    )
+
+
 _UNARY = {
     "identity": lambda value: value,
     "exp": np.exp,
@@ -278,6 +300,7 @@ _UNARY = {
     "log2": np.log2,
     "sqrt": np.sqrt,
     "rsqrt": lambda value: np.reciprocal(np.sqrt(value)),
+    "rsqrt_ftz": _rsqrt_ftz_f32,
     "neg": np.negative,
     "recip": np.reciprocal,
     "abs": np.abs,
@@ -492,6 +515,7 @@ class _Evaluator:
         broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]],
         access_guard_relations: Sequence[Any] = (),
         consumer_extensions: Sequence[Any] = (),
+        update_padding_relations: Sequence[Any] = (),
         conditional_effect_stores: Sequence[Any] = (),
     ) -> None:
         self.j = j
@@ -595,6 +619,63 @@ class _Evaluator:
                     "structured logical updates duplicate one scatter node"
                 )
             self.logical_updates[update.node_ref] = update
+        accesses = {item.access_id: item for item in j.boundary.accesses}
+        self.update_padding_relations: dict[
+            tuple[str, str, str, int, str], Any
+        ] = {}
+        for relation in update_padding_relations:
+            update_ref = getattr(relation, "update_ref", None)
+            access_ref = getattr(relation, "access_ref", None)
+            consumer_ref = getattr(relation, "consumer_ref", None)
+            operand_index = getattr(relation, "operand_index", None)
+            role = getattr(relation, "update_operand_role", None)
+            update = self.logical_updates.get(update_ref)
+            access = accesses.get(access_ref)
+            consumer = nodes.get(consumer_ref)
+            extension = self.consumer_outside.get((consumer_ref, operand_index))
+            if (
+                update is None
+                or access is None
+                or access.kind.value != "load"
+                or access.predicate is None
+                or consumer is None
+                or consumer.op != "reduce"
+                or extension is None
+                or getattr(extension, "access_ref", None) != access_ref
+                or role not in {"target", "indices", "values"}
+                or not isinstance(getattr(relation, "domain_axes", None), tuple)
+                or not relation.domain_axes
+                or len(set(relation.domain_axes)) != len(relation.domain_axes)
+            ):
+                raise ValueError(
+                    "structured update-padding receipt is not mechanically closed"
+                )
+            if (
+                relation.base_ref != update.base
+                or relation.indices_ref != update.indices
+                or relation.values_ref != update.values
+                or relation.update_axis != update.axis
+                or relation.combiner != update.combiner.value
+                or relation.outside_dtype != getattr(extension, "dtype", None)
+                or relation.outside_value != getattr(extension, "value", None)
+                or relation.identity_law
+                != getattr(extension, "identity_law", None)
+            ):
+                raise ValueError(
+                    "structured update-padding receipt differs from canonical J"
+                )
+            key = (
+                update_ref,
+                access_ref,
+                consumer_ref,
+                operand_index,
+                role,
+            )
+            if key in self.update_padding_relations:
+                raise ValueError(
+                    "structured update-padding receipts duplicate one relation"
+                )
+            self.update_padding_relations[key] = relation
         output_names = {
             binding.output for binding in j_elaboration(j).output_bindings
         }
@@ -2357,6 +2438,7 @@ def execute_structured_reference(
     broadcast_axes: Mapping[str, Mapping[str, Sequence[int]]] | None = None,
     access_guard_relations: Sequence[Any] = (),
     consumer_extensions: Sequence[Any] = (),
+    update_padding_relations: Sequence[Any] = (),
     conditional_effect_stores: Sequence[Any] = (),
 ) -> CPUExecutionResult:
     """Execute the restricted typed denotation of one canonical J.
@@ -2427,6 +2509,7 @@ def execute_structured_reference(
         broadcast_axes or {},
         guarded_loads,
         consumer_extensions,
+        update_padding_relations,
         conditional_effect_stores,
     )
     env = evaluator.sequence(canonical_body, checked_inputs, allow_loop=True)
@@ -2493,6 +2576,9 @@ def execute_structured_reference(
             "zero_trip_loop_count": evaluator.zero_trip_loops,
             "access_guard_load_materialization_count": len(
                 evaluator.access_guard_loads
+            ),
+            "update_padding_relation_count": len(
+                evaluator.update_padding_relations
             ),
             "conditional_effect_store_count": (
                 evaluator.executed_conditional_effect_store_count

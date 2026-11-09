@@ -15,11 +15,20 @@ import re
 import time
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
-from intentir.extraction.lifters.scrc import normalize_scrc_candidate_delta
+from intentir.extraction.lifters.scrc import (
+    normalize_scrc_candidate_delta,
+    relift_repair_instruction,
+    safe_expected_constraints,
+    safe_source_repair_locators,
+)
 from intentir.ir.canonical_construction import (
     CanonicalConstruction,
     CanonicalHandleAllocator,
     SourceFacts,
+)
+from intentir.ir.source_projection_contracts import (
+    gate1_observer_obligation_diagnostic,
+    safe_semantic_obligation_guidance,
 )
 from intentir.ir.canonical_j import canonicalize_gate1_artifact
 from .gate1.model import (
@@ -81,6 +90,57 @@ _GATE1_FEEDBACK_CATEGORIES = (
     "predicate_effect",
 )
 
+_SAFE_REPLAY_FAILURE_FIELDS = frozenset(
+    {
+        "rule_code",
+        "path",
+        "provider_failure_class",
+        "provider_failure_origin",
+        "failure_class",
+        "physical_provider_calls",
+        "exception_type",
+        "line",
+    }
+)
+
+
+def _replay_arms(gate1: Gate1ExecutionResult) -> tuple[Any, ...]:
+    normal = gate1.normal_candidates or (gate1.normal,)
+    return (*normal, *((gate1.masked_j,) if gate1.masked_j is not None else ()))
+
+
+def _safe_replay_generation_failures(
+    gate1: Gate1ExecutionResult,
+    *,
+    provider_only: bool = False,
+) -> tuple[dict[str, str | int], ...]:
+    """Project all normal/masked generation failures to closed metadata."""
+
+    failures: list[dict[str, str | int]] = []
+    for arm in _replay_arms(gate1):
+        if arm.generation is not None:
+            continue
+        for diagnostic in arm.ingress_diagnostics:
+            if not isinstance(diagnostic, Mapping):
+                continue
+            if provider_only and not (
+                diagnostic.get("rule_code") == "replay_provider_generation_failed"
+                and isinstance(diagnostic.get("provider_failure_class"), str)
+            ):
+                continue
+            projected = {
+                key: value
+                for key, value in diagnostic.items()
+                if key in _SAFE_REPLAY_FAILURE_FIELDS
+                and (
+                    isinstance(value, str)
+                    or (isinstance(value, int) and not isinstance(value, bool))
+                )
+            }
+            if projected:
+                failures.append(projected)
+    return tuple(failures)
+
 def _is_replay_response_rejection(
     gate1: Gate1ExecutionResult,
 ) -> bool:
@@ -119,9 +179,94 @@ def _masked_replay_incomplete(gate1: Gate1ExecutionResult) -> bool:
     return gate1.masked_j is not None and not gate1.masked_j.comparable
 
 SCRCProgressCallback = Callable[
-    [str, int | None, int | None, str],
+    [str, int | None, int | None, str, Mapping[str, Any] | None],
     None,
 ]
+
+_SAFE_LIFT_PROGRESS_FAILURE_CLASSES = frozenset(
+    {
+        "candidate_rejected",
+        "candidate_superseded",
+        "lift_response",
+        "lift_worker_no_candidate",
+        "source_reconcile_rejected",
+        "lift_authoring_preparation",
+        "lift_agent_step_limit",
+        "lift_agent_cost_limit",
+        "lift_agent_time_limit",
+        "lift_agent_format_limit",
+        "lift_agent_stagnation",
+        "lift_mcp_host_internal_error",
+        "lift_mcp_application_error",
+        "lift_mcp_no_progress",
+        "lift_provider_preparation",
+    }
+)
+
+
+def _safe_lift_progress_diagnostic(
+    diagnostics: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project one Lift rejection to bounded user-facing metadata."""
+
+    safe: dict[str, Any] = {
+        "phase": "lift",
+        "candidate_check_started": isinstance(
+            diagnostics.get("candidate_check_feedback"), Mapping
+        ),
+        "typecheck_started": False,
+        "replay_started": False,
+        "gate1_started": False,
+        "gate2_started": False,
+    }
+    failure_class = diagnostics.get("failure_class")
+    if (
+        isinstance(failure_class, str)
+        and failure_class in _SAFE_LIFT_PROGRESS_FAILURE_CLASSES
+    ):
+        safe["failure_class"] = failure_class
+    candidate_present = diagnostics.get("candidate_present")
+    if isinstance(candidate_present, bool):
+        safe["candidate_present"] = candidate_present
+    for key in (
+        "rule_code",
+        "rule_path",
+        "repair_scope",
+        "state_digest",
+        "next_legal_action",
+    ):
+        value = diagnostics.get(key)
+        if isinstance(value, str) and re.fullmatch(
+            r"[A-Za-z0-9_.:\[\]/-]{1,256}", value
+        ):
+            safe[key] = value
+    if isinstance(diagnostics.get("progress_changed"), bool):
+        safe["progress_changed"] = diagnostics["progress_changed"]
+    for source_key in ("candidate_check_feedback", "source_reconcile"):
+        source = diagnostics.get(source_key)
+        rows = source.get("diagnostics") if isinstance(source, Mapping) else None
+        if not isinstance(rows, list):
+            continue
+        projected: list[dict[str, str]] = []
+        for row in rows[:12]:
+            if not isinstance(row, Mapping):
+                continue
+            rule_code = row.get("rule_code")
+            path = row.get("path")
+            if not isinstance(rule_code, str) or re.fullmatch(
+                r"[a-z0-9_.:-]{1,96}", rule_code
+            ) is None:
+                continue
+            item = {"rule_code": rule_code}
+            if isinstance(path, str) and re.fullmatch(
+                r"(?:j|pi)\.[A-Za-z0-9_.\[\]]{1,120}|<(?:candidate|canonical-constructor)>",
+                path,
+            ):
+                item["path"] = path
+            projected.append(item)
+        if projected:
+            safe[source_key] = {"diagnostics": projected}
+    return safe
 
 
 def _notify_progress(
@@ -130,13 +275,14 @@ def _notify_progress(
     attempt: int | None,
     formal_round: int | None,
     status: str,
+    details: Mapping[str, Any] | None = None,
 ) -> None:
     """Best-effort runtime observation that can never alter a gate verdict."""
 
     if callback is None:
         return
     try:
-        callback(stage, attempt, formal_round, status)
+        callback(stage, attempt, formal_round, status, details)
     except Exception:
         # Progress is deliberately outside the certificate and evidence TCB.
         # Broken output streams or observers cannot reject or accept a case.
@@ -194,6 +340,9 @@ def _prune_relift_diagnostics(value: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _guidance_key(item: Mapping[str, Any]) -> tuple[str, str]:
+    obligation_id = item.get("obligation_id")
+    if isinstance(obligation_id, str) and obligation_id:
+        return ("obligation", obligation_id)
     return (
         str(item.get("rule_code", "")),
         str(item.get("path", "")),
@@ -206,17 +355,49 @@ def _guidance_item(
     stage: int,
     rule_code: Any,
     path: Any,
+    repair_locator: Any = None,
+    repair_locators: Any = None,
+    observed_refs_or_types: Any = None,
+    expected_constraints: Any = None,
+    obligation: Any = None,
 ) -> dict[str, Any] | None:
     if not isinstance(rule_code, str) or not rule_code:
         return None
     if not isinstance(path, str) or not path:
         path = "<candidate>"
-    return {
+    row = {
         "source": source,
         "stage": stage,
         "rule_code": rule_code[:MAX_RELIFT_DIAGNOSTIC_STRING_CHARS],
         "path": path[:MAX_RELIFT_DIAGNOSTIC_STRING_CHARS],
     }
+    safe_obligation = safe_semantic_obligation_guidance(obligation)
+    if safe_obligation is not None:
+        obligation_stage = safe_obligation.pop("stage")
+        row.update(safe_obligation)
+        row["obligation_stage"] = obligation_stage
+    instruction = relift_repair_instruction(rule_code, path)
+    if instruction is not None:
+        row["repair_instruction"] = instruction
+    safe_constraints = safe_expected_constraints(
+        expected_constraints, accept_unmarked=True
+    )
+    safe_constraints.extend(safe_expected_constraints(observed_refs_or_types))
+    if safe_constraints:
+        row["expected_constraints"] = safe_constraints
+    locators = safe_source_repair_locators(
+        [
+            *(
+                repair_locators
+                if isinstance(repair_locators, (list, tuple))
+                else ([repair_locators] if repair_locators is not None else [])
+            ),
+            repair_locator,
+        ]
+    )
+    if locators:
+        row["repair_locators"] = locators
+    return row
 
 
 def _diagnostic_guidance_items(
@@ -252,8 +433,16 @@ def _diagnostic_guidance_items(
                 stage=stage,
                 rule_code=item.get("rule_code", item.get("code")),
                 path=item.get("path"),
+                repair_locator=item.get("repair_locator"),
+                repair_locators=item.get("repair_locators"),
+                observed_refs_or_types=item.get("observed_refs_or_types"),
+                expected_constraints=item.get("expected_constraints"),
+                obligation=item,
             )
-            if row is not None:
+            if row is not None and row.get("status") not in {
+                "satisfied",
+                "preflight_passed",
+            }:
                 rows.append(row)
 
     append_rows(
@@ -295,6 +484,7 @@ def _diagnostic_guidance_items(
                 stage=2,
                 rule_code=f"gate1.{name}",
                 path=f"observer_diff.categories[{name}]",
+                obligation=category,
             )
             if row is not None:
                 rows.append(row)
@@ -334,12 +524,35 @@ def _diagnostic_guidance_items(
                 rows.append(row)
 
     unique: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         key = _guidance_key(row)
-        if key in seen:
+        prior = seen.get(key)
+        if prior is not None:
+            locators = safe_source_repair_locators(
+                [
+                    *prior.get("repair_locators", ()),
+                    prior.get("repair_locator"),
+                    *row.get("repair_locators", ()),
+                    row.get("repair_locator"),
+                ]
+            )
+            prior.pop("repair_locator", None)
+            if locators:
+                prior["repair_locators"] = locators
+            constraints = safe_expected_constraints(
+                [
+                    *(prior.get("expected_constraints", ())),
+                    *(row.get("expected_constraints", ())),
+                    *(prior.get("observed_refs_or_types", ())),
+                    *(row.get("observed_refs_or_types", ())),
+                ],
+                accept_unmarked=True,
+            )
+            if constraints:
+                prior["expected_constraints"] = constraints
             continue
-        seen.add(key)
+        seen[key] = row
         unique.append(row)
         if len(unique) >= MAX_RELIFT_GUIDANCE_ITEMS:
             break
@@ -390,36 +603,27 @@ def _merge_relift_guidance(
         current_with_regressions.append(item)
     current = current_with_regressions
     current_by_key = {_guidance_key(item): item for item in current}
-    current_stage = max(
-        (
-            int(item.get("stage"))
-            for item in current
-            if isinstance(item.get("stage"), int)
-        ),
-        default=None,
-    )
-
     resolved_by_progress: set[tuple[str, str]] = set()
-    if current_stage is not None:
-        # Reaching TypeCheck proves the source-free CandidateCheck boundary;
-        # reaching Gate1 proves both source-aware preflights and TypeCheck.
-        if current_stage >= 1:
-            resolved_by_progress.update(
-                _guidance_key(item)
-                for item in previous_open
-                if item.get("source") == "candidate_check"
-            )
-            resolved_by_progress.update(
-                _guidance_key(item)
-                for item in previous_open
-                if item.get("source") == "source_reconcile"
-            )
-        if current_stage >= 2:
-            resolved_by_progress.update(
-                _guidance_key(item)
-                for item in previous_open
-                if item.get("source") == "typecheck"
-            )
+
+    def collect_satisfied_obligations(value: Any, *, depth: int = 0) -> None:
+        if depth > 8:
+            return
+        if isinstance(value, Mapping):
+            obligation = safe_semantic_obligation_guidance(value)
+            if obligation is not None and obligation.get("status") == "satisfied":
+                resolved_by_progress.add(
+                    ("obligation", obligation["obligation_id"])
+                )
+            for child in value.values():
+                collect_satisfied_obligations(child, depth=depth + 1)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                collect_satisfied_obligations(child, depth=depth + 1)
+
+    # An obligation is resolved only by an explicit host validator receipt.
+    # Reaching a later lifecycle stage or omitting a previous diagnostic is
+    # not evidence that the exact Source relation was discharged.
+    collect_satisfied_obligations(diagnostics)
 
     observer = diagnostics.get("observer_diff") if isinstance(diagnostics, Mapping) else None
     categories = observer.get("categories") if isinstance(observer, Mapping) else None
@@ -452,9 +656,7 @@ def _merge_relift_guidance(
         if key in resolved_by_progress:
             resolved = dict(item)
             resolved["status"] = "resolved"
-            resolved["resolution"] = "prerequisite_passed"
-            if current_stage is not None:
-                resolved["resolved_at_stage"] = current_stage
+            resolved["resolution"] = "host_validator_receipt"
             if key not in resolved_keys:
                 resolved_rows.append(resolved)
                 resolved_keys.add(key)
@@ -464,12 +666,34 @@ def _merge_relift_guidance(
 
     def dedupe(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
         result: list[dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
+        seen: dict[tuple[str, str], dict[str, Any]] = {}
         for row in rows:
             key = _guidance_key(row)
-            if key in seen:
+            prior = seen.get(key)
+            if prior is not None:
+                locators = safe_source_repair_locators(
+                    [
+                        *prior.get("repair_locators", ()),
+                        prior.get("repair_locator"),
+                        row.get("repair_locators", row.get("repair_locator")),
+                    ]
+                )
+                prior.pop("repair_locator", None)
+                if locators:
+                    prior["repair_locators"] = locators
+                constraints = safe_expected_constraints(
+                    [
+                        *(prior.get("expected_constraints", ())),
+                        *(row.get("expected_constraints", ())),
+                        *(prior.get("observed_refs_or_types", ())),
+                        *(row.get("observed_refs_or_types", ())),
+                    ],
+                    accept_unmarked=True,
+                )
+                if constraints:
+                    prior["expected_constraints"] = constraints
                 continue
-            seen.add(key)
+            seen[key] = row
             result.append(row)
             # The lifecycle state is authoritative and must retain every
             # prior open/resolved obligation across the bounded three-round
@@ -522,15 +746,20 @@ def _gate1_category_summary(comparison: Any) -> list[dict[str, Any]]:
     for category in _GATE1_FEEDBACK_CATEGORIES:
         component = components.get(category)
         differences = tuple(getattr(component, "differences", ()))
+        passed = bool(component.passed) if component is not None else False
         summary.append(
             {
                 "category": category,
-                "passed": bool(component.passed) if component is not None else False,
+                "passed": passed,
                 "applicable": (
                     bool(component.applicable) if component is not None else False
                 ),
                 "difference_count": len(differences),
                 "node_count": _gate1_category_node_count(differences),
+                **gate1_observer_obligation_diagnostic(
+                    category,
+                    passed=passed,
+                ),
             }
         )
     return summary
@@ -1553,6 +1782,12 @@ def _compact_gate1_observer_diff(
         group["truncated_count"] = max(
             0, group["difference_count"] - len(group["examples"])
         )
+        group.update(
+            gate1_observer_obligation_diagnostic(
+                category,
+                passed=False,
+            )
+        )
         categories.append(group)
     return {
         "hard_pass": bool(raw.get("hard_pass", False)),
@@ -1584,29 +1819,17 @@ def _gate1_repair_cues(
     }
     cues: list[dict[str, str]] = []
     category_cues = (
-        (
-            "interface",
-            "Check the exact J.signature ABI, output bindings, and region/result interfaces first; repair a missing or extra interface edge before changing downstream values.",
-        ),
-        (
-            "predicate_effect",
-            "Check Source-visible predicate, mask, effect_if/value_if arms, and scope effect membership; preserve the complete control/effect construct and its ordering.",
-        ),
-        (
-            "op_multiset",
-            "Check operation and memory-transfer multiplicity in Source order; do not merge, duplicate, or remove an operation merely to match one Replay implementation.",
-        ),
-        (
-            "dataflow",
-            "Start at the first causal missing/extra dataflow edge in the bounded frontier, then re-audit the complete producer/consumer, address-carrier, and effect chain before touching later arithmetic.",
-        ),
-        (
-            "reduction",
-            "Check reduction/scan axes, keepdims, associativity, identity, and loop-carried recurrence together; do not replace an authored recurrence with an algebraically similar final reduction.",
-        ),
+        "interface",
+        "predicate_effect",
+        "op_multiset",
+        "dataflow",
+        "reduction",
     )
-    for category, cue in category_cues:
+    for category in category_cues:
         if category in present:
+            cue = relift_repair_instruction(f"gate1.{category}", "")
+            if cue is None:
+                continue
             cues.append({"category": category, "cue": cue})
     if not cues:
         return None
@@ -2137,7 +2360,9 @@ class SCRCGateRunner:
             result = {
                 "protocol": "intentir.lift.public-semantic-probe.v1",
                 "status": "unavailable",
-                "diagnostic": f"{type(exc).__name__}: {exc}",
+                "rule_code": "semantic_probe_callback_failed",
+                "path": "<semantic-probe-callback>",
+                "exception_type": type(exc).__name__,
             }
         result.setdefault(
             "authority",
@@ -2405,6 +2630,7 @@ class SCRCGateRunner:
                         lift_calls,
                         None,
                         "rejected",
+                        _safe_lift_progress_diagnostic(exc.diagnostics),
                     )
                     # A decoded candidate rejected before the structural
                     # boundary is diagnostic-only and never becomes authoring
@@ -2451,9 +2677,53 @@ class SCRCGateRunner:
                         terminal_stop_observed_at = "after_lift"
                         break
                     continue
+                except SCRCInfrastructureError as exc:
+                    record_stage(
+                        "lift",
+                        lift_started,
+                        "infrastructure_error",
+                        attempt=lift_calls,
+                    )
+                    evidence = dict(exc.evidence)
+                    evidence.setdefault(
+                        "failure_class", "lift_adapter_infrastructure"
+                    )
+                    evidence.setdefault("failure_stage", "lift_adapter_call")
+                    evidence.setdefault(
+                        "stage_metrics",
+                        completed_metrics("infrastructure_error"),
+                    )
+                    origin = exc.__cause__ or exc.__context__
+                    if origin is not None:
+                        origin_type = type(origin).__name__
+                        if re.fullmatch(
+                            r"[A-Za-z][A-Za-z0-9_]{0,63}", origin_type
+                        ):
+                            evidence.setdefault(
+                                "origin_exception_type", origin_type
+                            )
+                    exc.evidence = evidence
+                    _notify_progress(
+                        progress_callback,
+                        "lift",
+                        lift_calls,
+                        None,
+                        "infrastructure_error",
+                        {
+                            "phase": evidence["failure_stage"],
+                            "failure_class": evidence["failure_class"],
+                            "candidate_present": False,
+                        },
+                    )
+                    raise
                 if not isinstance(lift_result, LiftCallResult):
                     raise SCRCInfrastructureError(
-                        "Lift adapter must return LiftCallResult"
+                        "Lift adapter must return LiftCallResult",
+                        evidence={
+                            "failure_class": "lift_adapter_contract_violation",
+                            "failure_stage": "lift_return_validation",
+                            "returned_type": type(lift_result).__name__,
+                        },
                     )
                 lift_physical_calls += lift_result.physical_calls
                 record_stage(
@@ -2724,6 +2994,58 @@ class SCRCGateRunner:
                             else 0
                         )
                     )
+                # Provider stop conditions have precedence over the one fresh
+                # writer retry and over any relift decision.  In particular,
+                # normal Replay may fail before comparison, while masked-J may
+                # fail only after the normal formal comparison has completed;
+                # both are infrastructure stops and neither may be retried or
+                # flattened into an ordinary NO_CLOSURE verdict.
+                provider_stop_failures = _safe_replay_generation_failures(
+                    gate1,
+                    provider_only=True,
+                )
+                if provider_stop_failures:
+                    normal_formal_comparison_ran = any(
+                        arm.comparison is not None
+                        for arm in normal_arms_for_progress
+                    )
+                    consumed_rounds = (
+                        next_formal_round
+                        if normal_formal_comparison_ran
+                        else formal_rounds
+                    )
+                    _notify_progress(
+                        progress_callback,
+                        "replay",
+                        None,
+                        next_formal_round,
+                        "provider_stop",
+                    )
+                    _notify_progress(
+                        progress_callback,
+                        "gate1",
+                        None,
+                        next_formal_round,
+                        "infrastructure_failed",
+                    )
+                    raise SCRCInfrastructureError(
+                        "Gate1 Replay provider stop condition; no retry or relift "
+                        "was attempted",
+                        evidence={
+                            "attempted_formal_round": next_formal_round,
+                            "formal_gate1_rounds_consumed": consumed_rounds,
+                            "replay_normal_calls": replay_normal_calls,
+                            "replay_masked_calls": replay_masked_calls,
+                            "replay_physical_calls": replay_physical_calls,
+                            "replay_generation_failures": list(
+                                provider_stop_failures
+                            ),
+                            "candidate_present": True,
+                            "artifact": artifact.to_json(),
+                            "typecheck": report.to_json(),
+                            "gate1": gate1.to_json(),
+                        },
+                    )
                 # If every authored Replay failed before a TTIR comparison,
                 # Gate1 learned nothing about J/C/pi. Retry the same exact
                 # artifact with one fresh source-blind writer. This retry is
@@ -2800,31 +3122,9 @@ class SCRCGateRunner:
                             "replay_normal_calls": replay_normal_calls,
                             "replay_masked_calls": replay_masked_calls,
                             "replay_physical_calls": replay_physical_calls,
-                            "replay_generation_failures": [
-                                {
-                                    key: value
-                                    for diagnostic in arm.ingress_diagnostics
-                                    if isinstance(diagnostic, Mapping)
-                                    for key, value in diagnostic.items()
-                                    if key
-                                    in {
-                                        "rule_code",
-                                        "path",
-                                        "provider_failure_class",
-                                        "physical_provider_calls",
-                                        "exception_type",
-                                    }
-                                    and (
-                                        isinstance(value, str)
-                                        or (
-                                            isinstance(value, int)
-                                            and not isinstance(value, bool)
-                                        )
-                                    )
-                                }
-                                for arm in normal_arms_for_progress
-                                if arm.generation is None
-                            ],
+                            "replay_generation_failures": list(
+                                _safe_replay_generation_failures(gate1)
+                            ),
                             "artifact": artifact.to_json(),
                             "typecheck": report.to_json(),
                             "gate1": gate1.to_json(),

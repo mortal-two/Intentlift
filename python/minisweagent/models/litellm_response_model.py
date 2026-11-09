@@ -2,11 +2,12 @@ import copy
 import hashlib
 import json
 import logging
+import re
 import signal
 import time
 import threading
 from contextlib import contextmanager
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import litellm
 import httpx
@@ -33,6 +34,291 @@ from minisweagent.models.utils.retry import retry
 logger = logging.getLogger("litellm_response_model")
 
 
+_SENSITIVE_PROVIDER_ERROR_KEY = re.compile(
+    r"(?i)(?:api[_ -]?key|access[_ -]?token|auth(?:orization)?|bearer|cookie|credential|password|secret|token)"
+)
+_MAX_PROVIDER_ERROR_TEXT = 8192
+_MAX_PROVIDER_ERROR_ITEMS = 32
+_SAFE_PROVIDER_ERROR_FIELDS = frozenset(
+    {
+        "code",
+        "message",
+        "detail",
+        "reason",
+        "param",
+        "request_id",
+        "status",
+        "status_code",
+    }
+)
+
+
+def _redact_provider_error_text(value: str) -> str:
+    """Keep provider diagnostics while removing credential-shaped material."""
+
+    text = value
+    text = re.sub(
+        r"(?i)(bearer\s+)[^\s,;]+",
+        r"\1<redacted>",
+        text,
+    )
+    text = re.sub(
+        r"(?i)((?:authorization|api[_ -]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+",
+        r"\1<redacted>",
+        text,
+    )
+    text = re.sub(
+        r"(?i)(https?://[^\s?]+)\?[^\s]+",
+        r"\1?<redacted>",
+        text,
+    )
+    text = re.sub(r"(?i)https?://[^\s\"'<>]+", "<redacted-url>", text)
+    text = re.sub(
+        r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]{1,5})?(?![0-9])",
+        "<redacted-address>",
+        text,
+    )
+    text = re.sub(
+        r"(?<![A-Za-z0-9_])/(?:[^\s\"']+/){1,}[^\s\"']*",
+        "<redacted-path>",
+        text,
+    )
+    return text[:_MAX_PROVIDER_ERROR_TEXT]
+
+
+def _redact_provider_error_value(value, *, key: str | None = None):
+    """Preserve external error structure while recursively removing secrets."""
+
+    if key is not None and _SENSITIVE_PROVIDER_ERROR_KEY.search(key):
+        return "<redacted>"
+    if isinstance(value, str):
+        return _redact_provider_error_text(value)
+    if isinstance(value, Mapping):
+        return {
+            str(item_key): _redact_provider_error_value(item_value, key=str(item_key))
+            for item_key, item_value in list(value.items())[:_MAX_PROVIDER_ERROR_ITEMS]
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            _redact_provider_error_value(item)
+            for item in value[:_MAX_PROVIDER_ERROR_ITEMS]
+        ]
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return _redact_provider_error_text(str(value))
+
+
+def _safe_provider_error_block(value):
+    """Keep a bounded provider error object after recursive redaction."""
+
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        return _redact_provider_error_value(value)
+    if isinstance(value, str):
+        return _redact_provider_error_text(value)
+    return _redact_provider_error_value(value)
+
+
+def _safe_sse_error_envelope(event) -> dict[str, object]:
+    """Retain a redacted SSE error only; never retain the full Responses body."""
+
+    get = ResponsesSSEFailure._get
+    result: dict[str, object] = {}
+    event_type = get(event, "type")
+    if isinstance(event_type, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,96}", event_type):
+        result["event_type"] = event_type
+    if isinstance(event, Mapping):
+        top_level = {
+            key: value
+            for key, value in event.items()
+            if key in _SAFE_PROVIDER_ERROR_FIELDS
+        }
+    else:
+        top_level = {
+            key: get(event, key)
+            for key in ("code", "message", "detail", "reason", "param", "request_id")
+            if get(event, key) is not None
+        }
+    safe_top_level = _safe_provider_error_block(top_level)
+    if safe_top_level:
+        result["event"] = safe_top_level
+    event_error = _safe_provider_error_block(get(event, "error"))
+    if event_error:
+        result["error"] = event_error
+    response = get(event, "response")
+    response_error = _safe_provider_error_block(get(response, "error"))
+    if response_error:
+        result["response_error"] = response_error
+    response_status = get(response, "status")
+    if isinstance(response_status, str) and re.fullmatch(
+        r"[A-Za-z0-9_.:-]{1,96}", response_status
+    ):
+        result["response_status"] = response_status
+    return result
+
+
+def _safe_stream_exception_envelope(exc: BaseException) -> dict[str, object]:
+    """Project an SDK/relay read failure without retaining a response body."""
+
+    result: dict[str, object] = {
+        "exception_type": type(exc).__name__[:96],
+        "message": _redact_provider_error_text(str(exc)),
+    }
+    status_code = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    if status_code is None and response is not None:
+        status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int) and not isinstance(status_code, bool):
+        result["http_status"] = status_code
+    return result
+
+
+def _stream_exception_failure_class(exc: BaseException) -> str:
+    """Classify an iterator/read failure before it can become a candidate."""
+
+    name = type(exc).__name__.casefold()
+    text = str(exc).casefold()
+    if "no_more_retry" in text or "no more retry" in text:
+        return "provider_overloaded"
+    if "ratelimit" in name or "rate limit" in text:
+        return "provider_rate_limit"
+    if any(
+        marker in name or marker in text
+        for marker in (
+            "quota",
+            "usage limit",
+            "billing hard limit",
+            "insufficient quota",
+        )
+    ):
+        return "provider_usage_limit"
+    if any(
+        marker in name or marker in text
+        for marker in ("overload", "high demand", "server overloaded")
+    ):
+        return "provider_overloaded"
+
+    status_code = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    if status_code is None and response is not None:
+        status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int) and not isinstance(status_code, bool):
+        if status_code in {401, 403}:
+            return "provider_authentication_error"
+        if status_code == 408:
+            return "provider_timeout"
+        if status_code == 429:
+            return "provider_rate_limit"
+        if status_code == 402:
+            return "provider_usage_limit"
+        if status_code >= 500:
+            return "provider_server_error"
+        if status_code >= 400:
+            return "provider_protocol_error"
+    if "timeout" in name or "timed out" in text or "request_timeout" in text:
+        return "provider_timeout"
+    if "authentication" in name or "invalid api key" in text:
+        return "provider_authentication_error"
+    if "response.completed" in text or "stream disconnected" in text:
+        return "provider_stream_incomplete"
+    if any(marker in name for marker in ("internalserver", "serviceunavailable")):
+        return "provider_server_error"
+    if any(marker in name for marker in ("connection", "transport", "network")):
+        return "provider_transport_error"
+    return "provider_transport_error"
+
+
+class ResponsesSSEFailure(RuntimeError):
+    """A terminal SSE event reduced to a closed, response-free failure class."""
+
+    _CODE_CLASSES = {
+        "authentication_error": "provider_authentication_error",
+        "invalid_api_key": "provider_authentication_error",
+        "insufficient_quota": "provider_usage_limit",
+        "usage_limit_reached": "provider_usage_limit",
+        "rate_limit_exceeded": "provider_rate_limit",
+        "rate_limit_error": "provider_rate_limit",
+        "request_timeout": "provider_timeout",
+        "overloaded": "provider_overloaded",
+        "high_demand": "provider_overloaded",
+        "server_overloaded": "provider_overloaded",
+        "server_error": "provider_server_error",
+        "internal_server_error": "provider_server_error",
+        "server_is_overloaded": "provider_overloaded",
+        "invalid_request_error": "provider_protocol_error",
+        "unsupported_parameter": "provider_protocol_error",
+    }
+    _INCOMPLETE_REASON_CLASSES = {
+        "content_filter": "provider_content_filter",
+        "max_output_tokens": "provider_output_limit",
+    }
+
+    @staticmethod
+    def _get(value, key):
+        if isinstance(value, Mapping):
+            return value.get(key)
+        return getattr(value, key, None)
+
+    @classmethod
+    def _classify_error(cls, error) -> str | None:
+        for field in ("code", "type"):
+            value = cls._get(error, field)
+            if isinstance(value, str):
+                failure_class = cls._CODE_CLASSES.get(value.strip().casefold())
+                if failure_class is not None:
+                    return failure_class
+        return None
+
+    def __init__(
+        self,
+        event=None,
+        *,
+        failure_class: str | None = None,
+        failure_origin: str | None = None,
+        safe_error_envelope: Mapping[str, object] | None = None,
+    ) -> None:
+        event_type = self._get(event, "type")
+        response = self._get(event, "response")
+        error_candidates = (
+            self._get(event, "error"),
+            self._get(response, "error"),
+        )
+        classified = next(
+            (
+                candidate_class
+                for error in error_candidates
+                if (candidate_class := self._classify_error(error)) is not None
+            ),
+            None,
+        )
+        if classified is None and event_type == "response.incomplete":
+            details = self._get(response, "incomplete_details")
+            reason = self._get(details, "reason")
+            if isinstance(reason, str):
+                classified = self._INCOMPLETE_REASON_CLASSES.get(
+                    reason.strip().casefold()
+                )
+        if failure_class is not None:
+            classified = failure_class
+        elif classified is None and event_type == "response.failed":
+            classified = "provider_response_failed"
+        elif classified is None and event_type == "response.incomplete":
+            classified = "provider_response_incomplete"
+        self.failure_class = classified or "provider_sse_error_event"
+        self.failure_origin = failure_origin or {
+            "response.failed": "sse_response_failed",
+            "response.incomplete": "sse_response_incomplete",
+            "error": "sse_error_event",
+        }.get(event_type, "sse_terminal_event")
+        self.safe_error_envelope = _safe_sse_error_envelope(event)
+        if isinstance(safe_error_envelope, Mapping):
+            self.safe_error_envelope.update(
+                _safe_provider_error_block(safe_error_envelope)
+            )
+        super().__init__(self.failure_class)
+
+
 class LitellmResponseModelConfig(LitellmModelConfig):
     max_tool_calls_per_response: int = 1
     enable_bash_tool: bool = True
@@ -53,6 +339,11 @@ class LitellmResponseModelConfig(LitellmModelConfig):
     # The active workflow may disable retries for expensive Lift turns while
     # other callers retain a bounded transport-only retry.
     transient_retry_attempts: int = 0
+    # A Responses SSE stream may be retried twice after its first failed
+    # physical request.  This is separate from generic transport retries so
+    # the lifecycle can allow exactly three consecutive SSE attempts without
+    # retrying authentication, quota, overload, or semantic failures.
+    sse_retry_attempts: int = 0
     # Zero retains the generic model default. Replay sets both explicitly so a
     # changing source cannot turn into an unbounded provider-call episode.
     physical_provider_call_limit: int = 0
@@ -95,6 +386,8 @@ class LitellmResponseModel(LitellmModel):
             raise ValueError("semantic_initial_turns must be in [0, 4]")
         if not 0 <= self.config.transient_retry_attempts <= 1:
             raise ValueError("transient_retry_attempts must be in [0, 1]")
+        if not 0 <= self.config.sse_retry_attempts <= 2:
+            raise ValueError("sse_retry_attempts must be in [0, 2]")
         if self.config.physical_provider_call_limit < 0:
             raise ValueError("physical_provider_call_limit must be non-negative")
         if self.config.transport_retry_limit < 0:
@@ -252,6 +545,33 @@ class LitellmResponseModel(LitellmModel):
             and observed >= 0
             else 0
         )
+
+    @staticmethod
+    def _response_to_json(value) -> dict:
+        """Normalize a completed Responses object without serializer warnings.
+
+        Some relays put a plain usage mapping into a typed Responses model.
+        Calling ``model_dump`` with its default warning policy then emits a
+        Pydantic warning on every Lift turn even though the response is usable.
+        Suppress only that serialization warning and keep the normalized JSON
+        mapping; this does not alter provider failure or completion handling.
+        """
+
+        if isinstance(value, dict):
+            return copy.deepcopy(value)
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            try:
+                dumped = model_dump(mode="json", warnings=False)
+            except TypeError:
+                dumped = model_dump(mode="json")
+            if isinstance(dumped, dict):
+                return dumped
+        try:
+            dumped = dict(value)
+        except (TypeError, ValueError):
+            return {"value": repr(value)}
+        return dumped if isinstance(dumped, dict) else {"value": repr(value)}
 
     @staticmethod
     def _compaction_receipt(*, kind: str, text: str) -> str:
@@ -613,18 +933,63 @@ class LitellmResponseModel(LitellmModel):
         return retained
 
     def _prepare_messages_for_api(self, messages: list[dict]) -> list[dict]:
-        """Flatten response objects into their output items for stateless API calls."""
-        messages = self._compact_workspace_mirror_messages(messages)
-        messages = self._compact_old_response_groups(messages)
-        messages = self._compact_stale_lift_continuations(messages)
-        result = []
-        for msg in messages:
-            if msg.get("object") == "response":
-                for item in msg.get("output", []):
-                    result.append({k: v for k, v in item.items() if k != "extra"})
-            else:
-                result.append({k: v for k, v in msg.items() if k != "extra"})
-        return self._compact_prepared_history(result)
+        """Build one complete, stateless Responses input history.
+
+        The MCP lifecycle depends on the ordered pair of every provider
+        ``function_call`` and its following ``function_call_output``. A
+        receipt or a recent-items window is not an equivalent history: it can
+        leave the model with a tool result whose call is no longer present,
+        or hide the graph rejection that must guide the next authoring turn.
+        Keep this serializer mechanical. It flattens completed Responses
+        envelopes, removes only local ``extra`` metadata, and normalizes text
+        block direction. It never compacts, summarizes, or drops a prior item.
+        """
+
+        result: list[dict] = []
+        for message in messages:
+            items = (
+                message.get("output", [])
+                if message.get("object") == "response"
+                else [message]
+            )
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                normalized = {
+                    key: copy.deepcopy(value)
+                    for key, value in item.items()
+                    if key != "extra"
+                }
+                result.append(self._normalize_responses_history_item(normalized))
+        return result
+
+    @staticmethod
+    def _normalize_responses_history_item(item: dict) -> dict:
+        """Normalize one local history item without changing tool semantics."""
+
+        if item.get("type") != "message":
+            return item
+        role = item.get("role")
+        content = item.get("content")
+        target_type = "output_text" if role == "assistant" else "input_text"
+        if isinstance(content, str):
+            item["content"] = [{"type": target_type, "text": content}]
+            return item
+        if not isinstance(content, list):
+            return item
+        normalized_content: list = []
+        for block in content:
+            if not isinstance(block, dict):
+                normalized_content.append(copy.deepcopy(block))
+                continue
+            normalized_block = copy.deepcopy(block)
+            if normalized_block.get("type") in {"input_text", "output_text"}:
+                normalized_block["type"] = target_type
+            normalized_content.append(normalized_block)
+        item["content"] = normalized_content
+        return item
 
     @staticmethod
     def _latest_response_id(messages: list[dict]) -> tuple[int, str | None]:
@@ -672,30 +1037,46 @@ class LitellmResponseModel(LitellmModel):
 
     @staticmethod
     def _is_transient_provider_error(exc: BaseException) -> bool:
-        """Identify provider failures safe for one transport-only retry.
+        """Retry only failures proven to occur inside an active SSE stream.
 
-        This deliberately excludes generic API errors and parsing/contract
-        failures.  Those must remain fail-closed instead of consuming another
-        physical provider call.  The explicit message check covers relays that
-        wrap an EOF in a generic InternalServerError while retaining the
-        transient transport signal.
+        HTTP responses and request-establishment/transport exceptions are
+        lifecycle-terminal.  Stream iteration failures are wrapped at the SSE
+        boundary with an explicit ``sse_*`` origin, which is the only evidence
+        that permits the configured consecutive-stream retry budget.
         """
 
-        transient_types = (
-            litellm.exceptions.InternalServerError,
-            litellm.exceptions.APIConnectionError,
-            litellm.exceptions.ServiceUnavailableError,
-            litellm.exceptions.RateLimitError,
-            httpx.TransportError,
-        )
-        if isinstance(exc, transient_types):
-            return True
-        text = f"{type(exc).__name__}: {exc}".casefold()
-        return (
-            "unexpected eof" in text
-            or "stream ended without a completed response" in text
-            or "responses stream emitted a failure event" in text
-        )
+        # Provider-declared overload, rate, usage, and explicit no-more-retry
+        # outcomes are lifecycle-terminal.  They must not enter the generic
+        # LiteLLM retry path, even when the relay exposes them as a generic
+        # 5xx/service-unavailable exception.
+        failure_class = _stream_exception_failure_class(exc)
+        failure_text = f"{type(exc).__name__}: {exc}".casefold()
+        if failure_class in {
+            "provider_overloaded",
+            "provider_rate_limit",
+            "provider_usage_limit",
+        } or "no_more_retry" in failure_text:
+            return False
+
+        # Retry only stream failures that are genuinely transport/SSE-shaped.
+        # Provider-declared authentication, quota, rate, overload, content
+        # filtering, output limits, and invalid-request events were classified
+        # above or below and remain terminal.  In particular, an SSE wrapper
+        # must not make a semantic/provider rejection look retryable.
+        if isinstance(exc, ResponsesSSEFailure):
+            return (
+                exc.failure_origin.startswith("sse_")
+                and exc.failure_class
+                in {
+                    "provider_sse_error_event",
+                    "provider_stream_incomplete",
+                    "provider_response_failed",
+                    "provider_response_incomplete",
+                    "provider_timeout",
+                    "provider_server_error",
+                }
+            )
+        return False
 
     def _record_packet(self, messages: list[dict], *, continuation: bool) -> tuple[int, int]:
         items, chars = self._packet_shape(messages)
@@ -829,31 +1210,104 @@ class LitellmResponseModel(LitellmModel):
             )
         function_items: dict[str, dict] = {}
         anonymous_function_items: list[dict] = []
-        for _event in response:
-            event_type = getattr(_event, "type", None)
-            if event_type in {"error", "response.failed"}:
-                raise RuntimeError("Responses stream emitted a failure event")
-            item = getattr(_event, "item", None)
-            item_type = getattr(item, "type", None)
+        completed_event_response = None
+        saw_completed = False
+        last_event_type: str | None = None
+        try:
+            iterator = iter(response)
+        except Exception as exc:
+            raise ResponsesSSEFailure(
+                failure_class=_stream_exception_failure_class(exc),
+                failure_origin="sse_read_error",
+                safe_error_envelope={
+                    **_safe_stream_exception_envelope(exc),
+                    "terminal_event_received": False,
+                },
+            ) from exc
+        while True:
+            try:
+                _event = next(iterator)
+            except StopIteration:
+                break
+            except ResponsesSSEFailure:
+                raise
+            except Exception as exc:
+                raise ResponsesSSEFailure(
+                    failure_class=_stream_exception_failure_class(exc),
+                    failure_origin="sse_read_error",
+                    safe_error_envelope={
+                        **_safe_stream_exception_envelope(exc),
+                        **(
+                            {"last_event_type": last_event_type}
+                            if isinstance(last_event_type, str)
+                            else {}
+                        ),
+                        "terminal_event_received": False,
+                    },
+                ) from exc
+            event_type = (
+                _event.get("type") if isinstance(_event, dict)
+                else getattr(_event, "type", None)
+            )
+            if isinstance(event_type, str):
+                last_event_type = event_type
+            if event_type in {"error", "response.failed", "response.incomplete"}:
+                raise ResponsesSSEFailure(_event)
+            if event_type == "response.completed":
+                saw_completed = True
+                completed_event_response = (
+                    _event.get("response") if isinstance(_event, dict)
+                    else getattr(_event, "response", None)
+                )
+            item = (
+                _event.get("item") if isinstance(_event, dict)
+                else getattr(_event, "item", None)
+            )
+            item_type = (
+                item.get("type") if isinstance(item, dict)
+                else getattr(item, "type", None)
+            )
             if item_type != "function_call":
                 continue
-            item_value = (
-                item.model_dump(mode="json")
-                if hasattr(item, "model_dump")
-                else dict(item)
-            )
+            item_value = LitellmResponseModel._response_to_json(item)
             item_id = item_value.get("id")
             if isinstance(item_id, str) and item_id:
                 function_items[item_id] = item_value
             else:
                 anonymous_function_items.append(item_value)
+        if not saw_completed:
+            raise ResponsesSSEFailure(
+                failure_class="provider_stream_incomplete",
+                failure_origin="sse_completion_missing",
+                safe_error_envelope={
+                    "last_event_type": last_event_type,
+                    "terminal_event_received": False,
+                },
+            )
         completed_event = getattr(response, "completed_response", None)
         completed_response = getattr(completed_event, "response", None)
         if completed_response is None:
-            raise RuntimeError(
-                "Responses stream ended without a completed response object"
+            completed_response = completed_event_response
+        if completed_response is None:
+            raise ResponsesSSEFailure(
+                failure_class="provider_protocol_error",
+                failure_origin="sse_completed_envelope_invalid",
             )
-        output = getattr(completed_response, "output", None)
+        status = (
+            completed_response.get("status")
+            if isinstance(completed_response, dict)
+            else getattr(completed_response, "status", None)
+        )
+        output = (
+            completed_response.get("output")
+            if isinstance(completed_response, dict)
+            else getattr(completed_response, "output", None)
+        )
+        if status != "completed" or not isinstance(output, (list, tuple)):
+            raise ResponsesSSEFailure(
+                failure_class="provider_response_incomplete",
+                failure_origin="sse_completed_response_incomplete",
+            )
         output_items = list(output) if isinstance(output, (list, tuple)) else []
         output_ids = {
             item_id
@@ -875,7 +1329,13 @@ class LitellmResponseModel(LitellmModel):
         ]
         recovered_items.extend(anonymous_function_items)
         if recovered_items:
-            completed_response.output = [*output_items, *recovered_items]
+            if isinstance(completed_response, dict):
+                completed_response = {
+                    **completed_response,
+                    "output": [*output_items, *recovered_items],
+                }
+            else:
+                completed_response.output = [*output_items, *recovered_items]
         return completed_response
 
     def _query(
@@ -902,9 +1362,12 @@ class LitellmResponseModel(LitellmModel):
             )
         try:
             model_kwargs = self.config.model_kwargs | kwargs
-            # Materialize the SSE Responses stream into the completed-response
-            # shape expected by action parsing.
-            model_kwargs.setdefault("stream", True)
+            # The active protocol is always a stateless full-history stream.
+            # Do not allow a caller or inherited config to switch either
+            # property for one turn.
+            model_kwargs.pop("previous_response_id", None)
+            model_kwargs["stream"] = True
+            model_kwargs["store"] = False
             tools = self._response_tools(
                 response_count=response_count,
                 response_tools=response_tools,
@@ -926,24 +1389,11 @@ class LitellmResponseModel(LitellmModel):
                 return self._materialize_streaming_response(response)
 
             with self._hard_provider_deadline(model_kwargs.get("timeout")):
-                try:
-                    return issue_response(model_kwargs)
-                except AttributeError as exc:
-                    # Some OpenAI-compatible Responses relays emit a valid
-                    # streamed completion whose ``usage`` is a JSON mapping.
-                    # Current LiteLLM then crashes in its *post-completion*
-                    # logging callback while accessing ``response.usage`` as
-                    # a pydantic field. The SSE request is already complete,
-                    # so no partial output can be trusted. Reissue the same
-                    # logical turn once through the completed Responses path,
-                    # which preserves tools/strict JSON and still requires a
-                    # full ``status=completed`` envelope below. Do not catch
-                    # arbitrary AttributeError: those remain host failures.
-                    if str(exc) != "'dict' object has no attribute 'usage'":
-                        raise
-                    completed_kwargs = dict(model_kwargs)
-                    completed_kwargs["stream"] = False
-                    return issue_response(completed_kwargs)
+                # An invalid SSE/SDK response must fail closed. Reissuing the
+                # turn as non-streaming here would hide a second physical
+                # provider call from the Lift budget and could bypass the
+                # completed-stream contract.
+                return issue_response(model_kwargs)
         except litellm.exceptions.AuthenticationError as e:
             e.message += " Configure credentials through the IntentIR provider settings."
             raise e
@@ -955,20 +1405,12 @@ class LitellmResponseModel(LitellmModel):
             or any(not isinstance(tool, dict) for tool in response_tools)
         ):
             raise ValueError("dynamic Responses tool surface is malformed")
-        last_response_index, previous_response_id = self._latest_response_id(messages)
-        continuation_enabled = (
-            self.config.use_previous_response_id
-            and not self._continuation_disabled
-            and previous_response_id is not None
-            and last_response_index + 1 < len(messages)
-        )
-        if continuation_enabled:
-            prepared_messages = self._prepare_messages_for_api(
-                messages[last_response_index + 1 :]
-            )
-        else:
-            prepared_messages = self._prepare_messages_for_api(messages)
-            previous_response_id = None
+        # The local history is the sole conversation authority. Even if a
+        # legacy caller passes a continuation option, it must not reach the
+        # provider or change the input packet shape.
+        kwargs.pop("previous_response_id", None)
+        previous_response_id = None
+        prepared_messages = self._prepare_messages_for_api(messages)
         response_count = sum(
             message.get("object") == "response" for message in messages
         )
@@ -996,15 +1438,16 @@ class LitellmResponseModel(LitellmModel):
         for attempt in retry(
             logger=logger,
             abort_exceptions=abort_exceptions,
-            max_attempts=(
+            max_attempts=max(
                 self.config.retry_attempts
-                + self.config.transient_retry_attempts
+                + self.config.transient_retry_attempts,
+                self.config.retry_attempts + self.config.sse_retry_attempts,
             ),
-            retry_predicate=(
-                self._is_transient_provider_error
-                if self.config.transient_retry_attempts > 0
-                else None
-            ),
+            # Never fall back to the historical "retry every exception"
+            # policy.  In particular, a relay may surface an overload as a
+            # generic 5xx or service-unavailable exception; the predicate
+            # above must get the opportunity to classify it and stop here.
+            retry_predicate=self._is_transient_provider_error,
         ):
             # This check deliberately sits outside the retry attempt context:
             # cancellation is a candidate-wave decision, never a transport
@@ -1034,53 +1477,6 @@ class LitellmResponseModel(LitellmModel):
                         **kwargs,
                     )
                 except Exception as exc:
-                    if (
-                        previous_response_id is not None
-                        and self._is_previous_response_error(exc)
-                    ):
-                        self._provider_attempts.append(
-                            {
-                                "physical_call": self._physical_provider_calls,
-                                "attempt": attempt.retry_state.attempt_number,
-                                "elapsed_ms": (time.monotonic() - started) * 1000.0,
-                                "status": "error",
-                                "error_type": type(exc).__name__,
-                                "reasoning_effort": (
-                                    self.config.model_kwargs.get("reasoning_effort")
-                                    if semantic_turn
-                                    else self.config.routine_reasoning_effort
-                                    or self.config.model_kwargs.get("reasoning_effort")
-                                ),
-                                "continuation": True,
-                                "previous_response_id_present": True,
-                                "fallback": False,
-                                "input_items": packet_items,
-                                "input_chars": packet_chars,
-                            }
-                        )
-                        self._continuation_fallbacks += 1
-                        self._continuation_disabled = True
-                        self._continuation_disable_reason = type(exc).__name__
-                        previous_response_id = None
-                        prepared_messages = self._prepare_messages_for_api(messages)
-                        call_was_fallback = True
-                        self._reserve_physical_provider_call(transport_retry=False)
-                        started = time.monotonic()
-                        packet_items, packet_chars = self._record_packet(
-                            prepared_messages, continuation=False
-                        )
-                        try:
-                            response = self._query(
-                                prepared_messages,
-                                response_count=response_count,
-                                semantic_turn=semantic_turn,
-                                response_tools=response_tools,
-                                **kwargs,
-                            )
-                        except Exception as fallback_exc:
-                            exc = fallback_exc
-                        else:
-                            exc = None
                     if exc is None:
                         pass
                     else:
@@ -1169,13 +1565,11 @@ class LitellmResponseModel(LitellmModel):
             # may inject a plain dict; dict(response) is the correct fallback in that case.
             # Inner try: if serialization itself fails, repr() guarantees the key is always set.
             try:
-                e.messages[0]["extra"]["response"] = (
-                    response.model_dump(mode="json") if hasattr(response, "model_dump") else dict(response)
-                )
+                e.messages[0]["extra"]["response"] = self._response_to_json(response)
             except Exception:
                 e.messages[0]["extra"]["response"] = repr(response)
             raise
-        message = response.model_dump() if hasattr(response, "model_dump") else dict(response)
+        message = self._response_to_json(response)
         message["extra"] = {
             "actions": actions,
             **cost_output,
@@ -1199,6 +1593,28 @@ class LitellmResponseModel(LitellmModel):
             enable_replay_patch_tool=self.config.enable_replay_patch_tool,
             enable_submit_replay_tool=self.config.enable_submit_replay_tool,
         )
+
+    def format_message(self, **kwargs) -> dict:
+        """Create a Responses message with role-correct text blocks."""
+
+        role = kwargs.get("role", "user")
+        content = kwargs.get("content", "")
+        extra = kwargs.get("extra")
+        block_type = "output_text" if role == "assistant" else "input_text"
+        if isinstance(content, str):
+            content = [{"type": block_type, "text": content}]
+        elif isinstance(content, list):
+            content = copy.deepcopy(content)
+            for block in content:
+                if isinstance(block, dict) and block.get("type") in {
+                    "input_text",
+                    "output_text",
+                }:
+                    block["type"] = block_type
+        message = {"type": "message", "role": role, "content": content}
+        if extra:
+            message["extra"] = extra
+        return message
 
     def serialize(self) -> dict:
         value = super().serialize()

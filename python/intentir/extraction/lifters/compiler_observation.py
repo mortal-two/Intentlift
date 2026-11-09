@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
 import json
 import math
 import re
@@ -17,6 +18,7 @@ import traceback
 from typing import Any, Mapping
 
 from intentir.verify.gate1.compiler import (
+    EXTERNAL_MATH_FAILURE_RULES,
     CompileCase,
     KernelSource,
     RuntimeArgument,
@@ -30,17 +32,155 @@ from intentir.verify.gate1.pi import (
     canonical_program_coordinate_projection,
 )
 from intentir.ir.canonical_construction import (
+    SOURCE_CONSTEXPR_UNKNOWN,
+    source_constexpr_value,
     CanonicalConstruction,
     SourceFacts,
     SourceTransferLedger,
+    validate_source_owner_binding,
     TransferOccurrence,
+    canonical_output_records,
     coerce_source_transfer_ledger,
+    is_canonical_ordinal,
 )
 from intentir.ir.canonical_j import ContractSort, parse_contract_expr
+from intentir.ir.intent_op_contract import canonicalize_dtype
 
 
 SOURCE_TTIR_OBSERVATION_PROTOCOL = "intentir.lift-source-ttir.v1"
 SOURCE_TTIR_RECONCILE_PROTOCOL = "intentir.lift-source-reconcile.v1"
+
+# Worker failures are closed classes from the compiler, not parsed traceback
+# text. Prefixing them with the Source observation stage prevents a Replay
+# worker label from being mistaken for a Replay attempt.
+_SOURCE_COMPILER_FAILURE_RULES = {
+    "triton_replay_entry_lookup_failed": "source_observation_entry_lookup_failed",
+    "triton_replay_entry_type_failed": "source_observation_entry_type_failed",
+    "triton_replay_module_syntax_failed": "source_observation_module_syntax_failed",
+    "triton_replay_callable_abi_failed": "source_observation_callable_abi_failed",
+    "triton_compile_cuda_unavailable": "source_observation_cuda_unavailable",
+    "triton_compile_resources_exceeded": "source_observation_resources_exceeded",
+    "triton_compile_worker_timeout": "source_observation_worker_timeout",
+    "triton_compile_worker_result_invalid": "source_observation_worker_result_invalid",
+    "triton_compile_worker_process_failed": "source_observation_worker_process_failed",
+    "triton_compile_value_validation_failed": "source_observation_value_validation_failed",
+    "triton_compile_runtime_failed": "source_observation_runtime_failed",
+    "triton_compile_worker_failed": "source_observation_worker_failed",
+    "triton_compile_attribute_unavailable": "source_observation_attribute_unavailable",
+    "triton_compile_type_incompatible": "source_observation_type_incompatible",
+    "triton_frontend_broadcast_invalid": "source_observation_frontend_broadcast_invalid",
+    "triton_frontend_reshape_invalid": "source_observation_frontend_reshape_invalid",
+    "triton_frontend_constexpr_usage_invalid": "source_observation_frontend_constexpr_invalid",
+    "triton_frontend_pointer_expression_invalid": "source_observation_frontend_pointer_invalid",
+    "triton_frontend_tensor_index_invalid": "source_observation_frontend_index_invalid",
+    "triton_frontend_operand_type_invalid": "source_observation_frontend_operand_type_invalid",
+    "triton_frontend_helper_jit_missing": "source_observation_frontend_helper_jit_missing",
+    "triton_frontend_compilation_failed": "source_observation_frontend_compile_failed",
+}
+
+# This closed, source-blind vocabulary is shared by Lift and persisted workload
+# summaries. Neither raw compiler diagnostics nor private ledger reasons may
+# enter a public failure receipt by merely matching a string pattern.
+SAFE_SOURCE_PREPARATION_REASONS = frozenset({
+    "source_observation_facts_unavailable",
+    "source_observation_source_missing",
+    "source_observation_entry_missing",
+    "source_observation_compiler_view_missing",
+    "source_observation_compiler_view_invalid",
+    "source_observation_compile_failed",
+    "source_observation_entry_lookup_failed",
+    "source_observation_cuda_unavailable",
+    "source_observation_worker_timeout",
+    "source_observation_ttir_unavailable",
+    "source_observation_abi_projection_unavailable",
+    "source_observation_fingerprint_failed",
+    "source_observation_unavailable",
+    "source_transfer_ledger_unavailable",
+    "source_memory_occurrence_sidecars_incomplete",
+    "source_memory_occurrence_lexical_ledger_unavailable",
+    "source_memory_occurrence_observation_unavailable",
+    "source_atomic_update_observation_unavailable",
+    "source_atomic_update_authorization_unavailable",
+    "source_compiler_access_counterpart_ambiguous",
+    "source_compiler_access_counterpart_unavailable",
+    "source_predicate_access_anchor_unavailable",
+    "source_compiler_predicate_access_projection_unavailable",
+    "source_semantic_consumer_unavailable",
+    "source_authoring_contract_unavailable",
+    "source_exact_owner_binding_unavailable",
+    "source_computed_guard_authorization_unavailable",
+    "source_extern_target_unproved",
+    "source_extern_linkage_unproved",
+    "source_extern_library_unavailable",
+    "source_extern_library_identity_unproved",
+    "source_extern_linked_ir_unavailable",
+    "source_extern_ftz_unproved",
+    "source_extern_compiler_override_forbidden",
+    "source_extern_rsqrt_authorization_unavailable",
+    "source_extern_rsqrt_ftz_contract_unavailable",
+    "iteration_binding_not_source_proven",
+    "source_program_domain_projection_unavailable",
+} | set(_SOURCE_COMPILER_FAILURE_RULES.values()))
+
+
+def source_preparation_failure_reason(
+    observation: Mapping[str, Any], ledger: SourceTransferLedger,
+) -> str | None:
+    """Classify the first unclosed Source stage using only issued rule codes."""
+
+    if ledger.status == "pass":
+        return None
+    rule = observation.get("rule_code")
+    if isinstance(rule, str) and rule in SAFE_SOURCE_PREPARATION_REASONS:
+        return rule
+    if observation.get("status") == "pass":
+        reason = ledger.reason
+        return (
+            reason
+            if isinstance(reason, str) and reason in SAFE_SOURCE_PREPARATION_REASONS
+            else "source_transfer_ledger_unavailable"
+        )
+    return (
+        "source_observation_compile_failed"
+        if observation.get("status") == "fail"
+        else "source_observation_unavailable"
+    )
+
+
+def source_preparation_failure_stage(reason: str) -> str | None:
+    """Project one whitelisted rule to its first unclosed Source stage."""
+
+    if reason not in SAFE_SOURCE_PREPARATION_REASONS:
+        return None
+    if reason == "source_observation_abi_projection_unavailable":
+        return "ttir_abi_projection"
+    if reason == "source_observation_fingerprint_failed":
+        return "ttir_fingerprint"
+    if reason == "source_observation_ttir_unavailable":
+        return "ttir_extraction"
+    if reason in {
+        "source_observation_facts_unavailable",
+        "source_observation_source_missing",
+        "source_observation_entry_missing",
+        "source_observation_compiler_view_missing",
+        "source_observation_compiler_view_invalid",
+        "source_observation_unavailable",
+    }:
+        return "source_observation_setup"
+    if reason.startswith("source_observation_"):
+        return "source_compilation"
+    if reason in {
+        "source_transfer_ledger_unavailable",
+        "source_memory_occurrence_sidecars_incomplete",
+        "source_memory_occurrence_lexical_ledger_unavailable",
+        "source_memory_occurrence_observation_unavailable",
+        "source_atomic_update_observation_unavailable",
+        "source_atomic_update_authorization_unavailable",
+        "source_compiler_access_counterpart_ambiguous",
+        "source_compiler_access_counterpart_unavailable",
+    }:
+        return "source_transfer_ledger"
+    return "source_authorization"
 
 _DTYPE_ALIASES = {
     "f16": "float16",
@@ -67,7 +207,13 @@ def _runtime_argument(value: Mapping[str, Any]) -> RuntimeArgument:
             isinstance(item, bool) or not isinstance(item, int) for item in shape
         ):
             raise ValueError("anonymous tensor argument requires an integer shape")
-        return RuntimeArgument.tensor(tuple(shape), dtype)
+        strides = value.get("strides")
+        if strides is not None and (
+            not isinstance(strides, list) or len(strides) != len(shape)
+            or any(type(stride) is not int or stride < 0 for stride in strides)
+        ):
+            raise ValueError("anonymous tensor strides must match its rank")
+        return RuntimeArgument.tensor(tuple(shape), dtype, strides=strides)
     if kind == "scalar":
         scalar = value.get("value")
         if isinstance(scalar, bool) or isinstance(scalar, (int, float)):
@@ -165,93 +311,12 @@ def _source_runtime_parameter_uses(
         )
     }
     static_env = dict(constexpr_values or {})
-    unknown = object()
+    writes = {node.id for node in ast.walk(function) if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))}
+    static_env = {name: value for name, value in static_env.items() if name in parameters and name not in writes}
+    unknown = SOURCE_CONSTEXPR_UNKNOWN
 
     def static_value(node: ast.AST) -> object:
-        if isinstance(node, ast.Constant):
-            return node.value
-        if isinstance(node, ast.Name):
-            return static_env.get(node.id, unknown)
-        if isinstance(node, ast.UnaryOp):
-            operand = static_value(node.operand)
-            if operand is unknown:
-                return unknown
-            if isinstance(node.op, ast.Not):
-                return not bool(operand)
-            if isinstance(node.op, ast.USub) and isinstance(operand, (int, float)):
-                return -operand
-            if isinstance(node.op, ast.UAdd) and isinstance(operand, (int, float)):
-                return +operand
-            if isinstance(node.op, ast.Invert) and isinstance(operand, int):
-                return ~operand
-            return unknown
-        if isinstance(node, ast.BoolOp):
-            values = [static_value(item) for item in node.values]
-            if any(item is unknown for item in values):
-                return unknown
-            if isinstance(node.op, ast.And):
-                return all(bool(item) for item in values)
-            if isinstance(node.op, ast.Or):
-                return any(bool(item) for item in values)
-            return unknown
-        if isinstance(node, ast.BinOp):
-            left = static_value(node.left)
-            right = static_value(node.right)
-            if left is unknown or right is unknown:
-                return unknown
-            try:
-                if isinstance(node.op, ast.BitAnd):
-                    return left & right
-                if isinstance(node.op, ast.BitOr):
-                    return left | right
-                if isinstance(node.op, ast.BitXor):
-                    return left ^ right
-                if isinstance(node.op, ast.Add):
-                    return left + right
-                if isinstance(node.op, ast.Sub):
-                    return left - right
-                if isinstance(node.op, ast.Mult):
-                    return left * right
-                if isinstance(node.op, ast.FloorDiv):
-                    return left // right
-                if isinstance(node.op, ast.Mod):
-                    return left % right
-            except (TypeError, ValueError, ZeroDivisionError):
-                return unknown
-            return unknown
-        if isinstance(node, ast.Compare):
-            left = static_value(node.left)
-            comparators = [static_value(item) for item in node.comparators]
-            if left is unknown or any(item is unknown for item in comparators):
-                return unknown
-            values = [left, *comparators]
-            for index, operation in enumerate(node.ops):
-                lhs, rhs = values[index], values[index + 1]
-                try:
-                    if isinstance(operation, ast.Eq):
-                        passed = lhs == rhs
-                    elif isinstance(operation, ast.NotEq):
-                        passed = lhs != rhs
-                    elif isinstance(operation, ast.Lt):
-                        passed = lhs < rhs
-                    elif isinstance(operation, ast.LtE):
-                        passed = lhs <= rhs
-                    elif isinstance(operation, ast.Gt):
-                        passed = lhs > rhs
-                    elif isinstance(operation, ast.GtE):
-                        passed = lhs >= rhs
-                    elif isinstance(operation, ast.Is):
-                        passed = lhs is rhs
-                    elif isinstance(operation, ast.IsNot):
-                        passed = lhs is not rhs
-                    else:
-                        return unknown
-                except TypeError:
-                    return unknown
-                if not passed:
-                    return False
-            return True
-        return unknown
+        return source_constexpr_value(node, static_env)
 
     class SelectedVariantUseVisitor(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -383,141 +448,102 @@ def _ttir_source_abi_aliases(
     source_facts: SourceFacts,
     *,
     function_name: str,
+    python_interface: Mapping[str, Any],
 ) -> dict[str, str] | None:
-    """Prove the observed TTIR argument-to-physical-ABI projection.
+    """Consume the actual compiler specialization's named ABI receipt.
 
-    A valid full projection is the *unique* order-preserving type-category
-    match from the compiler's surviving arguments to SourceFacts ``p*`` slots.
-    Source slots may disappear through compiler specialization.  If scalar
-    specialization leaves more than one possible scalar alignment, a unique
-    pointer-only projection remains sufficient for transfer ownership: every
-    ambiguous scalar is deliberately labelled ``unmappedN`` rather than being
-    guessed as a physical ABI slot.
+    Types validate the mapping; they never select it. A missing compiler
+    receipt cannot fall back to an order-preserving type match.
     """
-
-    observed = _ttir_argument_categories(ttir, function_name=function_name)
-    if observed is None:
+    if python_interface.get("compiled_ttir_sha256") != hashlib.sha256(ttir.encode("utf-8")).hexdigest():
         return None
-    expected: list[tuple[int, str, str]] = []
-    for argument in source_facts.arguments:
-        name = argument.get("name") if isinstance(argument, Mapping) else None
-        match = re.fullmatch(r"p([0-9]+)", name or "")
-        category_and_dtype = (
-            _source_argument_category(argument)
-            if isinstance(argument, Mapping)
-            else None
-        )
-        if match is None or category_and_dtype is None:
-            return None
-        category, dtype = category_and_dtype
-        expected.append((int(match.group(1)), category, dtype))
-    if not expected:
+    if not isinstance(python_interface.get("compiled_source_file"), str) or not python_interface["compiled_source_file"]:
         return None
-    expected.sort(key=lambda item: item[0])
-    if [position for position, _category, _dtype in expected] != list(range(len(expected))):
-        return None
-
-    # Each entry is (cost, capped count, one mapping).  Capping at two
-    # preserves the only distinction needed here: unique versus ambiguous.
-    # Compiler index lowering can turn a Source i64 into TTIR i32, but an exact
-    # dtype match is strictly preferred wherever available.
-    memo: dict[
-        tuple[int, int],
-        tuple[int | None, int, tuple[tuple[int, int], ...] | None],
-    ] = {}
-
-    def match_cost(
-        source_category: str,
-        source_dtype: str,
-        observed_category: str,
-        observed_dtype: str,
-    ) -> int | None:
-        if source_category != observed_category:
-            return None
-        if source_category in {"pointer", "float"}:
-            return 0 if source_dtype == observed_dtype else None
-        return 0 if source_dtype == observed_dtype else 1
-
-    def align(
-        source_index: int,
-        observed_index: int,
-    ) -> tuple[int | None, int, tuple[tuple[int, int], ...] | None]:
-        key = (source_index, observed_index)
-        cached = memo.get(key)
-        if cached is not None:
-            return cached
-        if observed_index == len(observed):
-            result = (0, 1, ())
-        elif source_index == len(expected):
-            result = (None, 0, None)
-        else:
-            cost, count, mapping = align(source_index + 1, observed_index)
-            source_position, source_category, source_dtype = expected[source_index]
-            observed_position, observed_category, observed_dtype = observed[observed_index]
-            conversion_cost = match_cost(
-                source_category,
-                source_dtype,
-                observed_category,
-                observed_dtype,
-            )
-            if conversion_cost is not None:
-                matched_cost, matched_count, matched_mapping = align(
-                    source_index + 1,
-                    observed_index + 1,
-                )
-                if matched_cost is not None and matched_count:
-                    matched = (
-                        ((observed_position, source_position), *matched_mapping)
-                        if matched_mapping is not None
-                        else None
-                    )
-                    matched_cost += conversion_cost
-                    if cost is None or matched_cost < cost:
-                        cost, count, mapping = matched_cost, matched_count, matched
-                    elif matched_cost == cost:
-                        count = min(2, count + matched_count)
-                        mapping = None
-            result = (cost, count, mapping)
-        memo[key] = result
-        return result
-
-    _cost, count, mapping = align(0, 0)
-    if _cost is not None and count == 1 and mapping is not None and len(mapping) == len(observed):
-        return {
-            f"arg{observed_position}": str(source_position)
-            for observed_position, source_position in mapping
-        }
-
-    expected_pointers = [
-        (position, dtype)
-        for position, category, dtype in expected
-        if category == "pointer"
-    ]
-    observed_pointers = [
-        (position, dtype)
-        for position, category, dtype in observed
-        if category == "pointer"
-    ]
+    entry = python_interface.get("compiled_entry_name")
+    names = python_interface.get("arg_names")
+    runtime = python_interface.get("compiled_arg_names")
+    types = python_interface.get("compiled_arg_types")
+    specialized = python_interface.get("specialized_arg_names")
+    constexpr_indices = python_interface.get("constexpr_indices")
     if (
-        len(expected_pointers) != len(observed_pointers)
-        or [dtype for _position, dtype in expected_pointers]
-        != [dtype for _position, dtype in observed_pointers]
+        not isinstance(entry, str) or not isinstance(function_name, str)
+        or python_interface.get("compiled_source_function") != function_name
+        or not all(isinstance(items, list) for items in (names, runtime, types, specialized, constexpr_indices))
+        or not all(isinstance(name, str) for items in (names, runtime, specialized) for name in items)
+        or any(len(set(items)) != len(items) for items in (names, runtime, specialized))
+        or set(runtime) & set(specialized) or set(runtime) | set(specialized) != set(names)
+        or runtime != [name for name in names if name not in specialized]
+        or len(runtime) != len(types)
+        or any(type(index) is not int or not 0 <= index < len(names) for index in constexpr_indices)
+        or python_interface.get("constexprs") != [names[index] for index in constexpr_indices]
+        or not {names[index] for index in constexpr_indices}.issubset(specialized)
     ):
         return None
-    pointer_aliases = {
-        observed_position: source_position
-        for (source_position, _source_dtype), (observed_position, _observed_dtype) in zip(
-            expected_pointers,
-            observed_pointers,
-            strict=True,
-        )
-    }
-    return {
-        f"arg{observed_position}": str(pointer_aliases[observed_position])
-        if observed_position in pointer_aliases
-        else f"unmapped{observed_position}"
-        for observed_position, _category, _dtype in observed
-    }
+    observed = _ttir_argument_categories(ttir, function_name=entry)
+    if observed is None or len(observed) != len(runtime):
+        return None
+    # ``arg_names`` may come from either of the two host-owned compiler
+    # entries: the exact Source spelling or the already-anonymized Gate
+    # spelling.  The SourceFacts mapping is directed from the former to the
+    # latter, so normalize only through that explicit mapping (or an exact
+    # canonical identity), never through argument order or types.
+    parameter_order = tuple(source_facts.parameter_order)
+    source_to_opaque = dict(source_facts.source_to_opaque)
+    if (
+        len(source_to_opaque) != len(source_facts.source_to_opaque)
+        or len(set(source_to_opaque.values())) != len(source_to_opaque)
+        or set(source_to_opaque.values()) != set(parameter_order)
+    ):
+        return None
+    if all(name in source_to_opaque for name in names):
+        canonical_names = tuple(source_to_opaque[name] for name in names)
+    elif all(name in parameter_order for name in names):
+        canonical_names = tuple(names)
+    else:
+        return None
+    if canonical_names != parameter_order:
+        return None
+    facts = {row["name"]: row for row in source_facts.arguments}
+    # Every Source runtime slot must have one named declaration, even if the
+    # compiler explicitly specialized that scalar away.  Compiler constexpr
+    # slots are deliberately outside ``facts`` but remain covered by the
+    # exact parameter-order check above.
+    declared = [name for name in canonical_names if name in facts]
+    if len(declared) != len(facts) or set(declared) != set(facts):
+        return None
+    result: dict[str, str] = {}
+    jit_aliases = {"fp16": "float16", "bf16": "bfloat16", "fp32": "float32", "fp64": "float64"}
+    for name, signature, (position, category, dtype) in zip(runtime, types, observed, strict=True):
+        opaque = source_to_opaque.get(name, name)
+        argument = facts.get(opaque)
+        if argument is None or not isinstance(signature, str):
+            return None
+        expected = _source_argument_category(argument)
+        pointer = signature.startswith("*")
+        spelling = signature[1:] if pointer else signature
+        compiled_dtype = jit_aliases.get(spelling, _DTYPE_ALIASES.get(spelling, spelling)).casefold()
+        if (category == "pointer") != pointer or compiled_dtype != dtype or expected is None or expected[0] != category:
+            return None
+        if category != "integer" and expected[1] != dtype:
+            return None
+        if category == "integer" and expected[1] != dtype:
+            width = re.fullmatch(r"(u?)int([0-9]+)", dtype)
+            value = argument.get("value")
+            if width is None or type(value) is not int:
+                return None
+            bits = int(width[2])
+            low, high = (0, 2 ** bits) if width[1] else (-2 ** (bits - 1), 2 ** (bits - 1))
+            if not low <= value < high:
+                return None
+        match = re.fullmatch(r"p([0-9]+)", opaque or "")
+        if match is None:
+            return None
+        result[f"arg{position}"] = match[1]
+    for name in specialized:
+        argument = facts.get(source_to_opaque.get(name, name))
+        if argument is not None and argument.get("kind") != "scalar":
+            return None
+    return result
 
 
 def _source_observation_python_interface(
@@ -533,6 +559,7 @@ def _source_observation_python_interface(
         ttir,
         source_facts,
         function_name=function_name,
+        python_interface=python_interface,
     )
     if aliases is None:
         return None
@@ -575,21 +602,25 @@ def observe_source_ttir(
         return {
             **base,
             "status": "unavailable",
+            "rule_code": "source_observation_facts_unavailable",
             "diagnostic": "canonical SourceFacts are required for Source observation",
         }
     base["source_facts"] = source_facts.to_json()
     if not isinstance(source, str) or not source:
-        return {**base, "status": "fail", "diagnostic": "Source is absent"}
+        return {**base, "status": "fail", "rule_code": "source_observation_source_missing", "diagnostic": "Source is absent"}
     if not isinstance(source_function, str) or not source_function.isidentifier():
-        return {**base, "status": "unavailable", "diagnostic": "Source entry is absent"}
+        return {**base, "status": "unavailable", "rule_code": "source_observation_entry_missing", "diagnostic": "Source entry is absent"}
     if not isinstance(compiler_view, Mapping):
         return {
             **base,
             "status": "unavailable",
+            "rule_code": "source_observation_compiler_view_missing",
             "diagnostic": "anonymous compiler view is absent",
         }
+    stage = "compiler_view"
     try:
         case = _compile_case(compiler_view)
+        stage = "source_compile"
         result = (compiler or TritonCompiler()).compile(
             KernelSource.from_code(
                 source,
@@ -603,11 +634,16 @@ def observe_source_ttir(
             return {
                 **base,
                 "status": "fail",
+                "rule_code": (
+                    _SOURCE_COMPILER_FAILURE_RULES.get(result.failure_class, "source_observation_compile_failed")
+                    if not result.ok else "source_observation_ttir_unavailable"
+                ),
                 "diagnostic": result.diagnostic or "compiler returned no TTIR",
                 "elapsed_ms": result.elapsed_ms,
                 "compiler": dict(result.compiler),
                 "target": dict(result.target),
             }
+        stage = "abi_projection"
         python_interface = _source_observation_python_interface(
             result.ttir,
             result.python_interface,
@@ -618,13 +654,16 @@ def observe_source_ttir(
             return {
                 **base,
                 "status": "unavailable",
+                "rule_code": "source_observation_abi_projection_unavailable",
                 "diagnostic": "observed TTIR ABI has no unique SourceFacts projection",
                 "elapsed_ms": result.elapsed_ms,
                 "compiler": dict(result.compiler),
                 "target": dict(result.target),
             }
+        stage = "fingerprint"
         fingerprint = fingerprint_ttir(
             result.ttir,
+            external_math=result.external_math,
             python_interface=python_interface,
             schedule=case.schedule,
         )
@@ -646,16 +685,27 @@ def observe_source_ttir(
                 and re.fullmatch(r"p[0-9]+", opaque) is not None
             ],
             "python_interface": python_interface,
+            "_external_math": dict(result.external_math),
             "compiler": dict(result.compiler),
             "target": dict(result.target),
             "elapsed_ms": result.elapsed_ms,
             "cache_hit": result.cache_hit,
         }
     except Exception as exc:
+        stage_rules = {
+            "compiler_view": "source_observation_compiler_view_invalid",
+            "source_compile": "source_observation_compile_failed",
+            "abi_projection": "source_observation_abi_projection_unavailable",
+            "fingerprint": "source_observation_fingerprint_failed",
+        }
         return {
             **base,
             "status": "fail",
             "diagnostic": _closed_observer_exception(exc),
+            "rule_code": (
+                str(exc) if str(exc) in EXTERNAL_MATH_FAILURE_RULES
+                else stage_rules[stage]
+            ),
         }
 
 
@@ -725,6 +775,46 @@ def _source_argument_positions(
         if match is not None:
             positions.add(int(match.group(1)))
     return tuple(sorted(positions))
+
+
+def _source_address_carrier_program_axis_pairs(
+    polynomial: object,
+) -> tuple[tuple[int, int], ...]:
+    """Return only same-monomial carrier/launch-axis relations.
+
+    Counting all argument atoms and all ``program_axis:*`` atoms globally is
+    insufficient for a pointer polynomial: ``base + stride * pid`` has both
+    kinds of atoms, but the stride ownership is established by their shared
+    product monomial, not by their mere coexistence in the sum.  Keep this
+    small positive proof separate from the broader atom inventory used for
+    grid projection; callers that bind a stride carrier must use these pairs.
+    """
+
+    pairs: set[tuple[int, int]] = set()
+    if not isinstance(polynomial, (list, tuple)):
+        return ()
+    for term in polynomial:
+        if not isinstance(term, (list, tuple)) or len(term) != 2:
+            continue
+        atoms = term[0]
+        if not isinstance(atoms, (list, tuple)):
+            continue
+        argument_positions = {
+            int(match.group(1))
+            for atom in atoms
+            if isinstance(atom, str)
+            and (match := re.fullmatch(r"arg\[(\d+)\]:.*", atom)) is not None
+        }
+        program_axes = {
+            "xyz".index(match.group(1))
+            for atom in atoms
+            if isinstance(atom, str)
+            and (match := re.fullmatch(r"program_axis:([xyz])", atom)) is not None
+        }
+        for argument_position in argument_positions:
+            for physical_axis in program_axes:
+                pairs.add((argument_position, physical_axis))
+    return tuple(sorted(pairs))
 
 
 def _source_pointer_base_position(pointer_base: object) -> int | None:
@@ -855,6 +945,7 @@ def _source_domain_extent_symbols(
         atoms = parsed.args if parsed.op == "and" else (parsed,)
         lower_coordinates: set[str] = set()
         upper_pairs: set[tuple[str, str]] = set()
+        recognized_atoms = 0
         for atom in atoms:
             if len(atom.args) != 2:
                 continue
@@ -867,6 +958,7 @@ def _source_domain_extent_symbols(
                 and isinstance(right.value, str)
             ):
                 lower_coordinates.add(right.value)
+                recognized_atoms += 1
             elif (
                 atom.op == "ge"
                 and left.op == "ref"
@@ -875,6 +967,7 @@ def _source_domain_extent_symbols(
                 and right.value == 0
             ):
                 lower_coordinates.add(left.value)
+                recognized_atoms += 1
             if (
                 atom.op == "lt"
                 and left.op == "ref"
@@ -884,6 +977,7 @@ def _source_domain_extent_symbols(
                 and re.fullmatch(r"x[0-9]+", right.value) is not None
             ):
                 upper_pairs.add((left.value, right.value))
+                recognized_atoms += 1
             elif (
                 atom.op == "gt"
                 and left.op == "ref"
@@ -893,13 +987,25 @@ def _source_domain_extent_symbols(
                 and isinstance(right.value, str)
             ):
                 upper_pairs.add((right.value, left.value))
+                recognized_atoms += 1
+        # A domain used as a Source launch witness must be exactly the
+        # zero-based half-open interval.  Previously unrecognized extra
+        # clauses were ignored, so a candidate could retain a stricter or
+        # differently constrained domain while still receiving the same
+        # x*-extent projection.  Do not treat a partial parse as proof.
+        if len(atoms) != 2 or recognized_atoms != len(atoms):
+            continue
         closed = {
             (coordinate, extent)
             for coordinate, extent in upper_pairs
             if coordinate in lower_coordinates
             and re.fullmatch(r"(?:i|k)[0-9]+", coordinate) is not None
         }
-        if len(closed) == 1:
+        if (
+            len(lower_coordinates) == 1
+            and len(upper_pairs) == 1
+            and len(closed) == 1
+        ):
             _coordinate, extent = next(iter(closed))
             result[domain_ref] = extent
     return result
@@ -987,11 +1093,13 @@ def materialize_source_program_domains(
     extent, or a candidate-authored pi row.
 
     Any absent, mixed, or ambiguous fact leaves the packet untouched. An
-    existing program-axis mapping is never supplemented; a pre-existing tile
-    iteration row alone is preserved while the independently proved launch
-    mapping is projected. Exact provider domains may be reused, but only when
-    one unique zero-based domain has the required Source dimension extent;
-    otherwise projection fails closed without adding or changing a domain.
+    existing program-axis mapping is first compared with the independently
+    derived Source mapping; only an exactly matching mapping is retained. A
+    pre-existing tile iteration row alone is preserved while the independently
+    proved launch mapping is projected. Exact provider domains may be reused,
+    but only when one unique zero-based domain has the required Source
+    dimension extent; otherwise projection fails closed without adding or
+    changing a domain.
     """
 
     input_artifact = copy.deepcopy(dict(packet))
@@ -1007,6 +1115,8 @@ def materialize_source_program_domains(
         "source_facts_missing_or_malformed",
         "transfer_ledger_not_closed",
         "candidate_wire_malformed",
+        "candidate_program_mapping_malformed",
+        "candidate_program_mapping_not_source_proven",
         "grid_facts_missing_or_malformed",
         "candidate_parameter_projection_ambiguous",
         "candidate_tensor_projection_malformed",
@@ -1026,6 +1136,7 @@ def materialize_source_program_domains(
         "tile_slot_value_unavailable",
         "tile_program_dimension_overlap",
         "duplicate_tile_logical_dimension",
+        "iteration_binding_not_source_proven",
         "provider_domain_dimension_unavailable",
         "provider_domain_dimension_ambiguous",
         "no_closed_program_domain_projection",
@@ -1101,18 +1212,74 @@ def materialize_source_program_domains(
         or not isinstance(outputs, list)
     ):
         return unavailable("candidate_wire_malformed")
-    # A launch-axis mapping is a complete, independent π authority.  Preserve
-    # it byte-for-byte and let the ordinary canonical/Source validators prove
-    # or reject it rather than supplementing it here.  An iteration row alone
-    # is not a launch-axis mapping, however: upstream host construction can
-    # already have a Source-proven tile relation before this pass observes the
-    # grid.  Treating that row as if it proved a program mapping made a valid
-    # domain projection silently return without creating its required
-    # program_axes/program_bindings.  Keep the row untouched and derive only
-    # the uniquely Source-bound launch part below; malformed or conflicting
-    # iteration rows remain fail-closed in the strict canonical validation.
+    # A candidate-supplied launch-axis mapping is not an authority merely
+    # because it is syntactically valid.  The old early return here allowed a
+    # provider-authored ``program_axes``/``program_bindings`` row to bypass the
+    # Source grid, shape-coordinate and transfer-ledger projection.  That
+    # breaks the Source -> symbolic-domain authorization chain: a wrong
+    # logical axis could still look like a complete pi mapping to later
+    # consumers.
+    #
+    # Derive the expected mapping on a private copy with those two candidate
+    # collections cleared, then compare the canonical semantic projections.
+    # The recursive call is bounded to this one cleared pass and does not
+    # inspect or rewrite provider semantic values.  It may add only the
+    # already Source-proven domain/launch rows.  If the candidate mapping is
+    # absent, the ordinary path below performs that same projection.
     if program_axes or program_bindings:
-        return result
+        try:
+            authored_projection = canonical_program_coordinate_projection(pi)
+        except ProgramCoordinateProjectionError:
+            return unavailable(
+                "candidate_program_mapping_malformed",
+                path="pi.program_axes+pi.program_bindings",
+            )
+        verification_packet = copy.deepcopy(original)
+        verification_pi = verification_packet.get("pi")
+        if not isinstance(verification_pi, dict):
+            return unavailable("candidate_wire_malformed")
+        verification_pi["program_axes"] = []
+        verification_pi["program_bindings"] = []
+        projected = materialize_source_program_domains(
+            verification_packet,
+            source_facts=source_facts,
+            ledger=shared_ledger,
+        )
+        if not isinstance(projected, Mapping) or projected.get("status") != "pass":
+            return unavailable(
+                "candidate_program_mapping_not_source_proven",
+                path="pi.program_axes+pi.program_bindings",
+            )
+        projected_artifact = projected.get("artifact")
+        projected_pi = (
+            projected_artifact.get("pi")
+            if isinstance(projected_artifact, Mapping)
+            else None
+        )
+        if not isinstance(projected_pi, Mapping):
+            return unavailable(
+                "candidate_program_mapping_not_source_proven",
+                path="pi.program_axes+pi.program_bindings",
+            )
+        try:
+            expected_projection = canonical_program_coordinate_projection(
+                projected_pi
+            )
+        except ProgramCoordinateProjectionError:
+            return unavailable(
+                "candidate_program_mapping_not_source_proven",
+                path="pi.program_axes+pi.program_bindings",
+            )
+        if authored_projection != expected_projection:
+            return unavailable(
+                "candidate_program_mapping_not_source_proven",
+                path="pi.program_axes+pi.program_bindings",
+            )
+        # Return the independently projected artifact.  When the mappings
+        # match, this preserves the candidate's semantic rows while exposing
+        # only host-derived domain/iteration additions to the later strict
+        # constructor.  No candidate mapping is copied into Source facts.
+        return dict(projected)
     provider_domains_present = bool(domains)
 
     compiler_facts = source_facts.compiler_facts
@@ -1327,6 +1494,7 @@ def materialize_source_program_domains(
             path="pi.program_axes",
         )
     projections: list[tuple[int, str, tuple[str, ...]]] = []
+    tiled_program_projections: dict[int, tuple[str, str, str]] = {}
     for physical_axis, coordinate in enumerate(grid_coordinates):
         if physical_axis not in used_launch_axes:
             continue
@@ -1343,6 +1511,56 @@ def materialize_source_program_domains(
                     "relation=direct",
                     path="pi.program_axes",
                 )
+            # A grid axis may be the ordinal of one Source-proven tile:
+            # ceil_div(shape_coordinate, tile_slot).  This is not a direct
+            # program-to-J coordinate and must not be represented as one.
+            # The existing tiled_domain iteration row owns the logical axis;
+            # retain this physical-axis witness only to close the Source
+            # projection and to ensure every used launch axis is accounted for.
+            tiled_match = re.fullmatch(
+                r"(?:ceil_div|cdiv)\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*"
+                r"([A-Za-z_][A-Za-z0-9_]*)\s*\)",
+                expression,
+            )
+            if tiled_match is not None:
+                factor_name, tile_name = tiled_match.groups()
+                factor_coordinate = factor_coordinates.get(factor_name)
+                tile_coordinate = tile_coordinates.get(tile_name)
+                choices = (
+                    coordinate_dimensions.get(factor_coordinate, set())
+                    if isinstance(factor_coordinate, str)
+                    else set()
+                )
+                tile_value = schedule_values.get(tile_name)
+                if (
+                    not isinstance(factor_coordinate, str)
+                    or not isinstance(tile_coordinate, str)
+                    or tile_coordinate != factor_coordinate
+                    or tile_name not in schedule_roles
+                    or schedule_roles.get(tile_name)
+                    not in {"tile_extent", "reduction_tile_extent"}
+                    or len(choices) != 1
+                    or type(tile_value) is not int
+                    or tile_value <= 0
+                    or re.fullmatch(r"h[0-9]+", factor_coordinate) is None
+                    or factor_coordinate not in shape_coordinates
+                    or grid[physical_axis]
+                    != (shape_coordinates[factor_coordinate] + tile_value - 1)
+                    // tile_value
+                ):
+                    return unavailable(
+                        "compound_grid_factor_coordinate_unavailable",
+                        f"physical_axis={physical_axis}",
+                        "relation=ceil_div_tile",
+                        path="pi.program_bindings",
+                    )
+                dimension = next(iter(choices))
+                tiled_program_projections[physical_axis] = (
+                    dimension,
+                    tile_name,
+                    factor_coordinate,
+                )
+                continue
             if re.fullmatch(
                 r"[A-Za-z_][A-Za-z0-9_]*(?:\s*\*\s*[A-Za-z_][A-Za-z0-9_]*)+",
                 expression,
@@ -1417,7 +1635,17 @@ def materialize_source_program_domains(
                 path="pi.program_bindings",
             )
         projections.append((physical_axis, relation, tuple(dimensions)))
-    if not projections:
+    projected_physical_axes = {
+        physical_axis for physical_axis, _relation, _dimensions in projections
+    } | set(tiled_program_projections)
+    if projected_physical_axes != used_launch_axes:
+        return unavailable(
+            "no_closed_program_domain_projection",
+            f"used_axis_count={len(used_launch_axes)}",
+            f"projected_axis_count={len(projected_physical_axes)}",
+            path="pi.program_bindings",
+        )
+    if not projections and not tiled_program_projections:
         return unavailable(
             "no_closed_program_domain_projection",
             f"used_axis_count={len(used_launch_axes)}",
@@ -1503,6 +1731,14 @@ def materialize_source_program_domains(
                 }
             )
         claimed_program_dimensions.update(dimensions)
+    for physical_axis, (dimension, _tile_slot, _coordinate) in tiled_program_projections.items():
+        if dimension in claimed_program_dimensions:
+            return unavailable(
+                "tile_program_dimension_overlap",
+                f"physical_axis={physical_axis}",
+                f"dimension={dimension}",
+                path="pi.iteration_bindings",
+            )
     tile_dimensions: set[str] = set()
     for slot_name, coordinate in tile_coordinates.items():
         role = schedule_roles.get(slot_name)
@@ -1585,6 +1821,81 @@ def materialize_source_program_domains(
             iteration_bindings.append(projected_iteration_binding)
         domain_by_dimension[dimension] = domain_ref
         tile_dimensions.add(dimension)
+
+    # ``iteration_bindings`` is a Source-owned schedule projection, not a
+    # free-form provider witness.  The earlier admission path checked only
+    # that a row named a C slot whose role looked like a tile role.  That left
+    # three independent claims unchecked: the C slot's Source coordinate,
+    # the J domain selected for that coordinate, and whether the row was an
+    # unsupported recurrence/extra-domain relation.  A later schema/type
+    # check cannot repair this without making the provider-authored row a
+    # second domain authority.
+    #
+    # Require the complete exact Source projection here.  The expected rows
+    # are derived solely from ``schedule_tile_coordinates`` and the
+    # Source-derived coordinate->dimension/domain maps above.  No row is
+    # accepted by shape/rank/value coincidence, and ``mode_slot`` remains
+    # null because the mounted host contract does not prove a mode carrier.
+    expected_iteration_rows: dict[str, dict[str, Any]] = {}
+    for slot_name, coordinate in tile_coordinates.items():
+        choices = coordinate_dimensions.get(coordinate, set())
+        if len(choices) != 1:
+            return unavailable(
+                "iteration_binding_not_source_proven",
+                f"slot={slot_name}",
+                f"logical_dimension_count={len(choices)}",
+                path="pi.iteration_bindings",
+            )
+        dimension = next(iter(choices))
+        domain_ref = domain_by_dimension.get(dimension)
+        if not isinstance(domain_ref, str):
+            return unavailable(
+                "iteration_binding_not_source_proven",
+                f"slot={slot_name}",
+                "domain_ref=unavailable",
+                path="pi.iteration_bindings",
+            )
+        expected_iteration_rows[slot_name] = {
+            "relation": "tiled_domain",
+            "logical_axes": [
+                {"subject_ref": domain_ref, "axis_ref": dimension}
+            ],
+            "tile_slot": slot_name,
+            "mode_slot": None,
+        }
+
+    seen_iteration_slots: set[str] = set()
+    for row_index, row in enumerate(iteration_bindings):
+        if not isinstance(row, Mapping) or set(row) != {
+            "relation", "logical_axes", "tile_slot", "mode_slot"
+        }:
+            return unavailable(
+                "iteration_binding_not_source_proven",
+                f"row_index={row_index}",
+                path="pi.iteration_bindings",
+            )
+        slot_name = row.get("tile_slot")
+        expected = expected_iteration_rows.get(slot_name)
+        if (
+            not isinstance(slot_name, str)
+            or expected is None
+            or slot_name in seen_iteration_slots
+            or dict(row) != expected
+        ):
+            return unavailable(
+                "iteration_binding_not_source_proven",
+                f"row_index={row_index}",
+                f"slot={slot_name if isinstance(slot_name, str) else 'invalid'}",
+                path="pi.iteration_bindings",
+            )
+        seen_iteration_slots.add(slot_name)
+    if seen_iteration_slots != set(expected_iteration_rows):
+        return unavailable(
+            "iteration_binding_not_source_proven",
+            f"expected={len(expected_iteration_rows)}",
+            f"observed={len(seen_iteration_slots)}",
+            path="pi.iteration_bindings",
+        )
     result["applied"].append(
         {
             "rule_code": "source_program_domain_projection",
@@ -1709,7 +2020,7 @@ def bind_source_pi(
         row["ordinal"]: row
         for row in shared_ledger.bindings
         if isinstance(row, Mapping)
-        and isinstance(row.get("ordinal"), int)
+        and is_canonical_ordinal(row.get("ordinal"))
         and isinstance(row.get("access_ref"), str)
     }
 
@@ -1720,6 +2031,8 @@ def bind_source_pi(
         else None
     )
     boundary = j.get("boundary")
+    if not isinstance(boundary, Mapping):
+        return ()
     raw_accesses = (
         boundary.get("accesses")
         if isinstance(boundary, Mapping)
@@ -1769,18 +2082,21 @@ def bind_source_pi(
         for item in source_runtime_parameter_uses
         if isinstance(item, str) and re.fullmatch(r"p[0-9]+", item)
     } if isinstance(source_runtime_parameter_uses, list) else set()
-    source_forms = tuple(
-        (
-            occurrence.operation,
-            occurrence.pointer_base,
-            occurrence.address_terms,
-            occurrence.context,
-        )
+    source_occurrences_by_ordinal = {
+        occurrence.ordinal: occurrence
         for occurrence in shared_ledger.occurrences
-    )
-    for ordinal, (operation, pointer_base, polynomial, _context) in enumerate(
-        source_forms
-    ):
+    }
+    if len(source_occurrences_by_ordinal) != len(shared_ledger.occurrences):
+        return reject(
+            "source_transfer_occurrence_identity_unavailable",
+            "<source-transfer-ledger>.occurrences",
+            "expected=unique_explicit_ordinals",
+        )
+    for occurrence in shared_ledger.occurrences:
+        ordinal = occurrence.ordinal
+        operation = occurrence.operation
+        pointer_base = occurrence.pointer_base
+        polynomial = occurrence.address_terms
         physical_axes = _source_program_axes(polynomial)
         if len(physical_axes) != 1:
             continue
@@ -1791,7 +2107,7 @@ def bind_source_pi(
             continue
         tensor_ref = base_parameter.get("logical_ref")
         memory_kind = _source_memory_kind(operation)
-        source_tensor_ref = shared_ledger.occurrences[ordinal].logical_ref
+        source_tensor_ref = occurrence.logical_ref
         if (
             not isinstance(tensor_ref, str)
             or memory_kind is None
@@ -1821,7 +2137,20 @@ def bind_source_pi(
             continue
 
         independent_coordinate_axes: set[tuple[str, int]] = set()
+        # Only domains attached to this Source-proven physical launch axis
+        # may establish the J coordinate for this occurrence.  Iterating over
+        # every candidate domain allowed an extra provider-authored domain
+        # (for example a second i* spelling of the same x* extent) to win the
+        # "independent" coordinate branch before the host mapping was
+        # consulted.  The materializer has already proved the launch map; use
+        # exactly its domain set here.
+        expected_domain_refs = {
+            domain_ref
+            for domain_ref, _axis_ref in program_axis_map.get(physical_axis, ())
+        }
         for domain_ref, coordinate in domain_coordinates.items():
+            if domain_ref not in expected_domain_refs:
+                continue
             axis = _index_axis_for_coordinate(
                 access.get("index_expression"),
                 coordinate,
@@ -1867,8 +2196,14 @@ def bind_source_pi(
                 continue
             logical_axis = next(iter(logical_axes))
 
+        carrier_program_pairs = set(
+            _source_address_carrier_program_axis_pairs(polynomial)
+        )
         for position in _source_argument_positions(polynomial):
-            if position == base_position:
+            if (
+                position == base_position
+                or (position, physical_axis) not in carrier_program_pairs
+            ):
                 continue
             carrier = runtime_parameters.get(position)
             if not isinstance(carrier, Mapping):
@@ -2044,8 +2379,18 @@ def bind_source_pi(
         logical_axis = ledger_program_axis(occurrence, access)
         if logical_axis is None:
             continue
+        physical_axes = _source_program_axes(occurrence.address_terms)
+        carrier_program_pairs = set(
+            _source_address_carrier_program_axis_pairs(
+                occurrence.address_terms
+            )
+        )
         for position in _source_argument_positions(occurrence.address_terms):
-            if position == base_position:
+            if (
+                position == base_position
+                or len(physical_axes) != 1
+                or (position, physical_axes[0]) not in carrier_program_pairs
+            ):
                 continue
             carrier = runtime_parameters.get(position)
             carrier_name = carrier.get("name") if isinstance(carrier, Mapping) else None
@@ -2359,6 +2704,7 @@ def reconcile_candidate_source_ttir(
         python_interface = observation.get("python_interface")
         fingerprint = fingerprint_ttir(
             ttir,
+            external_math=observation.get("_external_math"),
             python_interface=(
                 python_interface if isinstance(python_interface, Mapping) else None
             ),
@@ -2381,28 +2727,90 @@ def reconcile_candidate_source_ttir(
             ledger=construction_ledger,
             source_facts=construction.source_facts,
         )
-        binding = bind_source_pi(
-            packet,
-            fingerprint,
-            source_runtime_parameter_uses=observation.get(
-                "source_runtime_parameter_uses"
-            ),
-            ledger=transfer_ledger,
-            source_facts=construction.source_facts,
-        )
-        bound_packet = binding.get("artifact", packet)
-        if not isinstance(bound_packet, Mapping):
-            bound_packet = packet
-        binding_diagnostics = tuple(
-            item
-            for item in binding.get("diagnostics", [])
-            if isinstance(item, Mapping)
-        )
         reorder_diagnostics = tuple(
             item
             for item in transfer_ledger.get("diagnostics", ())
             if isinstance(item, Mapping)
         ) if isinstance(transfer_ledger, Mapping) else ()
+        # SourceReconcile is an independent admission consumer.  It must not
+        # rely on canonical construction having already validated a candidate
+        # supplied program mapping.  Project the host-owned mapping *before*
+        # Source->pi binding: bind_source_pi reads pi.program_axes and
+        # pi.program_bindings to resolve a carrier axis, so calling it first
+        # would let an unproved candidate row influence a later authorization
+        # decision.  This order is part of the independence boundary, not a
+        # performance detail.
+        domain_projection = materialize_source_program_domains(
+            packet,
+            source_facts=construction.source_facts,
+            ledger=transfer_ledger,
+        )
+        domain_diagnostics: tuple[Mapping[str, Any], ...] = ()
+        if (
+            not isinstance(domain_projection, Mapping)
+            or domain_projection.get("status") != "pass"
+        ):
+            reason = (
+                domain_projection.get("reason")
+                if isinstance(domain_projection, Mapping)
+                else None
+            )
+            if not isinstance(reason, str) or not re.fullmatch(
+                r"[a-z0-9_]{1,80}", reason
+            ):
+                reason = "source_program_domain_projection_unavailable"
+            domain_diagnostics = (
+                {
+                    "rule_code": f"source_program_domain_{reason}",
+                    "path": "j.boundary.domains + pi.program_axes + pi.program_bindings",
+                    "observed_refs_or_types": [
+                        "expected:Source-proven symbolic launch-domain mapping"
+                    ],
+                },
+            )
+        else:
+            projected_packet = domain_projection.get("artifact")
+            if not isinstance(projected_packet, Mapping):
+                domain_diagnostics = (
+                    {
+                        "rule_code": "source_program_domain_projection_unavailable",
+                        "path": "j.boundary.domains + pi.program_axes + pi.program_bindings",
+                        "observed_refs_or_types": [
+                            "expected:Source-proven symbolic launch-domain mapping"
+                        ],
+                    },
+                )
+                projected_packet = packet
+
+        # Do not call the π binder after an unavailable domain projection: it
+        # must never fall back to candidate-authored program rows.  A failed
+        # projection remains a reject-only SourceReconcile diagnostic.
+        if domain_diagnostics:
+            binding = {
+                "status": "unavailable",
+                "artifact": copy.deepcopy(dict(packet)),
+                "diagnostics": (),
+            }
+            bound_packet = packet
+        else:
+            binding = bind_source_pi(
+                projected_packet,
+                fingerprint,
+                source_runtime_parameter_uses=observation.get(
+                    "source_runtime_parameter_uses"
+                ),
+                ledger=transfer_ledger,
+                source_facts=construction.source_facts,
+            )
+            bound_packet = binding.get("artifact", projected_packet)
+            if not isinstance(bound_packet, Mapping):
+                bound_packet = projected_packet
+
+        binding_diagnostics = tuple(
+            item
+            for item in binding.get("diagnostics", [])
+            if isinstance(item, Mapping)
+        )
         if reorder_diagnostics:
             binding_diagnostics = (*reorder_diagnostics, *binding_diagnostics)
         diagnostics = compiled_packet_obligation_diagnostics(
@@ -2432,6 +2840,13 @@ def reconcile_candidate_source_ttir(
                 ledger=transfer_ledger,
                 source_facts=construction.source_facts,
             ),
+            *validate_source_store_output_bindings(
+                bound_packet,
+                fingerprint,
+                ledger=transfer_ledger,
+                source_facts=construction.source_facts,
+            ),
+            *domain_diagnostics,
             *_source_stride_axis_diagnostics(
                 bound_packet,
                 ledger=transfer_ledger,
@@ -3257,8 +3672,7 @@ def reorder_boundary_effects_from_source_ledger(
             else None
         )
         if (
-            isinstance(ordinal, int)
-            and not isinstance(ordinal, bool)
+            is_canonical_ordinal(ordinal)
             and ordinal not in authorizations_by_ordinal
             and isinstance(authorizations, Mapping)
         ):
@@ -3269,7 +3683,10 @@ def reorder_boundary_effects_from_source_ledger(
                 "<source-transfer-ledger>.bindings",
                 "expected=one_authorization_receipt_per_ordinal",
             )
-    if set(authorizations_by_ordinal) != set(range(len(source_transfers))):
+    source_transfer_ordinals = {
+        occurrence.ordinal for occurrence in source_transfers
+    }
+    if set(authorizations_by_ordinal) != source_transfer_ordinals:
         return reject(
             "source_transfer_authorization_projection_unavailable",
             "<source-transfer-ledger>.bindings",
@@ -3512,7 +3929,9 @@ def reorder_boundary_effects_from_source_ledger(
                 "reorder access declarations and access-bound effects to the "
                 "unique Source transfer ledger order"
             ),
-            "source_transfer_ordinals": list(range(len(source_rows))),
+            "source_transfer_ordinals": [
+                occurrence.ordinal for occurrence in source_transfers
+            ],
             "previous_access_order": current_access_order,
             "new_access_order": desired_access_order,
             "authority": (
@@ -3600,20 +4019,30 @@ def _direct_source_special_fill(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     text = value.strip()
-    if re.fullmatch(
-        r"arith\.constant\s+dense<0xFF800000>\s*:\s*"
-        r"tensor<[^>]*f32(?:\s*,[^>]*)?>",
-        text,
-    ):
-        return "-inf"
+    special_patterns = (
+        (r"FF800000", "-inf"),
+        (r"7F800000", "inf"),
+        (r"FFF0000000000000", "-inf"),
+        (r"7FF0000000000000", "inf"),
+    )
+    for bits, spelling in special_patterns:
+        if re.fullmatch(
+            rf"arith\.constant\s+dense<0x{bits}>\s*:\s*"
+            rf"tensor<[^>]*(?:f32|f64)(?:\s*,[^>]*)?>",
+            text,
+        ):
+            return spelling
     return None
 
 
 def _same_source_fill(left: object, source_value: object) -> bool:
     """Compare authored J fill syntax with one closed Source fill witness."""
 
-    if source_value == "-inf":
-        return isinstance(left, str) and left in {"-inf", "NEG_INF"}
+    if source_value in {"-inf", "inf"}:
+        return isinstance(left, str) and left in {
+            source_value,
+            "NEG_INF" if source_value == "-inf" else "POS_INF",
+        }
     return _same_json_scalar(left, source_value)
 
 
@@ -3639,9 +4068,12 @@ def _source_access_fill_validation_diagnostics(
         access_by_id[access_ref] = (index, access)
     shared_ledger = coerce_source_transfer_ledger(ledger, source_facts=source_facts)
     source_transfers = shared_ledger.occurrences
+    source_transfer_by_ordinal = {
+        effect.ordinal: effect for effect in source_transfers
+    }
     source_loads = {
         ordinal: effect
-        for ordinal, effect in enumerate(source_transfers)
+        for ordinal, effect in source_transfer_by_ordinal.items()
         if effect.kind == "load"
     }
     source_masked_loads = {
@@ -3690,6 +4122,14 @@ def _source_access_fill_validation_diagnostics(
             "observed_refs_or_types": list(facts),
             "line": None,
         }
+
+    if len(source_transfer_by_ordinal) != len(source_transfers):
+        return (
+            diagnostic(
+                "source_access_fill_occurrence_unproved",
+                facts=("Source transfer occurrence ordinals are not unique",),
+            ),
+        )
 
     if source_fill_detail_missing:
         return (
@@ -3804,9 +4244,8 @@ def _source_access_fill_validation_diagnostics(
         ordinal = match.get("ordinal") if isinstance(match, Mapping) else None
         access_ref = match.get("access_ref") if isinstance(match, Mapping) else None
         valid = (
-            not isinstance(ordinal, bool)
-            and isinstance(ordinal, int)
-            and 0 <= ordinal < len(source_transfers)
+            is_canonical_ordinal(ordinal)
+            and ordinal in source_transfer_by_ordinal
             and isinstance(access_ref, str)
             and access_ref in access_by_id
             and ordinal not in matches_by_ordinal
@@ -3819,7 +4258,15 @@ def _source_access_fill_validation_diagnostics(
                     facts=("malformed unique Source transfer/access occurrence", reason),
                 ),
             )
-        effect = source_transfers[ordinal]
+        effect = source_transfer_by_ordinal.get(ordinal)
+        if effect is None:
+            return (
+                diagnostic(
+                    "source_access_fill_occurrence_unproved",
+                    access_ref=access_ref,
+                    facts=("Source transfer ordinal is not present in the ledger", reason),
+                ),
+            )
         if (
             match.get("kind") != effect.kind
             or match.get("masked") != effect.masked
@@ -3844,7 +4291,7 @@ def _source_access_fill_validation_diagnostics(
     # this check here as well as in SourceTransferLedger.__post_init__ because
     # this helper also accepts the ingress-local mapping projection.
     if (
-        set(matches_by_ordinal) != set(range(len(source_transfers)))
+        set(matches_by_ordinal) != set(source_transfer_by_ordinal)
         or set(matches_by_ordinal.values()) != set(access_by_id)
     ):
         return (
@@ -3875,7 +4322,16 @@ def _source_access_fill_validation_diagnostics(
         return tuple(diagnostics)
 
     for ordinal, access_ref in sorted(matches_by_ordinal.items()):
-        effect = source_transfers[ordinal]
+        effect = source_transfer_by_ordinal.get(ordinal)
+        if effect is None:
+            diagnostics.append(
+                diagnostic(
+                    "source_access_fill_occurrence_unproved",
+                    access_ref=access_ref,
+                    facts=("Source transfer ordinal is not present in the ledger",),
+                )
+            )
+            continue
         if effect.kind != "load":
             continue
         access_index, access = access_by_id[access_ref]
@@ -3963,6 +4419,33 @@ def _source_access_fill_validation_diagnostics(
     return tuple(diagnostics)
 
 
+def _matches_source_issued_receipt(
+    access: Mapping[str, Any], field: str, receipt: object,
+) -> bool:
+    """Compare a claim with an already selected private ledger receipt.
+
+    The caller must select the receipt by the current Source access binding.
+    This checks issuance status/token equality only, not token syntax, J
+    content, producer identity or semantic equivalence. It never issues one.
+    """
+    return (
+        isinstance(receipt, Mapping)
+        and receipt.get("status") == "pass"
+        and access.get(field) == receipt.get("token")
+    )
+
+
+def _require_source_owner_receipts(
+    access: Mapping[str, Any], *, owner: object, access_view: object,
+) -> None:
+    """Require both private issuance matches before checking candidate DAGs."""
+    if not (
+        _matches_source_issued_receipt(access, "semantic_owner_authorization", owner)
+        and _matches_source_issued_receipt(access, "semantic_access_authorization", access_view)
+    ):
+        raise ValueError("source_owner_receipt_unissued")
+
+
 def validate_source_semantic_authorizations(
     packet: Mapping[str, Any],
     *,
@@ -3973,10 +4456,16 @@ def validate_source_semantic_authorizations(
 
     This is a verifier, not an allocator or semantic repair.  It consumes the
     same post-reorder occurrence/access binding used by SourceReconcile and
-    verifies that an opaque authorization token was issued for the exact
-    occurrence, then that the candidate's already-authored canonical node has
-    the approved family.  It never derives a token from source order, node
-    numbering, names, shape, or a provider declaration.
+    verifies access/guard receipts against that occurrence. Owner claims also
+    require an independently issued typed producer DAG commitment, not a family.
+    It never derives a token from source order, node numbering, names, shape,
+    or a provider declaration.
+
+    Owner verification reconsumes the candidate's actual producer slice; it
+    does not authenticate the whole candidate or certify fresh-run ownership.
+    The guard branch here checks issuance and operation family only, not full
+    predicate equivalence. Boundary/compiled obligations and the Gate chain
+    remain separate mandatory consumers; this result must not replace them.
     """
 
     shared = coerce_source_transfer_ledger(ledger, source_facts=source_facts)
@@ -4007,43 +4496,239 @@ def validate_source_semantic_authorizations(
             },
         )
 
-    nodes: dict[str, str] = {}
     value_producers: dict[str, str] = {}
+    value_producer_nodes: dict[str, str] = {}
+    seen_node_ids: set[str] = set()
+    malformed_producer_table = False
+    duplicate_value_producer = False
 
     def visit(rows: object) -> None:
+        nonlocal malformed_producer_table, duplicate_value_producer
         if not isinstance(rows, list):
+            malformed_producer_table = True
             return
         for operation in rows:
             if not isinstance(operation, Mapping):
+                malformed_producer_table = True
                 continue
             node_id = operation.get("id")
             op = operation.get("op")
-            if isinstance(node_id, str) and isinstance(op, str):
-                nodes[node_id] = op
-                result = operation.get("result")
-                results = (result,) if isinstance(result, str) else result
-                if isinstance(results, (list, tuple)):
-                    for value in results:
-                        if isinstance(value, str):
-                            value_producers[value] = op
+            if (
+                not isinstance(node_id, str)
+                or not node_id
+                or node_id in seen_node_ids
+                or not isinstance(op, str)
+                or not op
+            ):
+                malformed_producer_table = True
+            else:
+                seen_node_ids.add(node_id)
+            result = operation.get("result")
+            if isinstance(result, str):
+                results: tuple[object, ...] = (result,)
+            elif isinstance(result, (list, tuple)):
+                results = tuple(result)
+            elif result is None:
+                results = ()
+            else:
+                results = (result,)
+                malformed_producer_table = True
+            for value in results:
+                if not isinstance(value, str) or not value:
+                    malformed_producer_table = True
+                    continue
+                previous_node = value_producer_nodes.get(value)
+                if previous_node is not None:
+                    # Equal operation names do not make two SSA producers
+                    # interchangeable. A guard/output relation must resolve
+                    # to one authored node and one authored result.
+                    duplicate_value_producer = True
+                    continue
+                if not isinstance(node_id, str) or not node_id:
+                    malformed_producer_table = True
+                    continue
+                value_producer_nodes[value] = node_id
+                value_producers[value] = op
             for child_field in ("body",):
-                visit(operation.get(child_field))
+                child_rows = operation.get(child_field)
+                if child_rows is not None:
+                    visit(child_rows)
             for arm in ("positive", "negative"):
                 arm_value = operation.get(arm)
                 if isinstance(arm_value, Mapping):
-                    visit(arm_value.get("body"))
+                    arm_rows = arm_value.get("body")
+                    if arm_rows is not None:
+                        visit(arm_rows)
+                elif arm_value is not None:
+                    malformed_producer_table = True
 
     visit(body)
-    binding_by_access = {
-        row.get("access_ref"): row
-        for row in shared.bindings
-        if isinstance(row, Mapping) and isinstance(row.get("access_ref"), str)
-    }
+    if malformed_producer_table or duplicate_value_producer:
+        return (
+            {
+                "rule_code": "source_semantic_producer_table_ambiguous",
+                "path": "j.intent.intent_function.body",
+                "observed_refs_or_types": [
+                    "expected:unique well-formed J node/result producer table"
+                ],
+            },
+        )
+    # This verifier must not rely on a caller having already proved the
+    # occurrence/access cardinality.  Build the join defensively here as
+    # well: a malformed or duplicate row must not disappear from a dict
+    # comprehension and make a partial candidate look Source-complete.
+    binding_by_access: dict[str, Mapping[str, Any]] = {}
+    malformed_binding = False
+    for binding in shared.bindings:
+        access_ref = binding.get("access_ref") if isinstance(binding, Mapping) else None
+        if not isinstance(access_ref, str) or access_ref in binding_by_access:
+            malformed_binding = True
+            continue
+        binding_by_access[access_ref] = binding
     access_by_id = {
         row.get("access_id"): row
         for row in accesses
         if isinstance(row, Mapping) and isinstance(row.get("access_id"), str)
     }
+    malformed_access = (
+        not isinstance(accesses, list)
+        or len(access_by_id) != len(accesses)
+        or any(
+            not isinstance(row, Mapping)
+            or not isinstance(row.get("access_id"), str)
+            for row in accesses
+        )
+    )
+    expected_access_refs = set(binding_by_access)
+    actual_access_refs = set(access_by_id)
+    if (
+        malformed_binding
+        or malformed_access
+        or expected_access_refs != actual_access_refs
+        or len(binding_by_access) != len(shared.occurrences)
+    ):
+        return (
+            {
+                "rule_code": "source_semantic_access_cardinality_unproved",
+                "path": "j.boundary.accesses + <source-transfer-ledger>.bindings",
+                "observed_refs_or_types": [
+                    "expected:one unique candidate access for every Source occurrence"
+                ],
+            },
+        )
+    # Guard relations are an admission input, not an optional annotation.
+    # Do this structural join before consuming any private guard receipt so a
+    # malformed row cannot disappear from this verifier and be interpreted by
+    # a later projection as if the guard set were complete.  This deliberately
+    # proves only relation identity/shape; it does not infer a predicate,
+    # domain, polarity, or producer from any other field.
+    guard_relation_structure_diagnostics: list[Mapping[str, Any]] = []
+    seen_guard_access_refs: set[str] = set()
+    for relation_index, relation in enumerate(guard_relations):
+        relation_path = f"j.boundary.access_guard_relations[{relation_index}]"
+        if not isinstance(relation, Mapping):
+            guard_relation_structure_diagnostics.append(
+                {
+                    "rule_code": "source_semantic_guard_relation_structure_invalid",
+                    "path": relation_path,
+                    "observed_refs_or_types": [
+                        "expected:object with access_ref/value_ref"
+                    ],
+                }
+            )
+            continue
+        access_ref = relation.get("access_ref")
+        value_ref = relation.get("value_ref")
+        if not isinstance(access_ref, str) or not access_ref:
+            guard_relation_structure_diagnostics.append(
+                {
+                    "rule_code": "source_semantic_guard_relation_structure_invalid",
+                    "path": f"{relation_path}.access_ref",
+                    "observed_refs_or_types": [
+                        "expected:non-empty candidate access reference"
+                    ],
+                }
+            )
+            continue
+        if access_ref in seen_guard_access_refs:
+            guard_relation_structure_diagnostics.append(
+                {
+                    "rule_code": "source_semantic_guard_relation_ambiguous",
+                    "path": f"{relation_path}.access_ref",
+                    "observed_refs_or_types": [
+                        "expected:one unique guard relation per access"
+                    ],
+                }
+            )
+            continue
+        seen_guard_access_refs.add(access_ref)
+        if not isinstance(value_ref, str) or not value_ref:
+            guard_relation_structure_diagnostics.append(
+                {
+                    "rule_code": "source_semantic_guard_relation_structure_invalid",
+                    "path": f"{relation_path}.value_ref",
+                    "observed_refs_or_types": [
+                        "expected:non-empty authored guard value reference"
+                    ],
+                }
+            )
+            continue
+        if access_ref not in access_by_id:
+            guard_relation_structure_diagnostics.append(
+                {
+                    "rule_code": "source_semantic_guard_relation_access_unmatched",
+                    "path": f"{relation_path}.access_ref",
+                    "observed_refs_or_types": [
+                        "expected:guard relation access_ref in j.boundary.accesses"
+                    ],
+                }
+            )
+    if guard_relation_structure_diagnostics:
+        return tuple(guard_relation_structure_diagnostics)
+    # The access id is only a host allocation label.  The semantic identity
+    # still has to agree with the exact ledger ordinal/kind/tensor; neither a
+    # tensor-name match nor list position is sufficient to establish the
+    # Source occurrence join.
+    occurrence_by_ordinal = {
+        occurrence.ordinal: occurrence
+        for occurrence in shared.occurrences
+    }
+    if len(occurrence_by_ordinal) != len(shared.occurrences):
+        return (
+            {
+                "rule_code": "source_semantic_access_occurrence_mismatch",
+                "path": "<source-transfer-ledger>.occurrences",
+                "observed_refs_or_types": [
+                    "expected:unique explicit Source occurrence ordinals"
+                ],
+            },
+        )
+    for access_ref, binding in binding_by_access.items():
+        access = access_by_id[access_ref]
+        ordinal = binding.get("ordinal")
+        occurrence = (
+            occurrence_by_ordinal.get(ordinal)
+            if is_canonical_ordinal(ordinal)
+            else None
+        )
+        if (
+            occurrence is None
+            or (
+                "ordinal" in access
+                and access.get("ordinal") != ordinal
+            )
+            or access.get("kind") != occurrence.kind
+            or access.get("tensor") != occurrence.logical_ref
+        ):
+            return (
+                {
+                    "rule_code": "source_semantic_access_occurrence_mismatch",
+                    "path": f"j.boundary.accesses[{access_ref}]",
+                    "observed_refs_or_types": [
+                        "expected:exact Source ordinal/kind/tensor binding"
+                    ],
+                },
+            )
     diagnostics: list[Mapping[str, Any]] = []
     for index, access in enumerate(accesses):
         if not isinstance(access, Mapping):
@@ -4056,14 +4741,13 @@ def validate_source_semantic_authorizations(
             binding.get("semantic_authorizations") if isinstance(binding, Mapping)
             else None
         )
-        owner = authorizations.get("owner") if isinstance(authorizations, Mapping) else None
         access_view = authorizations.get("access_view") if isinstance(authorizations, Mapping) else None
         node_ref = access.get("node_ref")
         if node_ref is None:
             if access.get("kind") == "load" and (
-                not isinstance(access_view, Mapping)
-                or access_view.get("status") != "pass"
-                or access.get("semantic_access_authorization") != access_view.get("token")
+                not _matches_source_issued_receipt(
+                    access, "semantic_access_authorization", access_view,
+                )
             ):
                 diagnostics.append(
                     {
@@ -4073,30 +4757,35 @@ def validate_source_semantic_authorizations(
                     }
                 )
             continue
-        if (
-            not isinstance(owner, Mapping)
-            or owner.get("status") != "pass"
-            or access.get("semantic_owner_authorization") != owner.get("token")
-        ):
-            diagnostics.append(
-                {
-                    "rule_code": "semantic_owner_authorization_missing",
-                    "path": f"j.boundary.accesses[{index}].semantic_owner_authorization",
-                    "observed_refs_or_types": ["expected:ledger-issued owner token"],
-                }
+        owner = authorizations.get("owner") if isinstance(authorizations, Mapping) else None
+        try:
+            _require_source_owner_receipts(access, owner=owner, access_view=access_view)
+            # Content verification is a separate obligation. A successful
+            # issuance comparison cannot discharge the exact producer proof.
+            validate_source_owner_binding(
+                function, j["signature"]["parameters"], access, boundary,
+                value_dimension_relations=j.get("value_dimension_relations"),
             )
-            continue
-        if nodes.get(node_ref) != owner.get("operation_family"):
-            diagnostics.append(
-                {
-                    "rule_code": "semantic_owner_operation_family_mismatch",
-                    "path": f"j.boundary.accesses[{index}].node_ref",
-                    "observed_refs_or_types": ["expected:ledger-authorized operation family"],
-                }
-            )
+        except (ValueError, TypeError, KeyError, RecursionError):
+            diagnostics.append({
+                "rule_code": "source_exact_owner_binding_failed",
+                "path": f"j.boundary.accesses[{index}].node_ref",
+                "observed_refs_or_types": ["expected:unique exact typed Source producer DAG"],
+            })
     for relation_index, relation in enumerate(guard_relations):
         if not isinstance(relation, Mapping):
-            continue
+            # The structural pass above should already have returned. Keep
+            # this branch fail-closed as a defensive invariant if the raw
+            # packet is mutated between the two passes.
+            return (
+                {
+                    "rule_code": "source_semantic_guard_relation_structure_invalid",
+                    "path": f"j.boundary.access_guard_relations[{relation_index}]",
+                    "observed_refs_or_types": [
+                        "expected:object with access_ref/value_ref"
+                    ],
+                },
+            )
         access_ref = relation.get("access_ref")
         access = access_by_id.get(access_ref) if isinstance(access_ref, str) else None
         binding = binding_by_access.get(access_ref) if isinstance(access_ref, str) else None
@@ -4110,9 +4799,9 @@ def validate_source_semantic_authorizations(
         )
         if (
             not isinstance(access, Mapping)
-            or not isinstance(guard, Mapping)
-            or guard.get("status") != "pass"
-            or access.get("semantic_guard_authorization") != guard.get("token")
+            or not _matches_source_issued_receipt(
+                access, "semantic_guard_authorization", guard,
+            )
         ):
             diagnostics.append(
                 {
@@ -4136,6 +4825,793 @@ def validate_source_semantic_authorizations(
                     ],
                 }
             )
+    return tuple(diagnostics)
+
+
+def validate_source_store_output_bindings(
+    packet: Mapping[str, Any],
+    observed: TTIRFingerprint | None,
+    *,
+    ledger: SourceTransferLedger | Mapping[str, Any] | None = None,
+    source_facts: SourceFacts | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Require one closed Source-store -> J-update -> output binding.
+
+    Source owner authorization proves a typed producer slice, but it does not
+    by itself prove that the slice is the final logical output.  This verifier
+    joins the already-issued occurrence receipt, the private TTIR store/value
+    observation, the authored J operation, the optional LogicalUpdateSpec,
+    and the output return/mapping rows.  It then consumes the existing
+    FunctionalBoundary partition proof for the complete output.  It never
+    creates a row or chooses a producer.  Missing or non-unique joins remain
+    rejected.
+
+    Compiler node ids are consumed only from the in-memory observation.  They
+    are not serialized, exposed to the provider, or used as J handles.
+    """
+
+    shared = coerce_source_transfer_ledger(ledger, source_facts=source_facts)
+    if shared.status != "pass":
+        return ({
+            "rule_code": "source_store_output_ledger_unavailable",
+            "path": "<source-transfer-ledger>",
+            "observed_refs_or_types": ["expected:closed Source occurrence ledger"],
+        },)
+    # Never route a logical update through the ordinary physical-store proof.
+    # Even an internally rehydrated pass ledger must carry a dedicated typed
+    # atomic/update observation before its pointer, replacement value,
+    # compare/observed result, and final output relation can be admitted.
+    # The current observation protocol does not provide that complete record.
+    if any(occurrence.kind == "update" for occurrence in shared.occurrences):
+        return ({
+            "rule_code": "source_atomic_update_authorization_unavailable",
+            "path": "<source-transfer-ledger>.occurrences",
+            "observed_refs_or_types": [
+                "expected:typed logical-update and physical-store proof"
+            ],
+        },)
+    if not isinstance(observed, TTIRFingerprint):
+        return ({
+            "rule_code": "source_ttir_store_producer_unavailable",
+            "path": "<source-ttir-observation>",
+            "observed_refs_or_types": ["expected:compiler-attested store/value producer"],
+        },)
+    j = packet.get("j")
+    boundary = j.get("boundary") if isinstance(j, Mapping) else None
+    intent = j.get("intent") if isinstance(j, Mapping) else None
+    function = intent.get("intent_function") if isinstance(intent, Mapping) else None
+    signature = j.get("signature") if isinstance(j, Mapping) else None
+    if (
+        not isinstance(boundary, Mapping)
+        or not isinstance(function, Mapping)
+        or not isinstance(signature, Mapping)
+        or not isinstance(function.get("body"), list)
+        or not isinstance(function.get("outputs"), list)
+        or not isinstance(function.get("returns"), list)
+        or not isinstance(boundary.get("accesses"), list)
+        or not isinstance(boundary.get("effects"), list)
+        or not isinstance(boundary.get("output_mappings"), list)
+        or not isinstance(boundary.get("updates"), list)
+    ):
+        return ({
+            "rule_code": "source_store_output_topology_unavailable",
+            "path": "j.boundary",
+            "observed_refs_or_types": [
+                "expected:access/effect/update/output-mapping/return tables"
+            ],
+        },)
+
+    # Keep the physical ABI join local to the final store/output admission
+    # check.  The Source occurrence owns a runtime argument position; a
+    # matching logical tensor name alone is insufficient because constexpr
+    # and compiler-only slots can otherwise make two physical p* positions
+    # look interchangeable.
+    parameter_projection = _candidate_parameter_projections(
+        signature.get("parameters"),
+        source_facts=source_facts,
+    )
+    if parameter_projection is None:
+        return ({
+            "rule_code": "source_store_physical_abi_unproved",
+            "path": "j.signature.parameters",
+            "observed_refs_or_types": [
+                "expected:unique Source-runtime to candidate physical ABI projection"
+            ],
+        },)
+    runtime_parameters, _physical_parameters, _runtime_position_by_name = (
+        parameter_projection
+    )
+
+    # Reuse the canonical output constructor as the single authority for
+    # ABI-output/return/mapping coherence.  The checks below add the
+    # Source-occurrence and private-TTIR joins; they do not create a second
+    # producer interpretation.
+    if canonical_output_records(
+        function,
+        boundary,
+        None,
+        signature=signature,
+    ) is None:
+        return ({
+            "rule_code": "source_store_output_topology_unavailable",
+            "path": "j.intent.intent_function.outputs + j.returns + j.boundary.output_mappings",
+            "observed_refs_or_types": [
+                "expected:canonical output ABI/return/mapping record"
+            ],
+        },)
+
+    operations: dict[str, Mapping[str, Any]] = {}
+
+    def collect(rows: object) -> None:
+        if not isinstance(rows, list):
+            return
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            node_ref = row.get("id")
+            if isinstance(node_ref, str):
+                if node_ref in operations:
+                    raise ValueError("duplicate J operation id")
+                operations[node_ref] = row
+            collect(row.get("body"))
+            for arm in ("positive", "negative"):
+                branch = row.get(arm)
+                if isinstance(branch, Mapping):
+                    collect(branch.get("body"))
+
+    try:
+        collect(function["body"])
+    except ValueError:
+        return ({
+            "rule_code": "source_j_operation_identity_ambiguous",
+            "path": "j.intent.intent_function.body",
+            "observed_refs_or_types": ["expected:unique operation ids"],
+        },)
+
+    def unique_rows(
+        rows: object,
+        key: str,
+    ) -> tuple[dict[str, Mapping[str, Any]], bool]:
+        """Index one relation without allowing a later row to overwrite it."""
+
+        indexed: dict[str, Mapping[str, Any]] = {}
+        duplicate = False
+        if not isinstance(rows, list):
+            return indexed, True
+        for row in rows:
+            identity = row.get(key) if isinstance(row, Mapping) else None
+            if not isinstance(identity, str) or not identity:
+                # Do not silently drop a malformed relation row.  A dropped
+                # row could otherwise make a partial store/update partition
+                # appear complete to the later FunctionalBoundary proof.
+                duplicate = True
+                continue
+            if identity in indexed:
+                duplicate = True
+                continue
+            indexed[identity] = row
+        return indexed, duplicate
+
+    accesses, duplicate_accesses = unique_rows(boundary["accesses"], "access_id")
+    # ``Boundary.effects`` also contains control/state effects whose
+    # ``access_ref`` is intentionally null.  They must still have unique
+    # effect identities, but they are not entries in the memory-effect lookup
+    # used by this store/output join.  Treating null as a relation key made
+    # every multi-effect control graph look like a duplicate physical store
+    # relation and rejected it before FunctionalBoundary could perform its
+    # independent complete check.
+    effects: dict[str, Mapping[str, Any]] = {}
+    duplicate_effects = False
+    seen_effect_ids: set[str] = set()
+    raw_effect_rows = boundary["effects"]
+    if not isinstance(raw_effect_rows, list):
+        duplicate_effects = True
+        raw_effect_rows = []
+    for effect in raw_effect_rows:
+        if not isinstance(effect, Mapping):
+            duplicate_effects = True
+            continue
+        effect_id = effect.get("effect_id")
+        if (
+            not isinstance(effect_id, str)
+            or re.fullmatch(r"e[0-9]+", effect_id) is None
+            or effect_id in seen_effect_ids
+        ):
+            duplicate_effects = True
+        else:
+            seen_effect_ids.add(effect_id)
+        access_ref = effect.get("access_ref")
+        if access_ref is None:
+            continue
+        if not isinstance(access_ref, str) or access_ref in effects:
+            duplicate_effects = True
+            continue
+        effects[access_ref] = effect
+    outputs, duplicate_outputs = unique_rows(function["outputs"], "name")
+    returns, duplicate_returns = unique_rows(function["returns"], "output")
+    mappings, duplicate_mappings = unique_rows(
+        boundary["output_mappings"], "output"
+    )
+    updates, duplicate_updates = unique_rows(boundary["updates"], "node_ref")
+    raw_index_bounds = boundary.get("index_bounds")
+    index_bounds, duplicate_index_bounds = (
+        unique_rows(raw_index_bounds, "node_ref")
+        if isinstance(raw_index_bounds, list)
+        else ({}, False)
+    )
+    raw_result_relations = boundary.get("result_relations")
+    result_relations, duplicate_result_relations = (
+        unique_rows(raw_result_relations, "output")
+        if isinstance(raw_result_relations, list)
+        else ({}, False)
+    )
+    if any(
+        (
+            duplicate_accesses,
+            duplicate_effects,
+            duplicate_outputs,
+            duplicate_returns,
+            duplicate_mappings,
+            duplicate_updates,
+            duplicate_index_bounds,
+            duplicate_result_relations,
+        )
+    ):
+        return ({
+            "rule_code": "source_store_output_relation_ambiguous",
+            "path": "j.boundary",
+            "observed_refs_or_types": [
+                "expected:unique access/effect/output/update relation identities"
+            ],
+        },)
+
+    # The Source occurrence and its candidate access are selected only by the
+    # already-closed ledger binding, never by tensor name or list position.
+    occurrence_by_ordinal = {
+        occurrence.ordinal: occurrence for occurrence in shared.occurrences
+    }
+    binding_by_ordinal: dict[int, Mapping[str, Any]] = {}
+    duplicate_binding_ordinals = False
+    for row in shared.bindings:
+        ordinal = row.get("ordinal") if isinstance(row, Mapping) else None
+        if not is_canonical_ordinal(ordinal):
+            duplicate_binding_ordinals = True
+            continue
+        if ordinal in binding_by_ordinal:
+            duplicate_binding_ordinals = True
+            continue
+        binding_by_ordinal[ordinal] = row
+    if duplicate_binding_ordinals or set(binding_by_ordinal) != set(occurrence_by_ordinal):
+        return ({
+            "rule_code": "source_store_output_relation_ambiguous",
+            "path": "<source-transfer-ledger>.bindings.ordinal",
+            "observed_refs_or_types": [
+                "expected:exactly one binding for every Source occurrence"
+            ],
+        },)
+    binding_by_access: dict[str, Mapping[str, Any]] = {}
+    for row in shared.bindings:
+        access_ref = row.get("access_ref") if isinstance(row, Mapping) else None
+        if not isinstance(access_ref, str) or access_ref in binding_by_access:
+            return ({
+                "rule_code": "source_store_output_relation_ambiguous",
+                "path": "<source-transfer-ledger>.bindings",
+                "observed_refs_or_types": [
+                    "expected:one unique ledger binding per access_ref"
+                ],
+            },)
+        binding_by_access[access_ref] = row
+    # Every physical candidate write must be one of the exact Source-bound
+    # access occurrences.  An unbound output anchor is not a harmless second
+    # spelling of the same store: accepting it would let a candidate create a
+    # new producer/owner outside the Source ledger.
+    for access_ref, access in accesses.items():
+        if access.get("kind") not in {"store", "update"}:
+            continue
+        binding = binding_by_access.get(access_ref)
+        ordinal = binding.get("ordinal") if isinstance(binding, Mapping) else None
+        occurrence = occurrence_by_ordinal.get(ordinal)
+        if (
+            not isinstance(binding, Mapping)
+            or not is_canonical_ordinal(ordinal)
+            or occurrence is None
+            or occurrence.kind != access.get("kind")
+            or occurrence.logical_ref != access.get("tensor")
+        ):
+            return ({
+                "rule_code": "source_store_access_unmatched",
+                "path": f"j.boundary.accesses[{access_ref}]",
+                "observed_refs_or_types": [
+                    "expected:physical store/update bound to one Source occurrence"
+                ],
+            },)
+    diagnostics: list[Mapping[str, Any]] = []
+
+    def reject(rule: str, ordinal: int, suffix: str) -> None:
+        diagnostics.append({
+            "rule_code": rule,
+            "path": f"<source-store-binding>[{ordinal}].{suffix}",
+            "observed_refs_or_types": ["expected:unique closed Source/J/output relation"],
+        })
+
+    # Use the private compiler sidecar to require the direct TTIR store/value
+    # edge.  Matching by the exact Source debug coordinate is the only allowed
+    # join; no ordinal or operation-order fallback is permitted.
+    ttir_rows = tuple(observed.diagnostic_memory_source_locations)
+    owner_rows = tuple(observed.diagnostic_memory_owner_evidence)
+    tensor_proofs = tuple(observed.diagnostic_tensor_owner_graphs)
+    scalar_proofs = tuple(observed.diagnostic_scalar_owner_graphs)
+    for occurrence in shared.occurrences:
+        if occurrence.kind not in {"store", "update"}:
+            continue
+        ordinal = occurrence.ordinal
+        binding = binding_by_ordinal.get(ordinal)
+        access_ref = binding.get("access_ref") if isinstance(binding, Mapping) else None
+        access = accesses.get(access_ref)
+        if not isinstance(binding, Mapping) or not isinstance(access_ref, str) or not isinstance(access, Mapping):
+            reject("source_store_access_binding_missing", ordinal, "access_ref")
+            continue
+        source_argument = (
+            source_facts.argument_by_position(occurrence.pointer_position)
+            if isinstance(source_facts, SourceFacts)
+            else None
+        )
+        runtime_parameter = runtime_parameters.get(occurrence.pointer_position)
+        if (
+            not isinstance(source_argument, Mapping)
+            or not isinstance(runtime_parameter, Mapping)
+            or runtime_parameter.get("logical_ref") != occurrence.logical_ref
+            or runtime_parameter.get("kind") not in {"tensor", "pointer"}
+            or runtime_parameter.get("rank") != occurrence.tensor_rank
+            or (
+                isinstance(source_argument.get("mode"), str)
+                and runtime_parameter.get("mode") != source_argument.get("mode")
+            )
+        ):
+            reject("source_store_physical_abi_unproved", ordinal, "pointer")
+            continue
+        node_ref = access.get("node_ref")
+        if not isinstance(node_ref, str) or node_ref not in operations:
+            reject("source_store_j_operation_missing", ordinal, "node_ref")
+            continue
+        if access.get("kind") != occurrence.kind or access.get("tensor") != occurrence.logical_ref:
+            reject("source_store_access_source_mismatch", ordinal, "access")
+            continue
+        if (
+            (access.get("predicate") is not None) != occurrence.masked
+            or (
+                occurrence.kind != "load"
+                and access.get("fill_value") is not None
+            )
+            or (
+                occurrence.kind == "load"
+                and occurrence.masked
+                and access.get("fill_value") is None
+            )
+        ):
+            reject("source_store_access_mask_or_fill_mismatch", ordinal, "access")
+            continue
+        semantic_access = occurrence.semantic_access
+        if (
+            semantic_access is None
+            or access.get("semantic_access_authorization")
+            != semantic_access.token
+        ):
+            reject("source_store_source_occurrence_missing", ordinal, "source_occurrence")
+            continue
+        binding_authorizations = binding.get("semantic_authorizations")
+        owner_receipt = (
+            binding_authorizations.get("owner")
+            if isinstance(binding_authorizations, Mapping)
+            else None
+        )
+        if (
+            not isinstance(owner_receipt, Mapping)
+            or owner_receipt.get("status") != "pass"
+            or access.get("semantic_owner_authorization") != owner_receipt.get("token")
+        ):
+            reject("source_store_owner_authorization_missing", ordinal, "owner")
+            continue
+        # Reconsume the exact J owner commitment here instead of relying on a
+        # previous diagnostic pass.  This verifies the declared node's
+        # producer graph, typed value, coordinate/domain/predicate contract,
+        # and any Source-authorized outside-domain relation at the same
+        # admission boundary that binds the final output.  It never issues a
+        # token and never reads a candidate body as repair material.
+        try:
+            validate_source_owner_binding(
+                function,
+                signature["parameters"],
+                access,
+                boundary,
+                value_dimension_relations=j.get("value_dimension_relations"),
+            )
+        except (ValueError, TypeError, KeyError, RecursionError):
+            reject("source_store_j_owner_producer_unproved", ordinal, "operation")
+            continue
+        effect = effects.get(access_ref)
+        expected_effect_id = binding.get("effect_id")
+        if (
+            not isinstance(effect, Mapping)
+            or effect.get("target") != occurrence.logical_ref
+            or effect.get("access_ref") != access_ref
+            or effect.get("node_ref") != node_ref
+            or effect.get("kind") != ("write" if occurrence.kind == "store" else "update")
+            or effect.get("effect_id") != expected_effect_id
+        ):
+            reject("source_store_effect_binding_mismatch", ordinal, "effect")
+            continue
+        if binding.get("effect_order", ordinal) != ordinal:
+            reject("source_store_effect_binding_mismatch", ordinal, "effect_order")
+            continue
+
+        # A logical ``update`` is lowered to a physical TTIR store.  The
+        # compiler sidecar therefore remains a store row; the Source ledger
+        # kind must not be compared directly to that physical spelling.
+        compiler_kind = "store" if occurrence.kind == "update" else occurrence.kind
+        compiler_indices = [
+            index
+            for index, row in enumerate(ttir_rows)
+            if isinstance(row, tuple)
+            and len(row) == 5
+            and row[0] == compiler_kind
+            and row[1] is occurrence.masked
+            and row[2] == semantic_access.source_line
+            and row[3] == semantic_access.source_column
+            and row[4] == semantic_access.source_call_path
+        ]
+        if len(compiler_indices) != 1 or len(owner_rows) != len(ttir_rows):
+            reject("source_store_ttir_producer_unavailable", ordinal, "ttir_producer")
+            continue
+        compiler_index = compiler_indices[0]
+        owner = owner_rows[compiler_index]
+        if (
+            not isinstance(owner, tuple)
+            or len(owner) != 9
+            or owner[0] != compiler_kind
+            or owner[1] is not occurrence.masked
+            or owner[2] != semantic_access.source_line
+            or owner[3] != semantic_access.source_column
+            or not isinstance(owner[4], str)
+            or not owner[4]
+            or owner[7] is not True
+            or owner[8] != semantic_access.source_call_path
+        ):
+            reject("source_store_ttir_producer_unproved", ordinal, "ttir_producer")
+            continue
+        tensor_proof_matches = [
+            proof for proof in tensor_proofs
+            if isinstance(proof, Mapping)
+            and proof.get("kind") == compiler_kind
+            and proof.get("line") == semantic_access.source_line
+            and proof.get("column") == semantic_access.source_column
+            and proof.get("call_path") == semantic_access.source_call_path
+            and proof.get("pointer_position") == occurrence.pointer_position
+        ]
+        # Rank-0 stores are authorized by the separate scalar owner DAG.  It
+        # must expose the same occurrence/producer/type contract as the
+        # tensor proof; choosing a proof by operation order, family, or shape
+        # coincidence is not an acceptable fallback.  Keep both namespaces in
+        # one ambiguity check: a duplicate tensor/scalar observation for the
+        # same Source location must not be silently resolved by precedence.
+        scalar_proof_matches = [
+            proof for proof in scalar_proofs
+            if isinstance(proof, Mapping)
+            and proof.get("kind") == compiler_kind
+            and proof.get("line") == semantic_access.source_line
+            and proof.get("column") == semantic_access.source_column
+            and proof.get("call_path") == semantic_access.source_call_path
+            and proof.get("pointer_position") == occurrence.pointer_position
+        ]
+        proof_matches = [*tensor_proof_matches, *scalar_proof_matches]
+        if (
+            len(proof_matches) != 1
+            or not isinstance(proof_matches[0].get("stored_value_producer_id"), int)
+            or not isinstance(proof_matches[0].get("stored_value_type"), str)
+            or not isinstance(owner[4], str)
+            or proof_matches[0].get("stored_value_producer_operation") != owner[4]
+        ):
+            reject("source_store_ttir_value_producer_unproved", ordinal, "ttir_producer")
+            continue
+        compiler_proof = proof_matches[0]
+        if (
+            "coordinate" not in compiler_proof
+            or "physical_shape" not in compiler_proof
+            or not isinstance(compiler_proof.get("physical_shape"), (tuple, list))
+            or (
+                occurrence.masked
+                and compiler_proof.get("predicate") is None
+            )
+            or (
+                not occurrence.masked
+                and compiler_proof.get("predicate") is not None
+            )
+        ):
+            reject("source_store_ttir_coordinate_unproved", ordinal, "ttir_producer")
+            continue
+
+        # The private TTIR type is a compiler spelling, while SourceFacts/J
+        # use the closed logical dtype spelling.  Only an exact element-type
+        # projection is accepted; an unknown or aggregate type is not
+        # silently treated as compatible.
+        ttir_type = compiler_proof["stored_value_type"]
+        type_match = re.search(
+            r"(?:^|x)(bf16|f(?:16|32|64)|i(?:1|8|16|32|64)|ui(?:8|16|32))(?:>|$)",
+            ttir_type,
+        )
+        if type_match is None:
+            reject("source_store_ttir_value_type_unproved", ordinal, "ttir_producer")
+            continue
+
+        output = outputs.get(occurrence.logical_ref)
+        mapping = mappings.get(occurrence.logical_ref)
+        returned = returns.get(occurrence.logical_ref)
+        source_output = (
+            source_facts.argument_by_position(occurrence.pointer_position)
+            if isinstance(source_facts, SourceFacts)
+            else None
+        )
+        if not isinstance(source_output, Mapping):
+            reject("source_store_final_output_binding_missing", ordinal, "output")
+            continue
+        try:
+            source_dtype = canonicalize_dtype(
+                source_output.get("dtype"), context="Source output dtype"
+            )
+        except (TypeError, ValueError):
+            source_dtype = None
+        raw_shape_contract = source_output.get("shape_contract")
+        raw_shape = source_output.get("shape")
+        source_shape_contract: list[str | int] | None = None
+        if isinstance(raw_shape, list):
+            contract = raw_shape if raw_shape_contract is None else raw_shape_contract
+            if isinstance(contract, list) and len(contract) == len(raw_shape):
+                dimension_aliases = {
+                    coordinate: f"x{index}"
+                    for index, (coordinate, _value)
+                    in enumerate(source_facts.shape_coordinates)
+                } if isinstance(source_facts, SourceFacts) else {}
+                projected_shape: list[str | int] = []
+                shape_valid = True
+                for contract_axis, static_extent in zip(
+                    contract, raw_shape, strict=True
+                ):
+                    if type(contract_axis) is int:
+                        if contract_axis != static_extent:
+                            shape_valid = False
+                            break
+                        projected_shape.append(contract_axis)
+                    elif (
+                        isinstance(contract_axis, str)
+                        and contract_axis in dimension_aliases
+                    ):
+                        projected_shape.append(dimension_aliases[contract_axis])
+                    else:
+                        shape_valid = False
+                        break
+                if shape_valid:
+                    source_shape_contract = projected_shape
+        if (
+            not isinstance(output, Mapping)
+            or not isinstance(mapping, Mapping)
+            or not isinstance(returned, Mapping)
+            or not isinstance(source_output, Mapping)
+            or source_output.get("mode") not in {"output", "inout"}
+            or source_dtype is None
+            or output.get("dtype") != source_dtype
+            or type_match.group(1) != source_dtype
+            or compiler_proof.get("dtype") != source_dtype
+            or not isinstance(output.get("shape"), list)
+            or source_shape_contract is None
+            or output.get("shape") != source_shape_contract
+        ):
+            reject("source_store_final_output_binding_missing", ordinal, "output")
+            continue
+        value = mapping.get("value")
+        mapping_node_ref = mapping.get("node_ref")
+        if (
+            not isinstance(value, str)
+            or returned.get("value") != value
+            or not isinstance(mapping_node_ref, str)
+        ):
+            reject("source_store_final_output_binding_mismatch", ordinal, "output_mapping")
+            continue
+        mapped_operation = operations.get(mapping_node_ref)
+        mapped_update = updates.get(mapping_node_ref)
+        mapped_results = (
+            [mapped_operation.get("result")]
+            if isinstance(mapped_operation, Mapping)
+            and isinstance(mapped_operation.get("result"), str)
+            else mapped_operation.get("result")
+            if isinstance(mapped_operation, Mapping)
+            else None
+        )
+        # A physical store may be one exact slice of a logical scatter result.
+        # In that profile its own J producer intentionally produces a typed
+        # values slice, not the final scatter result named by output_mapping.
+        # Defer only this explicitly identified relation to the existing
+        # complete partition proof; do not treat a tensor-name match or a
+        # single store as sufficient.
+        deferred_logical_update = (
+            isinstance(mapped_operation, Mapping)
+            and mapped_operation.get("op") == "scatter"
+            and isinstance(mapped_update, Mapping)
+            and mapped_update.get("node_ref") == mapping_node_ref
+            and isinstance(mapped_results, list)
+            and len(mapped_results) == 1
+            and mapped_results[0] == value
+        )
+        # Source owner authorization binds ``access.node_ref`` to the logical
+        # producer.  canonical_output_records additionally permits a distinct
+        # output-mapping node_ref when it is one unique real store/scatter
+        # anchor consuming that producer's returned value.  Keep these two
+        # identities separate; neither may be selected by name or position.
+        producer_operation = operations[node_ref]
+        producer_result = producer_operation.get("result")
+        producer_results = (
+            [producer_result]
+            if isinstance(producer_result, str)
+            else producer_result
+        )
+        assembly_store_relation = (
+            isinstance(mapped_operation, Mapping)
+            and mapped_operation.get("op") == "concat"
+            and mapped_results == [value]
+            and isinstance(producer_results, list)
+            and len(producer_results) == 1
+            and isinstance(mapped_operation.get("operands"), list)
+            and mapped_operation["operands"].count(producer_results[0]) == 1
+            and mapping_node_ref != node_ref
+        )
+        if (
+            (not isinstance(producer_results, list) or value not in producer_results)
+            and not deferred_logical_update
+            and not assembly_store_relation
+        ):
+            reject("source_store_j_output_producer_mismatch", ordinal, "operation")
+            continue
+        if mapping_node_ref == node_ref:
+            pass
+        elif deferred_logical_update:
+            # The scatter/update itself is not a physical store anchor.  Its
+            # output relation is admitted only if the final
+            # project_functional_boundary() pass below proves every physical
+            # store, coordinate, typed values slice, target, and output
+            # binding jointly.
+            pass
+        elif assembly_store_relation:
+            # The physical store is authorized by its exact slice producer;
+            # the output mapping names the separately authored logical
+            # concat.  Complete coverage, order, coordinates and types are
+            # proved jointly by FunctionalBoundary below.
+            pass
+        else:
+            anchor = operations.get(mapping_node_ref)
+            anchor_accesses = [
+                row for row in boundary["accesses"]
+                if (
+                    isinstance(row, Mapping)
+                    and row.get("kind") in {"store", "update"}
+                    and row.get("tensor") == occurrence.logical_ref
+                    and row.get("node_ref") == mapping_node_ref
+                )
+            ]
+            anchor_effects = [
+                effects.get(row.get("access_id"))
+                for row in anchor_accesses
+                if isinstance(row.get("access_id"), str)
+            ]
+            if (
+                not isinstance(anchor, Mapping)
+                or anchor.get("op") not in {"store", "scatter", "masked_scatter"}
+                or len(anchor_accesses) != 1
+                or len(anchor_effects) != 1
+                or not isinstance(anchor_effects[0], Mapping)
+                or anchor_effects[0].get("kind") != "write"
+                or anchor_effects[0].get("target") != occurrence.logical_ref
+                or anchor_effects[0].get("node_ref") != mapping_node_ref
+                or value not in (
+                    anchor.get("operands")
+                    if isinstance(anchor.get("operands"), list)
+                    else ()
+                )
+            ):
+                reject("source_store_final_output_binding_mismatch", ordinal, "output_mapping")
+                continue
+
+        if occurrence.kind == "update":
+            operation = producer_operation
+            update = updates.get(node_ref)
+            operands = operation.get("operands")
+            attrs = operation.get("attrs")
+            atomic = attrs.get("atomic") if isinstance(attrs, Mapping) else None
+            if atomic == "cas":
+                expected_operands = 4
+                result_values = operation.get("result")
+                final_update_value = (
+                    result_values[0]
+                    if isinstance(result_values, list) and len(result_values) == 2
+                    else None
+                )
+                compare_value = (
+                    result_values[1]
+                    if isinstance(result_values, list) and len(result_values) == 2
+                    else None
+                )
+            else:
+                expected_operands = 3
+                final_update_value = (
+                    operation.get("result")
+                    if isinstance(operation.get("result"), str)
+                    else None
+                )
+                compare_value = None
+            reduce_name = attrs.get("reduce") if isinstance(attrs, Mapping) else None
+            expected_combiner = {
+                "none": "overwrite",
+                "add": "add",
+            }.get(reduce_name)
+            index_bound = index_bounds.get(node_ref)
+            result_relation = result_relations.get(occurrence.logical_ref)
+            if (
+                not isinstance(update, Mapping)
+                or not isinstance(operands, list)
+                or len(operands) != expected_operands
+                or not isinstance(attrs, Mapping)
+                or update.get("base") != operands[0]
+                or update.get("indices") != operands[1]
+                or update.get("values") != operands[3 if atomic == "cas" else 2]
+                or (update.get("compare") != operands[2] if atomic == "cas" else update.get("compare") is not None)
+                or (update.get("observed") != compare_value if atomic == "cas" else update.get("observed") is not None)
+                or update.get("axis") != attrs.get("axis")
+                or update.get("combiner") != expected_combiner
+                or update.get("duplicate_policy") not in {"forbid", "combine", "one_of"}
+                or update.get("order") not in {"input_order", "unordered"}
+                or (
+                    update.get("combiner") == "overwrite"
+                    and update.get("duplicate_policy") == "combine"
+                )
+                or (
+                    update.get("combiner") == "add"
+                    and update.get("duplicate_policy") == "one_of"
+                )
+                or (
+                    update.get("duplicate_policy") == "one_of"
+                    and update.get("order") != "unordered"
+                )
+                or not isinstance(index_bound, Mapping)
+                or index_bound.get("data") != update.get("base")
+                or index_bound.get("indices") != update.get("indices")
+                or index_bound.get("axis") != update.get("axis")
+                or not isinstance(result_relation, Mapping)
+                or final_update_value != value
+            ):
+                reject("source_store_logical_update_mismatch", ordinal, "updates")
+
+    if diagnostics:
+        return tuple(diagnostics)
+
+    # FunctionalBoundary already owns the narrow, deterministic partition
+    # proofs for multi-store outputs and logical updates.  Consume that
+    # existing proof here only after the Source occurrence/TTIR/J joins above
+    # are closed.  The projection is ephemeral: it is not serialized, sent to
+    # the provider, or substituted for Gate1/Gate2.  Any unsupported or
+    # incomplete partition remains a fixed fail-closed admission result.
+    try:
+        from intentir.ir.functional_boundary import project_functional_boundary
+        from intentir.verify.gate1.model import SemanticArchive
+
+        typed_j = SemanticArchive.from_json(dict(j))
+        project_functional_boundary(typed_j)
+    except Exception:
+        return ({
+            "rule_code": "source_store_output_partition_unproved",
+            "path": "j.boundary.accesses + j.boundary.updates + j.boundary.output_mappings",
+            "observed_refs_or_types": [
+                "expected:complete Source-authorized physical-store partition"
+            ],
+        },)
+
     return tuple(diagnostics)
 
 
@@ -4407,7 +5883,137 @@ def _source_stride_axis_diagnostics(
         return ()
     raw_bindings = pi.get("access_representation_bindings")
     if not isinstance(raw_bindings, list):
-        return ()
+        return (
+            {
+                "rule_code": "source_stride_axis_binding_unproved",
+                "path": "pi.access_representation_bindings",
+                "anonymous_handles": [],
+                "observed_refs_or_types": [
+                    "expected:closed access representation binding array"
+                ],
+                "line": None,
+            },
+        )
+
+    boundary = j.get("boundary")
+    raw_accesses = (
+        boundary.get("accesses") if isinstance(boundary, Mapping) else None
+    )
+    if not isinstance(boundary, Mapping) or not isinstance(raw_accesses, list):
+        return (
+            {
+                "rule_code": "source_stride_axis_binding_unproved",
+                "path": "j.boundary.accesses",
+                "anonymous_handles": [],
+                "observed_refs_or_types": [
+                    "expected:closed J access table for address binding"
+                ],
+                "line": None,
+            },
+        )
+
+    # Mirror the closed PI relation identity here before doing any Source
+    # projection. The formal PI verifier also performs this check, but this
+    # source-aware path must not silently filter a malformed/duplicate row and
+    # then prove only the surviving subset.
+    access_ids: set[str] = set()
+    malformed_access_table = False
+    for access in raw_accesses:
+        access_id = access.get("access_id") if isinstance(access, Mapping) else None
+        if (
+            not isinstance(access_id, str)
+            or re.fullmatch(r"a[0-9]+", access_id) is None
+            or access_id in access_ids
+        ):
+            malformed_access_table = True
+        else:
+            access_ids.add(access_id)
+
+    relation_rows: list[tuple[int, Mapping[str, Any]]] = []
+    seen_relation_rows: set[tuple[str, str, str | None, int | None]] = set()
+    malformed_binding_rows: list[Mapping[str, Any]] = []
+    address_relations = {"address_recomputed", "pointer_advanced"}
+    legal_relations = {
+        *address_relations,
+        "boolean_storage_byte",
+        "guard_lower_bound_elided",
+    }
+    for binding_index, row in enumerate(raw_bindings):
+        if not isinstance(row, Mapping):
+            malformed_binding_rows.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}]",
+                    "anonymous_handles": [],
+                    "observed_refs_or_types": [
+                        "expected:object access representation relation"
+                    ],
+                    "line": None,
+                }
+            )
+            continue
+        relation = row.get("relation")
+        access_ref = row.get("access_ref")
+        carrier = row.get("carrier_ref")
+        axis = row.get("axis_ref")
+        valid_identity = (
+            isinstance(relation, str)
+            and relation in legal_relations
+            and isinstance(access_ref, str)
+            and re.fullmatch(r"a[0-9]+", access_ref) is not None
+            and access_ref in access_ids
+        )
+        address_relation = relation in address_relations
+        if address_relation:
+            valid_identity = valid_identity and (
+                isinstance(carrier, str)
+                and re.fullmatch(r"p[0-9]+", carrier) is not None
+                and type(axis) is int
+                and axis >= 0
+            )
+        else:
+            valid_identity = valid_identity and carrier is None and axis is None
+        key = (
+            relation if isinstance(relation, str) else "<invalid>",
+            access_ref if isinstance(access_ref, str) else "<invalid>",
+            carrier if isinstance(carrier, str) else None,
+            axis if type(axis) is int else None,
+        )
+        if not valid_identity or key in seen_relation_rows:
+            malformed_binding_rows.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}]",
+                    "anonymous_handles": [
+                        item for item in (access_ref, carrier)
+                        if isinstance(item, str)
+                    ],
+                    "observed_refs_or_types": [
+                        "expected:unique closed access/carrier/axis relation"
+                    ],
+                    "line": None,
+                }
+            )
+            continue
+        seen_relation_rows.add(key)
+        relation_rows.append((binding_index, row))
+
+    if malformed_access_table or malformed_binding_rows:
+        if malformed_access_table:
+            malformed_binding_rows.insert(
+                0,
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": "j.boundary.accesses",
+                    "anonymous_handles": [],
+                    "observed_refs_or_types": [
+                        "expected:unique canonical access identities"
+                    ],
+                    "line": None,
+                },
+            )
+        return tuple(malformed_binding_rows[:64])
+
     shared_ledger = coerce_source_transfer_ledger(ledger, source_facts=source_facts)
     if shared_ledger.status != "pass" or not shared_ledger.bindings:
         return ()
@@ -4440,9 +6046,6 @@ def _source_stride_axis_diagnostics(
                 program_axis_to_logical_axes.setdefault(
                     row.physical_axis, set()
                 ).add(logical_axis)
-    if not program_axis_to_logical_axes and not program_axis_to_domains:
-        return ()
-
     signature = j.get("signature")
     raw_parameters = (
         signature.get("parameters")
@@ -4466,53 +6069,11 @@ def _source_stride_axis_diagnostics(
                 runtime_position
             )
 
-    boundary = j.get("boundary")
-    raw_accesses = (
-        boundary.get("accesses")
-        if isinstance(boundary, Mapping)
-        else None
-    )
     accesses = {
         str(item.get("access_id")): item
-        for item in raw_accesses or []
+        for item in raw_accesses
         if isinstance(item, Mapping) and isinstance(item.get("access_id"), str)
     }
-
-    def argument_positions(polynomial: object) -> set[int]:
-        positions: set[int] = set()
-        if not isinstance(polynomial, (list, tuple)):
-            return positions
-        for term in polynomial:
-            if not isinstance(term, (list, tuple)) or len(term) != 2:
-                continue
-            monomial = term[0]
-            if not isinstance(monomial, (list, tuple)):
-                continue
-            for atom in monomial:
-                if not isinstance(atom, str):
-                    continue
-                match = re.fullmatch(r"arg\[(\d+)\]:.*", atom)
-                if match is not None:
-                    positions.add(int(match.group(1)))
-        return positions
-
-    def program_axes(polynomial: object) -> set[int]:
-        axes: set[int] = set()
-        if not isinstance(polynomial, (list, tuple)):
-            return axes
-        for term in polynomial:
-            if not isinstance(term, (list, tuple)) or len(term) != 2:
-                continue
-            monomial = term[0]
-            if not isinstance(monomial, (list, tuple)):
-                continue
-            for atom in monomial:
-                if not isinstance(atom, str):
-                    continue
-                match = re.fullmatch(r"program_axis:([xyz])", atom)
-                if match is not None:
-                    axes.add("xyz".index(match.group(1)))
-        return axes
 
     occurrences_by_ordinal = {
         occurrence.ordinal: occurrence
@@ -4531,8 +6092,116 @@ def _source_stride_axis_diagnostics(
             return ()
         occurrence_by_access[access_ref] = occurrence
     diagnostics: list[Mapping[str, Any]] = []
-    for binding_index, binding in enumerate(raw_bindings):
-        if not isinstance(binding, Mapping):
+
+    # Every scalar carrier/program-axis pair proven by one Source address
+    # monomial is a mandatory Source->J ownership edge.  A missing candidate
+    # row must not be treated as "no diagnostic": that would leave the
+    # physical stride outside the authorization chain.  Require one unique
+    # address binding and an independently Source-proven logical axis.
+    candidate_address_rows = [
+        row
+        for _binding_index, row in relation_rows
+        if row.get("relation") in {"address_recomputed", "pointer_advanced"}
+    ]
+    source_domain_coordinates = _source_domain_coordinates(boundary)
+    domain_extent_symbols = _source_domain_extent_symbols(boundary)
+    source_expected_binding_keys: set[tuple[str, str, int]] = set()
+    matched_candidate_binding_keys: set[tuple[str, str, int]] = set()
+    for access_ref, occurrence in occurrence_by_access.items():
+        if occurrence.pointer_position is None:
+            continue
+        access = accesses.get(access_ref)
+        if not isinstance(access, Mapping):
+            continue
+        for carrier_position, physical_axis in _source_address_carrier_program_axis_pairs(
+            occurrence.address_terms
+        ):
+            if carrier_position == occurrence.pointer_position:
+                continue
+            carrier_parameter = runtime_parameters.get(carrier_position)
+            carrier_name = (
+                carrier_parameter.get("name")
+                if isinstance(carrier_parameter, Mapping)
+                else None
+            )
+            if (
+                not isinstance(carrier_name, str)
+                or carrier_parameter.get("kind") != "scalar"
+                or carrier_parameter.get("logical_ref") is not None
+            ):
+                diagnostics.append(
+                    {
+                        "rule_code": "source_stride_axis_binding_unproved",
+                        "path": "pi.access_representation_bindings",
+                        "anonymous_handles": [access_ref],
+                        "observed_refs_or_types": [
+                            "expected:Source-proven scalar stride carrier"
+                        ],
+                        "line": None,
+                    }
+                )
+                continue
+
+            expected_axes: set[int] = set(
+                program_axis_to_logical_axes.get(physical_axis, ())
+            )
+            for domain_ref in program_axis_to_domains.get(physical_axis, ()):
+                coordinate = source_domain_coordinates.get(domain_ref)
+                axis = (
+                    _index_axis_for_coordinate(
+                        access.get("index_expression"),
+                        coordinate,
+                        extent_symbol=domain_extent_symbols.get(domain_ref),
+                    )
+                    if coordinate is not None
+                    else None
+                )
+                if axis is not None:
+                    expected_axes.add(axis)
+
+            matching_rows = [
+                row
+                for row in candidate_address_rows
+                if row.get("carrier_ref") == carrier_name
+                and row.get("access_ref") == access_ref
+            ]
+            if len(expected_axes) != 1 or len(matching_rows) != 1:
+                diagnostics.append(
+                    {
+                        "rule_code": "source_stride_axis_binding_unproved",
+                        "path": "pi.access_representation_bindings",
+                        "anonymous_handles": [carrier_name, access_ref],
+                        "observed_refs_or_types": [
+                            "expected:one Source-proven carrier/access axis binding"
+                        ],
+                        "line": None,
+                    }
+                )
+                continue
+            expected_axis = next(iter(expected_axes))
+            source_expected_binding_keys.add(
+                (carrier_name, access_ref, expected_axis)
+            )
+            authored_axis = _axis_ref_number(matching_rows[0].get("axis_ref"))
+            if authored_axis != expected_axis:
+                diagnostics.append(
+                    {
+                        "rule_code": "source_stride_axis_mismatch",
+                        "path": "pi.access_representation_bindings",
+                        "anonymous_handles": [carrier_name, access_ref],
+                        "observed_refs_or_types": [
+                            "candidate carrier axis differs from Source-proven axis"
+                        ],
+                        "line": None,
+                    }
+                )
+            elif isinstance(authored_axis, int):
+                matched_candidate_binding_keys.add(
+                    (carrier_name, access_ref, authored_axis)
+                )
+
+    for binding_index, binding in relation_rows:
+        if binding.get("relation") not in {"address_recomputed", "pointer_advanced"}:
             continue
         carrier = binding.get("carrier_ref")
         access_ref = binding.get("access_ref")
@@ -4542,36 +6211,154 @@ def _source_stride_axis_diagnostics(
             or not isinstance(access_ref, str)
             or not isinstance(authored_axis, int)
         ):
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}]",
+                    "anonymous_handles": [
+                        item for item in (carrier, access_ref)
+                        if isinstance(item, str)
+                    ],
+                    "observed_refs_or_types": [
+                        "expected:typed Source-bound address relation"
+                    ],
+                    "line": None,
+                }
+            )
             continue
         if not re.fullmatch(r"p[0-9]+", carrier):
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}].carrier_ref",
+                    "anonymous_handles": [carrier, access_ref],
+                    "observed_refs_or_types": [
+                        "expected:p* Source ABI carrier"
+                    ],
+                    "line": None,
+                }
+            )
             continue
         access = accesses.get(access_ref)
         if not isinstance(access, Mapping):
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}].access_ref",
+                    "anonymous_handles": [access_ref],
+                    "observed_refs_or_types": [
+                        "expected:address relation bound to a J access"
+                    ],
+                    "line": None,
+                }
+            )
             continue
         occurrence = occurrence_by_access.get(access_ref)
         if occurrence is None:
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}].access_ref",
+                    "anonymous_handles": [access_ref],
+                    "observed_refs_or_types": [
+                        "expected:address relation bound to one Source occurrence"
+                    ],
+                    "line": None,
+                }
+            )
             continue
         tensor = access.get("tensor")
         tensor_positions = tensor_to_parameter_positions.get(tensor, set())
         if len(tensor_positions) != 1:
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}].carrier_ref",
+                    "anonymous_handles": [carrier, access_ref],
+                    "observed_refs_or_types": [
+                        "expected:unique Source physical ABI tensor position"
+                    ],
+                    "line": None,
+                }
+            )
             continue
         base_position = next(iter(tensor_positions))
         carrier_runtime_position = runtime_position_by_name.get(carrier)
         if carrier_runtime_position is None:
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}].carrier_ref",
+                    "anonymous_handles": [carrier, access_ref],
+                    "observed_refs_or_types": [
+                        "expected:declared Source-runtime scalar carrier"
+                    ],
+                    "line": None,
+                }
+            )
             continue
         access_kind = access.get("kind")
         if occurrence.kind != access_kind:
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}].access_ref",
+                    "anonymous_handles": [carrier, access_ref],
+                    "observed_refs_or_types": [
+                        "expected:Source access kind matches address relation"
+                    ],
+                    "line": None,
+                }
+            )
             continue
         if occurrence.logical_ref is not None and occurrence.logical_ref != tensor:
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}].access_ref",
+                    "anonymous_handles": [carrier, access_ref],
+                    "observed_refs_or_types": [
+                        "expected:Source tensor owner matches address relation"
+                    ],
+                    "line": None,
+                }
+            )
             continue
         if occurrence.pointer_position != base_position:
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}].access_ref",
+                    "anonymous_handles": [carrier, access_ref],
+                    "observed_refs_or_types": [
+                        "expected:Source pointer base matches address relation"
+                    ],
+                    "line": None,
+                }
+            )
             continue
         expected_axes: set[int] = set()
         polynomial = occurrence.address_terms
-        positions = argument_positions(polynomial)
-        if carrier_runtime_position not in positions:
+        carrier_program_axes = {
+            physical_axis
+            for position, physical_axis in
+            _source_address_carrier_program_axis_pairs(polynomial)
+            if position == carrier_runtime_position
+        }
+        if not carrier_program_axes:
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}].carrier_ref",
+                    "anonymous_handles": [carrier, access_ref],
+                    "observed_refs_or_types": [
+                        "expected:carrier/program-axis product in Source address polynomial"
+                    ],
+                    "line": None,
+                }
+            )
             continue
-        for physical_axis in program_axes(polynomial):
+        for physical_axis in carrier_program_axes:
             expected_axes.update(
                 program_axis_to_logical_axes.get(physical_axis, ())
             )
@@ -4587,9 +6374,26 @@ def _source_stride_axis_diagnostics(
                 if axis is not None:
                     expected_axes.add(axis)
         if len(expected_axes) != 1:
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unproved",
+                    "path": f"pi.access_representation_bindings[{binding_index}].axis_ref",
+                    "anonymous_handles": [carrier, access_ref],
+                    "observed_refs_or_types": [
+                        "expected:one Source-proven logical tensor axis"
+                    ],
+                    "line": None,
+                }
+            )
             continue
         expected_axis = next(iter(expected_axes))
+        source_expected_binding_keys.add(
+            (carrier, access_ref, expected_axis)
+        )
         if authored_axis == expected_axis:
+            matched_candidate_binding_keys.add(
+                (carrier, access_ref, authored_axis)
+            )
             continue
         diagnostics.append(
             {
@@ -4603,6 +6407,44 @@ def _source_stride_axis_diagnostics(
                     f"source-bound stride carrier {carrier} uses the direct launch axis",
                     f"candidate program binding resolves that launch axis to tensor axis {expected_axis}",
                     f"authored axis_ref={authored_axis}",
+                ],
+                "line": None,
+            }
+        )
+    for binding_index, binding in relation_rows:
+        if binding.get("relation") not in {"address_recomputed", "pointer_advanced"}:
+            continue
+        carrier = binding.get("carrier_ref")
+        access_ref = binding.get("access_ref")
+        axis = binding.get("axis_ref")
+        key = (
+            carrier if isinstance(carrier, str) else "<invalid>",
+            access_ref if isinstance(access_ref, str) else "<invalid>",
+            axis if type(axis) is int else -1,
+        )
+        if key not in source_expected_binding_keys:
+            diagnostics.append(
+                {
+                    "rule_code": "source_stride_axis_binding_unowned",
+                    "path": f"pi.access_representation_bindings[{binding_index}]",
+                    "anonymous_handles": [
+                        item for item in (carrier, access_ref)
+                        if isinstance(item, str)
+                    ],
+                    "observed_refs_or_types": [
+                        "expected:address relation exactly covered by Source carrier/access/axis proof"
+                    ],
+                    "line": None,
+                }
+            )
+    if source_expected_binding_keys != matched_candidate_binding_keys:
+        diagnostics.append(
+            {
+                "rule_code": "source_stride_axis_binding_unproved",
+                "path": "pi.access_representation_bindings",
+                "anonymous_handles": [],
+                "observed_refs_or_types": [
+                    "expected:complete one-to-one Source carrier/access/axis partition"
                 ],
                 "line": None,
             }
@@ -4728,6 +6570,9 @@ def _unowned_source_runtime_carrier_diagnostics(
 
 
 __all__ = [
+    "SAFE_SOURCE_PREPARATION_REASONS",
+    "source_preparation_failure_reason",
+    "source_preparation_failure_stage",
     "SOURCE_TTIR_RECONCILE_PROTOCOL",
     "SOURCE_TTIR_OBSERVATION_PROTOCOL",
     "bind_source_pi",
@@ -4735,6 +6580,7 @@ __all__ = [
     "observe_source_ttir",
     "observe_anonymous_source_ttir",
     "validate_source_semantic_authorizations",
+    "validate_source_store_output_bindings",
     "validate_source_access_fills_from_source_ledger",
     "reconcile_candidate_source_ttir",
     "reorder_boundary_effects_from_source_ledger",

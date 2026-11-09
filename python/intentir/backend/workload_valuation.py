@@ -357,13 +357,15 @@ _HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
     ),
     "flash_bwd_preprocess": HarnessBindingSpec(
         buffer_axes=(
-            ("Out", _axes(None, _HEADS, None, None)),
-            ("DO", _axes(None, _HEADS, None, None)),
+            ("Out", _axes(None, None, _HEADS, None)),
+            ("DO", _axes(None, None, _HEADS, None)),
             ("Delta", _axes(None, _HEADS, None)),
         ),
         scalars=(
             ValueBinding("stride_ob", _HEADS, 33 * 16),
             ValueBinding("stride_dob", _HEADS, 33 * 16),
+            ValueBinding("stride_om", _HEADS, 16),
+            ValueBinding("stride_dom", _HEADS, 16),
             ValueBinding("nheads", _HEADS),
         ),
         grid=(GridBinding("preserve"), GridBinding("extent", _HEADS)),
@@ -1153,21 +1155,21 @@ _NATURAL_HARNESS_BINDINGS: dict[str, HarnessBindingSpec] = {
     ),
     "flash_bwd_preprocess": HarnessBindingSpec(
         buffer_axes=(
-            ("Out", _axes(_BATCH, _HEADS, _SEQUENCE, _HEAD_DIM)),
-            ("DO", _axes(_BATCH, _HEADS, _SEQUENCE, _HEAD_DIM)),
+            ("Out", _axes(_BATCH, _SEQUENCE, _HEADS, _HEAD_DIM)),
+            ("DO", _axes(_BATCH, _SEQUENCE, _HEADS, _HEAD_DIM)),
             ("Delta", _axes(_BATCH, _HEADS, _PADDED_SEQUENCE)),
         ),
         scalars=(
             ValueBinding(
                 "stride_ob", _HEADS, factors=(_SEQUENCE, _HEAD_DIM)
             ),
-            ValueBinding("stride_oh", _SEQUENCE, factors=(_HEAD_DIM,)),
-            ValueBinding("stride_om", _HEAD_DIM),
+            ValueBinding("stride_oh", _HEAD_DIM),
+            ValueBinding("stride_om", _HEADS, factors=(_HEAD_DIM,)),
             ValueBinding(
                 "stride_dob", _HEADS, factors=(_SEQUENCE, _HEAD_DIM)
             ),
-            ValueBinding("stride_doh", _SEQUENCE, factors=(_HEAD_DIM,)),
-            ValueBinding("stride_dom", _HEAD_DIM),
+            ValueBinding("stride_doh", _HEAD_DIM),
+            ValueBinding("stride_dom", _HEADS, factors=(_HEAD_DIM,)),
             ValueBinding("nheads", _HEADS),
             ValueBinding("seqlen_q", _SEQUENCE),
             ValueBinding("seqlen_q_rounded", _PADDED_SEQUENCE),

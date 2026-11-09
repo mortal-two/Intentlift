@@ -9,6 +9,11 @@ PROVIDER_CONFIG="${INTENTIR_PROVIDER_CONFIG:-$REPO_ROOT/llm_providers.local.json
 EVIDENCE_ROOT="${INTENTIR_EVIDENCE_ROOT:-$REPO_ROOT/../intentir-evidence}"
 RUN_ROOT="${INTENTIR_DEMO_RUN_ROOT:-$EVIDENCE_ROOT/rundemo/scrc}"
 MAX_LIFT_CALLS="${INTENTIR_MAX_LIFT_CALLS:-3}"
+# Keep the API endpoint and the HTTP forward proxy as separate settings.  The
+# provider file supplies the endpoint; the caller supplies the transport
+# proxy through the process environment.  Never embed private network values
+# in this repository.
+PROXY_URL="${INTENTIR_PROXY_URL:-}"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
@@ -29,6 +34,8 @@ Environment overrides:
   INTENTIR_PROVIDER_NAME  optional provider name from that JSON
   INTENTIR_EFFORT         optional reasoning effort
   INTENTIR_MAX_LIFT_CALLS logical Lift limit, default 3
+  INTENTIR_PROXY_URL      HTTP forward proxy for the formal child process;
+                          supplied by the caller and never printed
   INTENTIR_EVIDENCE_ROOT  relative external evidence root
   INTENTIR_DEMO_RUN_ROOT  explicit demo evidence root override
 
@@ -39,7 +46,7 @@ EOF
 fi
 
 if [[ $# -ne 0 ]]; then
-    echo "unexpected argument: $1" >&2
+    echo "unexpected argument" >&2
     exit 2
 fi
 
@@ -50,7 +57,12 @@ if [[ -z "$DATASET_ROOT" ]]; then
 fi
 
 if [[ ! -d "$DATASET_ROOT" ]]; then
-    echo "Dataset root does not exist: $DATASET_ROOT" >&2
+    echo "Dataset root does not exist." >&2
+    exit 2
+fi
+
+if [[ -z "$PROXY_URL" ]]; then
+    echo "HTTP proxy is not configured for the formal child process." >&2
     exit 2
 fi
 
@@ -76,7 +88,18 @@ fi
 
 mkdir -p "$RUN_ROOT"
 
-exec env PYTHONPATH="$PYTHONPATH_VALUE" \
+exec env \
+    PYTHONPATH="$PYTHONPATH_VALUE" \
+    HTTP_PROXY="$PROXY_URL" \
+    HTTPS_PROXY="$PROXY_URL" \
+    ALL_PROXY="$PROXY_URL" \
+    http_proxy="$PROXY_URL" \
+    https_proxy="$PROXY_URL" \
+    all_proxy="$PROXY_URL" \
+    NO_PROXY="" \
+    no_proxy="" \
+    AIOHTTP_TRUST_ENV=true \
+    DISABLE_AIOHTTP_TRUST_ENV=false \
     python "$REPO_ROOT/tools/scrc_frontend.py" \
     --case "high_performance:liger_softmax" \
     --dataset-root "$DATASET_ROOT" \

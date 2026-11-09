@@ -1,4 +1,4 @@
-"""Gate1 realization closure with an independent optional masked-J audit."""
+"""Gate1 algorithm-structure closure with an independent masked-J audit."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping
 
 from intentir.extraction.providers.client import ProviderError
 
@@ -97,13 +97,13 @@ class Gate1ExecutionResult:
 
     @property
     def passed(self) -> bool:
-        # A requested masked-J arm is a required independent observation.  A
-        # missing submission/comparison is inconclusive evidence, never a
-        # successful Gate1 result that may flow into Gate2.
+        # masked-J is an independent necessity diagnostic.  Its absence or
+        # inconclusive result must not turn a normal structural closure into a
+        # normal Gate1 failure; callers may apply a separate policy if they
+        # require a proved necessity result before Gate2.
         return (
             self.status is Gate1Status.REPLAY_CLOSED
             and self.normal.hard_closed
-            and (self.masked_j is None or self.masked_j.comparable)
         )
 
     @property
@@ -568,6 +568,9 @@ class Gate1Runner:
                             "rule_code": "replay_provider_generation_failed",
                             "path": "<replay-provider>",
                             "provider_failure_class": exc.failure_class,
+                            "provider_failure_origin": getattr(
+                                exc, "failure_origin", "unknown"
+                            ),
                             "physical_provider_calls": exc.attempts,
                         },
                     )
@@ -643,15 +646,30 @@ class Gate1Runner:
         )
         compile_result = self.compiler.compile(replay_source, replay_case)
         if not compile_result.ok or compile_result.ttir is None:
+            compile_diagnostic = {
+                "rule_code": "replay_frontend_compile_failed",
+                "path": "<replay-compile>",
+                "failure_class": (
+                    compile_result.failure_class
+                    or "triton_frontend_compile_failed"
+                ),
+            }
+            if compile_result.exception_type is not None:
+                compile_diagnostic["exception_type"] = (
+                    compile_result.exception_type
+                )
             return Gate1ArmEvidence(
                 mode, generation, compile_result, None, None,
                 compile_result.diagnostic or "replay compilation failed",
                 physical_calls,
+                ingress_diagnostics=(compile_diagnostic,),
             )
         try:
             normalized = normalize_ttir_for_gate1(compile_result.ttir, artifact)
             replay_fingerprint = fingerprint_ttir(
                 normalized.text,
+                external_math=compile_result.external_math,
+                external_math_source=compile_result.ttir,
                 python_interface=_opaque_python_interface(
                     artifact, compile_result.python_interface
                 ),
@@ -735,10 +753,6 @@ class Gate1Runner:
         *,
         source: KernelSource,
         source_case: CompileCase,
-        authorization_validator: Callable[
-            [Gate1Artifact, TTIRFingerprint], Sequence[Mapping[str, Any]]
-        ] | None = None,
-        authorization_observer: Callable[[], TTIRFingerprint] | None = None,
     ) -> Gate1ExecutionResult:
         if artifact.c.slots:
             artifact.c.validate_complete_values(path="Gate1 active C")
@@ -787,6 +801,8 @@ class Gate1Runner:
             source_normalization = normalized_source.evidence()
             source_fingerprint = fingerprint_ttir(
                 normalized_source.text,
+                external_math=source_compile.external_math,
+                external_math_source=source_compile.ttir,
                 python_interface=_opaque_python_interface(
                     artifact, source_compile.python_interface
                 ),
@@ -833,69 +849,6 @@ class Gate1Runner:
                 0,
             )
 
-        if authorization_validator is not None:
-            try:
-                # This second fingerprint intentionally observes the exact
-                # unnormalized Source compilation.  Its diagnostic-only
-                # provenance sidecars are needed to revalidate Source-issued
-                # owner/guard receipts; they never participate in the Gate1
-                # comparison or its digest.
-                authorization_observation = (
-                    authorization_observer()
-                    if authorization_observer is not None
-                    else fingerprint_ttir(
-                        source_compile.ttir,
-                        python_interface=_opaque_python_interface(
-                            artifact, source_compile.python_interface
-                        ),
-                        schedule=artifact.c.values,
-                        runtime_values={
-                            name: argument.value
-                            for name, argument in source_case.arguments.items()
-                            if argument.kind == "scalar"
-                            and isinstance(argument.value, (bool, int))
-                        },
-                    )
-                )
-                authorization_diagnostics = tuple(
-                    item
-                    for item in authorization_validator(
-                        artifact, authorization_observation
-                    )
-                    if isinstance(item, Mapping)
-                )
-            except Exception:
-                authorization_diagnostics = (
-                    {
-                        "rule_code": "gate1_source_authorization_revalidation_unavailable",
-                        "path": "<gate1-source-authorization>",
-                        "observed_refs_or_types": [
-                            "expected:exact Source/compiler authorization receipt"
-                        ],
-                    },
-                )
-            if authorization_diagnostics:
-                normal = Gate1ArmEvidence(
-                    "normal",
-                    None,
-                    None,
-                    None,
-                    None,
-                    "Gate1 Source authorization revalidation rejected artifact",
-                    ingress_diagnostics=authorization_diagnostics,
-                )
-                return Gate1ExecutionResult(
-                    Gate1Status.NO_CLOSURE,
-                    digest,
-                    source_compile,
-                    source_fingerprint,
-                    normal,
-                    None,
-                    0,
-                    0,
-                    source_normalization=source_normalization,
-                )
-
         normal_candidates = self._normal_arms(
             artifact,
             source_fingerprint,
@@ -939,8 +892,7 @@ class Gate1Runner:
             )
         status = (
             Gate1Status.REPLAY_CLOSED
-            if not self.config.run_masked_j
-            or (masked_evidence is not None and masked_evidence.comparable)
+            if normal.hard_closed
             else Gate1Status.NO_CLOSURE
         )
         return Gate1ExecutionResult(

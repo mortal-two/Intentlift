@@ -102,6 +102,7 @@ class CandidateFanoutSearchReport:
     branches: tuple[CandidateBranchOutcome, ...]
     winner_branch_id: int | None = None
     winner_formal_round: int | None = None
+    terminal_failure_branch_id: int | None = None
     selection_rule: str = CANDIDATE_SELECTION_RULE
 
     def __post_init__(self) -> None:
@@ -143,6 +144,15 @@ class CandidateFanoutSearchReport:
             for item in closed
         ):
             raise ValueError("fan-out branch records another first-closure winner")
+        if self.terminal_failure_branch_id is not None:
+            if not isinstance(self.terminal_failure_branch_id, int) or self.terminal_failure_branch_id < 1:
+                raise ValueError("terminal Gate2 failure branch id must be positive")
+            terminal = next(
+                (item for item in self.branches if item.branch_id == self.terminal_failure_branch_id),
+                None,
+            )
+            if terminal is None or terminal.status is not CandidateBranchStatus.GATE2_FAILED:
+                raise ValueError("terminal Gate2 failure must identify a failed branch")
 
     @property
     def winner(self) -> CandidateBranchOutcome | None:
@@ -174,6 +184,7 @@ class CandidateFanoutSearchReport:
             "selection_rule": self.selection_rule,
             "winner_branch_id": self.winner_branch_id,
             "winner_formal_round": self.winner_formal_round,
+            "terminal_failure_branch_id": self.terminal_failure_branch_id,
             "status_counts": self.counts,
             "aggregate_call_budget": self.aggregate_call_budget,
             "branches": [item.to_json() for item in self.branches],
@@ -207,17 +218,30 @@ class ConcurrentCandidateFanoutRunner:
         completed: dict[int, CandidateBranchOutcome] = {}
         winner_lock = Lock()
         winner_branch_id: int | None = None
+        terminal_failure_branch_id: int | None = None
 
         def stop_requested() -> int | None:
             with winner_lock:
-                return winner_branch_id
+                if winner_branch_id is not None:
+                    return winner_branch_id
+                if terminal_failure_branch_id is not None:
+                    return -terminal_failure_branch_id
+                return None
 
         def observe_first_closure(outcome: CandidateBranchOutcome) -> None:
-            nonlocal winner_branch_id
-            if outcome.status is not CandidateBranchStatus.GATE2_CLOSED:
-                return
+            nonlocal winner_branch_id, terminal_failure_branch_id
             with winner_lock:
-                if winner_branch_id is None:
+                if (
+                    outcome.status is CandidateBranchStatus.GATE2_FAILED
+                    and winner_branch_id is None
+                    and terminal_failure_branch_id is None
+                ):
+                    terminal_failure_branch_id = outcome.branch_id
+                elif (
+                    outcome.status is CandidateBranchStatus.GATE2_CLOSED
+                    and winner_branch_id is None
+                    and terminal_failure_branch_id is None
+                ):
                     winner_branch_id = outcome.branch_id
 
         with ThreadPoolExecutor(
@@ -262,12 +286,10 @@ class ConcurrentCandidateFanoutRunner:
                 completed[branch_id] = outcome
                 observe_first_closure(outcome)
 
-        # Siblings observe ``winner_branch_id`` at the closed stage boundaries in
-        # SCRCGateRunner and return SUPERSEDED instead of consuming later formal
-        # rounds. A Gate1-closed candidate is not a winner: its Gate2 result is
-        # still required before the Kernel can short-circuit. We still collect
-        # stop receipts before publishing a complete fan-out report; receipt
-        # collection is not a search barrier.
+        # Siblings observe the terminal signal at closed-stage boundaries. A
+        # Gate2 failure is terminal for this workload: it cannot create Lift
+        # feedback or authorize another candidate wave. In-flight work may
+        # finish its current bounded operation, but no later lifecycle starts.
         winner = (
             completed[winner_branch_id]
             if winner_branch_id is not None
@@ -306,6 +328,7 @@ class ConcurrentCandidateFanoutRunner:
             winner_formal_round=(
                 winner.formal_round if winner is not None else None
             ),
+            terminal_failure_branch_id=terminal_failure_branch_id,
         )
 
 

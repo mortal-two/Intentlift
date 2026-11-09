@@ -95,17 +95,29 @@ def _semantic_write_tool_schemas() -> dict[str, dict[str, Any]]:
             continue
         if (
             not isinstance(row, Mapping)
-            or set(row) != {"field", "json_container"}
+            or set(row) not in (
+                {"field", "json_container"},
+                {"field", "json_container", "pattern"},
+            )
             or not isinstance(row.get("field"), str)
             or not isinstance(row.get("json_container"), str)
             or row["json_container"] not in {"array", "object"}
+            or "pattern" in row
+            and (
+                not isinstance(row.get("pattern"), str)
+                or row["json_container"] != "array"
+                or not row["pattern"]
+            )
         ):
             raise TypeError("canonical MCP write argument row is malformed")
         field = row["field"]
+        field_schema = copy.deepcopy(json_text)
+        if isinstance(row.get("pattern"), str):
+            field_schema["pattern"] = row["pattern"]
         result[step] = {
             "type": "object",
             "additionalProperties": False,
-            "properties": {field: copy.deepcopy(json_text)},
+            "properties": {field: field_schema},
             "required": [field],
         }
     return result
@@ -198,7 +210,7 @@ _RESOURCES: tuple[MCPResource, ...] = (
     MCPResource(
         "intentir://lift/source/transfer-ledger",
         "Semantic transfer ledger",
-        "One bounded Source-order page of semantic access/output obligations derived from the canonical construction ledger; use count 1..80.",
+        "Bounded Source-order semantic access/output ledger; follow next_start until null before construction. count 1..80 is a page upper bound.",
         "semantic_transfer",
     ),
     MCPResource(

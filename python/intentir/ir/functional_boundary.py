@@ -10,11 +10,22 @@ tensors of ``IntentFunction`` without silently dropping semantics.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ast
 import hashlib
 import json
 from numbers import Integral
 import re
+import struct
 from typing import Any, Mapping, Sequence
+
+from intentir.ir.canonical_construction import (
+    computed_guard_projection_supported,
+    owner_cast_kind,
+    owner_float_bits,
+    unique_exact_rank_insertion_projection,
+    validated_j_computed_guard_bound,
+    validate_source_owner_binding,
+)
 
 from intentir.ir.canonical_j import (
     CanonicalValueType,
@@ -43,8 +54,9 @@ from intentir.ir.dimension_relation import (
 from intentir.ir.dim_expr import dimension_expression_references
 from intentir.ir.intent_op_contract import (
     _broadcast_projection,
-    is_closed_floating_dtype,
+    is_closed_boolean_dtype,
     is_closed_integer_dtype,
+    is_consumer_reduction_identity,
     is_scalar_literal,
 )
 from intentir.ir.value_dimension import (
@@ -123,6 +135,52 @@ class ConsumerOutsideProjection:
 
 
 @dataclass(frozen=True)
+class UpdatePaddingProjection:
+    """One J-only proof that physical padding is closed before an update.
+
+    The receipt joins an already-validated predicate-bearing load, its exact
+    per-consumer outside-domain identity, and an exact typed logical update.
+    It does not supply an update predicate, value, target, or identity.
+    """
+
+    update_ref: str
+    access_ref: str
+    consumer_ref: str
+    operand_index: int
+    update_operand_role: str
+    base_ref: str
+    indices_ref: str
+    values_ref: str
+    update_axis: int
+    combiner: str
+    domain_axes: tuple[str, ...]
+    outside_dtype: str
+    outside_value: Any
+    identity_law: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "masked_access_closed_before_logical_update",
+            "update_ref": self.update_ref,
+            "access_ref": self.access_ref,
+            "consumer_ref": self.consumer_ref,
+            "operand_index": self.operand_index,
+            "update_operand_role": self.update_operand_role,
+            "base_ref": self.base_ref,
+            "indices_ref": self.indices_ref,
+            "values_ref": self.values_ref,
+            "update_axis": self.update_axis,
+            "combiner": self.combiner,
+            "domain_axes": list(self.domain_axes),
+            "outside": {
+                "dtype": self.outside_dtype,
+                "value": self.outside_value,
+            },
+            "identity_law": self.identity_law,
+        }
+
+
+@dataclass(frozen=True)
 class ConstantGatherProjection:
     """One J-only proof that a constant boundary load is one typed gather."""
 
@@ -142,6 +200,37 @@ class ConstantGatherProjection:
             "axis": self.axis,
             "index_ref": self.index_ref,
             "coordinate": self.coordinate,
+        }
+
+
+@dataclass(frozen=True)
+class ConstantLoadSliceProjection:
+    """One Source-authorized constant-coordinate slice of a logical input."""
+
+    access_id: str
+    coordinate: int
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "access_id": self.access_id,
+            "coordinate": self.coordinate,
+        }
+
+
+@dataclass(frozen=True)
+class ConstantLoadPartitionProjection:
+    """An exhaustive node-less constant-load partition of one J input."""
+
+    tensor: str
+    axis: int
+    slices: tuple[ConstantLoadSliceProjection, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "source_authorized_constant_load_partition",
+            "tensor": self.tensor,
+            "axis": self.axis,
+            "slices": [item.to_json() for item in self.slices],
         }
 
 
@@ -268,6 +357,66 @@ class DirectStorePartitionProjection:
 
 
 @dataclass(frozen=True)
+class LogicalUpdateStoreSliceProjection:
+    """One Source-authorized physical store in a complete logical update."""
+
+    access_id: str
+    producer_ref: str
+    producer_value: str
+    values_slice: str
+    source_coordinate: int
+    target_coordinate: int
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "access_id": self.access_id,
+            "producer_ref": self.producer_ref,
+            "producer_value": self.producer_value,
+            "values_slice": self.values_slice,
+            "source_coordinate": self.source_coordinate,
+            "target_coordinate": self.target_coordinate,
+        }
+
+
+@dataclass(frozen=True)
+class LogicalUpdateStorePartitionProjection:
+    """An exhaustive physical-store realization of one authored scatter.
+
+    Every fact in this receipt is re-derived from canonical J and the opaque
+    Source owner authorizations already attached to its store accesses.  It
+    never promotes an individual store to the owner of the logical update.
+    """
+
+    output: str
+    update_ref: str
+    scatter_result: str
+    base_ref: str
+    indices_ref: str
+    values_ref: str
+    axis: int
+    combiner: str
+    dtype: str
+    shape: tuple[int | str, ...]
+    slices: tuple[LogicalUpdateStoreSliceProjection, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "proof": "complete_logical_update_store_partition",
+            "output": self.output,
+            "update_ref": self.update_ref,
+            "scatter_result": self.scatter_result,
+            "base_ref": self.base_ref,
+            "indices_ref": self.indices_ref,
+            "values_ref": self.values_ref,
+            "axis": self.axis,
+            "combiner": self.combiner,
+            "dtype": self.dtype,
+            "shape": list(self.shape),
+            "slices": [item.to_json() for item in self.slices],
+        }
+
+
+@dataclass(frozen=True)
 class AccessGuardProjection:
     """One consumed J-authored access-local guard relation."""
 
@@ -374,13 +523,18 @@ class FunctionalBoundaryProjection:
     erased_fill_count: int
     runtime_predicate_proofs: tuple[RuntimePredicateProofReceipt, ...] = ()
     consumer_extensions: tuple[ConsumerOutsideProjection, ...] = ()
+    update_padding_relations: tuple[UpdatePaddingProjection, ...] = ()
     value_dimension_relations: tuple[tuple[str, str], ...] = ()
     dimension_relations: tuple[
         tuple[str, str, str, str | None, int | None], ...
     ] = ()
     constant_gathers: tuple[ConstantGatherProjection, ...] = ()
+    constant_load_partitions: tuple[ConstantLoadPartitionProjection, ...] = ()
     concat_store_partitions: tuple[ConcatStorePartitionProjection, ...] = ()
     direct_store_partitions: tuple[DirectStorePartitionProjection, ...] = ()
+    logical_update_store_partitions: tuple[
+        LogicalUpdateStorePartitionProjection, ...
+    ] = ()
     access_guard_relations: tuple[AccessGuardProjection, ...] = ()
     mixed_radix_accesses: tuple[MixedRadixAccessProjection, ...] = ()
     context_domains: tuple[tuple[str, int | str], ...] = ()
@@ -438,6 +592,9 @@ class FunctionalBoundaryProjection:
             "consumer_extensions": [
                 relation.to_json() for relation in self.consumer_extensions
             ],
+            "update_padding_relations": [
+                relation.to_json() for relation in self.update_padding_relations
+            ],
             "value_dimension_relations": [
                 {
                     "value_ref": value_ref,
@@ -461,11 +618,18 @@ class FunctionalBoundaryProjection:
             "constant_gathers": [
                 proof.to_json() for proof in self.constant_gathers
             ],
+            "constant_load_partitions": [
+                proof.to_json() for proof in self.constant_load_partitions
+            ],
             "concat_store_partitions": [
                 proof.to_json() for proof in self.concat_store_partitions
             ],
             "direct_store_partitions": [
                 proof.to_json() for proof in self.direct_store_partitions
+            ],
+            "logical_update_store_partitions": [
+                proof.to_json()
+                for proof in self.logical_update_store_partitions
             ],
             "access_guard_relations": [
                 proof.to_json() for proof in self.access_guard_relations
@@ -731,6 +895,16 @@ def _node_table(j: Any) -> dict[str, IntentOp]:
             "functional boundary cannot materialize canonical operation views"
         )
     return result
+
+
+def _same_canonical_node(left: IntentOp | None, right: IntentOp) -> bool:
+    """Compare identity across views of the same validated canonical records."""
+
+    return (
+        left is not None
+        and isinstance(right.node_id, str)
+        and left.node_id == right.node_id
+    )
 
 
 def _explicit_inout_poststate_reload(
@@ -1680,9 +1854,11 @@ def _project_constant_gather_load(
         )
     axis, coordinate = non_singleton_constants[0]
     if access.node_ref is None or operation is None:
-        raise ValueError(
-            "functional constant load requires one node-bound gather"
-        )
+        # A node-less access cannot claim a gather owner.  It may still be one
+        # independently Source-authorized slice of a complete logical input;
+        # that narrower profile is validated only after every sibling load has
+        # been collected by _project_constant_load_partition.
+        return None
     if (
         operation.op != "gather"
         or len(operation.operands) != 2
@@ -1756,6 +1932,234 @@ def _project_constant_gather_load(
     )
 
 
+def _project_constant_load_partition(
+    j: Any,
+    *,
+    tensor_name: str,
+    loads: Sequence[Any],
+    all_tensor_loads: Sequence[Any],
+    coordinates_by_access: Mapping[str, tuple[str | int, ...]],
+    predicates: Mapping[str, PredicateProjection | None],
+    direct_unit_dimensions: frozenset[str],
+) -> ConstantLoadPartitionProjection:
+    """Prove node-less physical slices exhaust one complete logical input."""
+
+    if not loads or len(loads) != len(all_tensor_loads) or set(
+        item.access_id for item in loads
+    ) != set(item.access_id for item in all_tensor_loads):
+        raise ValueError(
+            "functional constant load partition cannot mix sliced and other loads"
+        )
+    if any(
+        access.node_ref is not None
+        or access.semantic_access_authorization is None
+        or predicates.get(access.access_id) is not None
+        or any(
+            relation.access_ref == access.access_id
+            for relation in j.boundary.access_guard_relations
+        )
+        for access in loads
+    ):
+        raise ValueError(
+            "functional constant load partition requires independently "
+            "authorized unpredicated node-less loads"
+        )
+
+    value_type = j_elaboration(j).value_type_by_name.get(tensor_name)
+    if value_type is None or not value_type.is_tensor or value_type.dtype is None:
+        raise ValueError("functional constant load partition lacks a closed type")
+    coordinates = [coordinates_by_access[item.access_id] for item in loads]
+    rank = len(value_type.shape)
+    if any(len(item) != rank for item in coordinates):
+        raise ValueError(
+            "functional constant load partition rank differs from its input"
+        )
+    varying_axes = [
+        axis
+        for axis in range(rank)
+        if len({item[axis] for item in coordinates}) > 1
+    ]
+    if len(varying_axes) != 1:
+        raise NotImplementedError(
+            "functional constant load partition requires exactly one sliced axis"
+        )
+    axis = varying_axes[0]
+    extent = value_type.shape[axis]
+    if type(extent) is not int:
+        raise NotImplementedError(
+            "functional constant load partition requires a static sliced extent"
+        )
+    starts = [item[axis] for item in coordinates]
+    if any(type(start) is not int for start in starts):
+        raise ValueError(
+            "functional constant load partition requires constant slice coordinates"
+        )
+
+    for dimension in range(rank):
+        if dimension == axis:
+            continue
+        first = coordinates[0][dimension]
+        if any(item[dimension] != first for item in coordinates[1:]):
+            raise ValueError(
+                "functional constant loads disagree on non-partition coordinates"
+            )
+        dimension_extent = value_type.shape[dimension]
+        if isinstance(first, int):
+            if not (
+                first == 0
+                and _is_direct_unit_extent(
+                    dimension_extent, direct_unit_dimensions
+                )
+            ):
+                raise ValueError(
+                    "functional constant load partition does not cover a "
+                    "non-partition extent"
+                )
+
+    if len(loads) != extent:
+        raise ValueError(
+            "functional constant load partition has a missing or extra slice"
+        )
+    by_start: dict[int, Any] = {}
+    for access, start in zip(loads, starts, strict=True):
+        assert isinstance(start, int)
+        if start in by_start:
+            raise ValueError(
+                "functional constant load partition has duplicate slices"
+            )
+        by_start[start] = access
+    if set(by_start) != set(range(extent)):
+        raise ValueError(
+            "functional constant load partition has a gap or out-of-range slice"
+        )
+    return ConstantLoadPartitionProjection(
+        tensor_name,
+        axis,
+        tuple(
+            ConstantLoadSliceProjection(by_start[start].access_id, start)
+            for start in range(extent)
+        ),
+    )
+
+
+def _concat_assembly_context(
+    j: Any,
+    *,
+    output: str,
+    observable_value: str,
+) -> tuple[str, Any] | None:
+    """Return the exact logical-output concat named by one output mapping.
+
+    A physical store may be produced by a Source-authorized slice operation
+    while the ABI output is produced by a separate logical ``concat``.  The
+    two node identities are intentionally different.  This helper recognizes
+    only the latter identity from the authored J mapping; it does not infer a
+    concat from shape, output names, or store count.
+    """
+
+    mappings = {
+        item.output: item for item in j.boundary.output_mappings
+    }
+    mapping = mappings.get(output)
+    if (
+        mapping is None
+        or mapping.node_ref is None
+        or mapping.value != observable_value
+    ):
+        return None
+    operation = _canonical_nodes(j).get(mapping.node_ref)
+    if (
+        operation is None
+        or operation.op != "concat"
+        or not isinstance(operation.result, str)
+        or operation.result != observable_value
+        or not isinstance(operation.operands, list)
+        or len(operation.operands) < 2
+        or any(not isinstance(operand, str) for operand in operation.operands)
+    ):
+        return None
+    return mapping.node_ref, operation
+
+
+def _concat_assembly_operand_for_store(
+    j: Any,
+    *,
+    output: str,
+    access: Any,
+    observable_value: str,
+) -> tuple[str, int] | None:
+    """Join one physical store producer to one exact concat operand.
+
+    ``BoundaryAccess.node_ref`` is the physical value producer, whereas
+    ``OutputMapping.node_ref`` is the logical output producer in this profile.
+    The physical producer must have exactly one result and that result must
+    occur exactly once in the mapped concat operands.  Ambiguous multi-result
+    or repeated-operand cases remain unproved.
+    """
+
+    context = _concat_assembly_context(
+        j, output=output, observable_value=observable_value
+    )
+    if context is None or not isinstance(access.node_ref, str):
+        return None
+    concat_ref, concat = context
+    producer = _canonical_nodes(j).get(access.node_ref)
+    producer_results = _result_names(producer) if producer is not None else ()
+    operands = list(concat.operands)
+    if len(producer_results) != 1:
+        return None
+    producer_value = producer_results[0]
+    positions = [
+        index for index, operand in enumerate(operands)
+        if operand == producer_value
+    ]
+    if len(positions) != 1:
+        return None
+    # The physical producer cannot itself be the logical concat owner.  This
+    # keeps a single store from being promoted to the final output owner.
+    if access.node_ref == concat_ref:
+        return None
+    return producer_value, positions[0]
+
+
+def _concat_assembly_store_operands(
+    j: Any,
+    *,
+    output: str,
+    stores: Sequence[Any],
+    observable_value: str,
+) -> tuple[str, Any, dict[str, tuple[str, int]]] | None:
+    """Prove a complete store-to-logical-concat producer correspondence."""
+
+    context = _concat_assembly_context(
+        j, output=output, observable_value=observable_value
+    )
+    if context is None:
+        return None
+    concat_ref, concat = context
+    if len(stores) != len(concat.operands):
+        return None
+    by_access: dict[str, tuple[str, int]] = {}
+    positions: set[int] = set()
+    for access in stores:
+        relation = _concat_assembly_operand_for_store(
+            j,
+            output=output,
+            access=access,
+            observable_value=observable_value,
+        )
+        if relation is None or access.access_id in by_access:
+            return None
+        _operand, position = relation
+        if position in positions:
+            return None
+        positions.add(position)
+        by_access[access.access_id] = relation
+    if positions != set(range(len(concat.operands))):
+        return None
+    return concat_ref, concat, by_access
+
+
 def _project_concat_store_partition(
     j: Any,
     *,
@@ -1768,18 +2172,50 @@ def _project_concat_store_partition(
     """Prove multiple point stores are one complete unit-width concat output."""
 
     producer_refs = {access.node_ref for access in stores}
-    if len(producer_refs) != 1 or None in producer_refs:
-        raise NotImplementedError(
-            "functional boundary requires exactly one store per logical output"
-        )
-    producer_ref = next(iter(producer_refs))
-    assert producer_ref is not None
-    operation = _canonical_nodes(j).get(producer_ref)
+    assembly = _concat_assembly_store_operands(
+        j,
+        output=output,
+        stores=stores,
+        observable_value=observable_value,
+    )
+    if assembly is not None:
+        producer_ref, operation, _assembly_operands = assembly
+    else:
+        if len(producer_refs) != 1 or None in producer_refs:
+            raise NotImplementedError(
+                "functional concat store partition lacks one exact producer relation"
+            )
+        producer_ref = next(iter(producer_refs))
+        assert producer_ref is not None
+        operation = _canonical_nodes(j).get(producer_ref)
     if operation is None or operation.op != "concat":
         raise NotImplementedError(
-            "functional boundary requires exactly one store per logical output"
+            "functional concat store partition requires a concat output producer"
         )
-    if any(predicates[access.access_id] is not None for access in stores):
+    mapping = next(
+        (
+            item
+            for item in j.boundary.output_mappings
+            if item.output == output
+        ),
+        None,
+    )
+    if (
+        mapping is None
+        or mapping.node_ref != producer_ref
+        or mapping.value != observable_value
+    ):
+        raise ValueError(
+            "functional concat store partition output mapping does not name the logical concat"
+        )
+    guarded_accesses = {
+        relation.access_ref for relation in j.boundary.access_guard_relations
+    }
+    if any(
+        predicates[access.access_id] is not None
+        or access.access_id in guarded_accesses
+        for access in stores
+    ):
         raise NotImplementedError(
             "functional concat store partition requires unpredicated stores"
         )
@@ -1899,7 +2335,14 @@ def _project_direct_store_partition(
         raise NotImplementedError(
             "functional direct store partition requires a J producer"
         )
-    if any(predicates[access.access_id] is not None for access in stores):
+    guarded_accesses = {
+        relation.access_ref for relation in j.boundary.access_guard_relations
+    }
+    if any(
+        predicates[access.access_id] is not None
+        or access.access_id in guarded_accesses
+        for access in stores
+    ):
         raise NotImplementedError(
             "functional direct store partition requires unpredicated stores"
         )
@@ -2002,6 +2445,528 @@ def _project_direct_store_partition(
     )
 
 
+def _logical_update_mapping_candidates(
+    j: Any,
+    *,
+    returns: Mapping[str, str],
+    mappings: Mapping[str, Any],
+    paired_store_values: Mapping[str, str],
+) -> dict[str, Any]:
+    """Identify outputs whose mismatched stores may await a full proof.
+
+    This is deliberately only a scheduling decision.  It does not admit any
+    store: every deferred access must later be covered by one successful
+    ``_project_logical_update_store_partition`` call.
+    """
+
+    nodes = _node_table(j)
+    result: dict[str, Any] = {}
+    for output, mapping in mappings.items():
+        if mapping.node_ref is None:
+            continue
+        operation = nodes.get(mapping.node_ref)
+        updates = [
+            item for item in j.boundary.updates
+            if item.node_ref == mapping.node_ref
+        ]
+        stores = [
+            access
+            for access in j.boundary.accesses
+            if access.kind.value == "store" and access.tensor == output
+        ]
+        if (
+            operation is None
+            or operation.op != "scatter"
+            or len(updates) != 1
+            or len(stores) < 2
+            or any(access.access_id in paired_store_values for access in stores)
+            or not any(nodes.get(access.node_ref) is not operation for access in stores)
+        ):
+            continue
+        update = updates[0]
+        try:
+            _validate_logical_update_projection(j, update)
+        except (NotImplementedError, ValueError):
+            # Do not defer the established per-store rejection unless the
+            # update is already a closed canonical scatter.
+            continue
+        scatter_results = _result_names(operation)
+        if (
+            len(scatter_results) != 1
+            or mapping.value != scatter_results[0]
+            or returns.get(output) != scatter_results[0]
+        ):
+            continue
+        result[output] = update
+    return result
+
+
+def _static_scatter_slice_targets(
+    j: Any,
+    *,
+    indices_ref: str,
+    shape: tuple[int | str, ...],
+    axis: int,
+) -> tuple[int, ...]:
+    """Return one proven target coordinate for each source-axis slice."""
+
+    if any(type(extent) is not int for extent in shape):
+        raise NotImplementedError(
+            "functional logical-update store partition requires static indices"
+        )
+    static_shape = tuple(int(extent) for extent in shape)
+    if not 0 <= axis < len(static_shape) or any(size < 1 for size in static_shape):
+        raise ValueError("functional logical-update indices require nonempty dimensions")
+    producers = [
+        operation
+        for operation in _canonical_ops(j)
+        if indices_ref in _result_names(operation)
+    ]
+    if len(producers) != 1:
+        raise ValueError(
+            "functional logical-update indices require one canonical producer"
+        )
+    producer = producers[0]
+    extent = static_shape[axis]
+    if (
+        producer.op == "iota"
+        and len(static_shape) == 1
+        and axis == 0
+        and producer.attrs.get("n") == extent
+    ):
+        return tuple(range(extent))
+    if producer.op != "const":
+        raise NotImplementedError(
+            "functional logical-update partition requires const or iota indices"
+        )
+
+    raw = producer.attrs.get("value")
+
+    # Stream each authored element once. Never materialize the Cartesian
+    # product, nor rescan it separately for every source-axis coordinate.
+    targets: dict[int, int] = {}
+
+    def record(source_coordinate: int, value: Any) -> None:
+        if type(value) is not int or not 0 <= value < extent:
+            raise ValueError("functional logical-update index target is not an in-range integer")
+        if targets.setdefault(source_coordinate, value) != value:
+            raise ValueError("functional logical-update index slice has multiple targets")
+
+    def visit(value: Any, depth: int, source_coordinate: int) -> None:
+        if depth == len(static_shape):
+            record(source_coordinate, value)
+            return
+        if not isinstance(value, list) or len(value) != static_shape[depth]:
+            raise ValueError("functional logical-update index literal shape differs from update values")
+        for coordinate, child in enumerate(value):
+            visit(child, depth + 1, coordinate if depth == axis else source_coordinate)
+
+    if isinstance(raw, list):
+        visit(raw, 0, 0)
+    elif extent == 1:
+        record(0, raw)
+    else:
+        raise ValueError("functional logical-update splat indices repeat their target")
+    if len(targets) != extent or len(set(targets.values())) != extent:
+        raise ValueError(
+            "functional logical-update indices are not a complete permutation"
+        )
+    return tuple(targets[coordinate] for coordinate in range(extent))
+
+
+def _logical_update_value_slices(
+    j: Any,
+    *,
+    values_ref: str,
+    axis: int,
+) -> tuple[str, ...]:
+    """Decompose update values through exact typed concat edges only."""
+
+    value_types = j_elaboration(j).value_type_by_name
+    producers: dict[str, IntentOp] = {}
+    for operation in _canonical_ops(j):
+        for result in _result_names(operation):
+            previous = producers.setdefault(result, operation)
+            if previous is not operation:
+                raise ValueError(
+                    "functional logical-update values have duplicate producers"
+                )
+
+    active: set[str] = set()
+
+    def visit(value_ref: str) -> tuple[str, ...]:
+        value_type = value_types.get(value_ref)
+        if (
+            value_type is None
+            or not value_type.is_tensor
+            or value_type.dtype is None
+            or axis < 0
+            or axis >= len(value_type.shape)
+        ):
+            raise ValueError(
+                "functional logical-update value slice lacks a closed tensor type"
+            )
+        width = value_type.shape[axis]
+        if type(width) is not int or width < 1:
+            raise NotImplementedError(
+                "functional logical-update values require a static partition axis"
+            )
+        if width == 1:
+            return (value_ref,)
+        if value_ref in active:
+            raise ValueError("functional logical-update concat dataflow is cyclic")
+        producer = producers.get(value_ref)
+        if (
+            producer is None
+            or producer.op != "concat"
+            or producer.attrs.get("axis") != axis
+            or _result_names(producer) != (value_ref,)
+        ):
+            raise NotImplementedError(
+                "functional logical-update values require concat-only unit slices"
+            )
+        active.add(value_ref)
+        leaves = tuple(
+            leaf
+            for operand in producer.operands
+            for leaf in visit(operand)
+        )
+        active.remove(value_ref)
+        if len(leaves) != width:
+            raise ValueError(
+                "functional logical-update concat leaves do not cover their extent"
+            )
+        return leaves
+
+    return visit(values_ref)
+
+
+def _logical_update_partition_type_rule(
+    value_types: Mapping[str, CanonicalValueType],
+    *,
+    output: str,
+    update: Any,
+    observable_value: str,
+) -> str | None:
+    """Return the first J-only type obligation for a complete store partition."""
+
+    output_type = value_types.get(output)
+    if output_type is None or not output_type.is_tensor or output_type.dtype is None:
+        return "functional_logical_update_output_type_unclosed"
+    if value_types.get(update.base) != output_type:
+        return "functional_logical_update_base_type_mismatch"
+    if value_types.get(update.values) != output_type:
+        return "functional_logical_update_values_type_mismatch"
+    if value_types.get(observable_value) != output_type:
+        return "functional_logical_update_result_type_mismatch"
+    indices_type = value_types.get(update.indices)
+    if indices_type is None or indices_type.shape != output_type.shape:
+        return "functional_logical_update_indices_shape_mismatch"
+    if not is_closed_integer_dtype(indices_type.dtype, include_boolean=False):
+        return "functional_logical_update_indices_dtype_invalid"
+    return None
+
+
+def _project_logical_update_store_partition(
+    j: Any,
+    *,
+    output: str,
+    stores: Sequence[Any],
+    all_output_stores: Sequence[Any],
+    coordinates_by_access: Mapping[str, tuple[str | int, ...]],
+    predicates: Mapping[str, PredicateProjection | None],
+    effects_by_access: Mapping[str, Sequence[Any]],
+    observable_value: str,
+    mapping: Any,
+    update: Any,
+    domains: Mapping[str, int | str],
+    direct_unit_dimensions: frozenset[str],
+    runtime_logical_dimensions: Mapping[str, int] | None,
+) -> LogicalUpdateStorePartitionProjection:
+    """Prove all physical stores jointly realize one complete J scatter."""
+
+    if len(stores) < 2:
+        raise NotImplementedError(
+            "functional logical-update partition cannot promote one store"
+        )
+    if {item.access_id for item in stores} != {
+        item.access_id for item in all_output_stores
+    }:
+        raise ValueError(
+            "functional logical-update partition does not cover every output store"
+        )
+    function = j.intent.to_json()["intent_function"]
+    parameters = [parameter.to_json() for parameter in j.signature.parameters]
+    boundary = j.boundary.to_json()
+    for access in stores:
+        # No token-presence shortcut: re-consume the full load/reduce/padding
+        # producer commitment before any store can join a logical partition.
+        validate_source_owner_binding(
+            function, parameters, access.to_json(), boundary,
+            value_dimension_relations=j.to_json().get("value_dimension_relations"),
+        )
+    nodes = _node_table(j)
+    operation = _validate_logical_update_projection(j, update, nodes=nodes)
+    if mapping.node_ref != update.node_ref or nodes.get(mapping.node_ref) is not operation:
+        raise ValueError(
+            "functional logical-update output mapping does not name its scatter"
+        )
+    matching_updates = [
+        item for item in j.boundary.updates if item.node_ref == update.node_ref
+    ]
+    scatter_results = _result_names(operation)
+    if (
+        len(matching_updates) != 1
+        or len(scatter_results) != 1
+        or mapping.value != observable_value
+        or scatter_results[0] != observable_value
+    ):
+        raise ValueError(
+            "functional logical-update result differs from the final output binding"
+        )
+    if (
+        operation.attrs.get("atomic") is not None
+        or operation.attrs.get("reduce") != "none"
+        or update.combiner.value != "overwrite"
+        or update.duplicate_policy.value != "forbid"
+        or update.order.value != "input_order"
+        or update.compare is not None
+        or update.observed is not None
+    ):
+        raise NotImplementedError(
+            "functional logical-update store partition requires deterministic overwrite"
+        )
+
+    value_types = j_elaboration(j).value_type_by_name
+    output_type = value_types.get(output)
+    # Keep the full-output partition requirement: an ordinary scatter may
+    # update a smaller region, but these stores claim to cover every output
+    # coordinate.  Distinguish the independent obligations without exporting
+    # authored types, shapes or values through the failure message.
+    type_rule = _logical_update_partition_type_rule(
+        value_types, output=output, update=update,
+        observable_value=observable_value,
+    )
+    if type_rule is not None:
+        raise ValueError(type_rule)
+    assert output_type is not None
+    axis = update.axis
+    resolved_shape = tuple(
+        _resolve_runtime_dimension_bound(extent, runtime_logical_dimensions)
+        for extent in output_type.shape
+    )
+    if axis < 0 or axis >= len(resolved_shape):
+        raise ValueError("functional logical-update partition axis is out of range")
+    extent = resolved_shape[axis]
+    if type(extent) is not int or extent < 2:
+        raise NotImplementedError(
+            "functional logical-update partition requires a static non-singleton axis"
+        )
+
+    coordinates = [
+        coordinates_by_access[access.access_id] for access in stores
+    ]
+    if any(len(item) != len(resolved_shape) for item in coordinates):
+        raise ValueError(
+            "functional logical-update store rank differs from its output"
+        )
+    varying_axes = [
+        dimension
+        for dimension in range(len(resolved_shape))
+        if len({item[dimension] for item in coordinates}) > 1
+    ]
+    if varying_axes != [axis]:
+        raise ValueError(
+            "functional logical-update stores do not partition exactly the update axis"
+        )
+
+    for dimension, dimension_extent in enumerate(resolved_shape):
+        if dimension == axis:
+            continue
+        coordinate = coordinates[0][dimension]
+        if any(item[dimension] != coordinate for item in coordinates[1:]):
+            raise ValueError(
+                "functional logical-update stores disagree off the partition axis"
+            )
+        if isinstance(coordinate, int):
+            if not (
+                coordinate == 0
+                and _is_direct_unit_extent(
+                    output_type.shape[dimension], direct_unit_dimensions
+                )
+            ):
+                raise ValueError(
+                    "functional logical-update stores omit a non-partition extent"
+                )
+        elif domains.get(coordinate) != dimension_extent:
+            raise ValueError(
+                "functional logical-update store domain differs from output shape"
+            )
+
+    by_target: dict[int, Any] = {}
+    for access, coordinates_row in zip(stores, coordinates, strict=True):
+        coordinate = coordinates_row[axis]
+        if type(coordinate) is not int or coordinate in by_target:
+            raise ValueError(
+                "functional logical-update stores have duplicate or dynamic coordinates"
+            )
+        by_target[coordinate] = access
+    if len(stores) != extent or set(by_target) != set(range(extent)):
+        raise ValueError(
+            "functional logical-update stores have a gap or out-of-range coordinate"
+        )
+
+    targets = _static_scatter_slice_targets(
+        j,
+        indices_ref=update.indices,
+        shape=resolved_shape,
+        axis=axis,
+    )
+    leaves = _logical_update_value_slices(
+        j,
+        values_ref=update.values,
+        axis=axis,
+    )
+    if len(targets) != extent or len(leaves) != extent:
+        raise ValueError(
+            "functional logical-update dataflow does not cover its output extent"
+        )
+
+    expected_slice_shape = list(output_type.shape)
+    expected_slice_shape[axis] = 1
+    expected_slice_shape_tuple = tuple(expected_slice_shape)
+    value_producers: dict[str, IntentOp] = {}
+    for candidate in _canonical_ops(j):
+        for candidate_result in _result_names(candidate):
+            previous = value_producers.setdefault(candidate_result, candidate)
+            if previous is not candidate:
+                raise ValueError(
+                    "functional logical-update dataflow has duplicate producers"
+                )
+
+    def reshape_path(source: str, destination: str) -> bool:
+        """Recognize only value-preserving typed reshape edges."""
+
+        current = destination
+        visited: set[str] = set()
+        while current != source:
+            if current in visited:
+                return False
+            visited.add(current)
+            candidate = value_producers.get(current)
+            if (
+                candidate is None
+                or candidate.op != "reshape"
+                or len(candidate.operands) != 1
+                or _result_names(candidate) != (current,)
+            ):
+                return False
+            predecessor = candidate.operands[0]
+            predecessor_type = value_types.get(predecessor)
+            current_type = value_types.get(current)
+            if (
+                predecessor_type is None
+                or current_type is None
+                or not predecessor_type.is_tensor
+                or not current_type.is_tensor
+                or predecessor_type.dtype != current_type.dtype
+            ):
+                return False
+            predecessor_extents = predecessor_type.shape
+            current_extents = current_type.shape
+            if predecessor_extents != current_extents:
+                if (
+                    any(type(item) is not int for item in predecessor_extents)
+                    or any(type(item) is not int for item in current_extents)
+                ):
+                    return False
+                predecessor_count = 1
+                for item in predecessor_extents:
+                    predecessor_count *= item
+                current_count = 1
+                for item in current_extents:
+                    current_count *= item
+                if predecessor_count != current_count:
+                    return False
+            current = predecessor
+        return True
+
+    slices: list[LogicalUpdateStoreSliceProjection] = []
+    used_accesses: set[str] = set()
+    for source_coordinate, (target_coordinate, leaf) in enumerate(
+        zip(targets, leaves, strict=True)
+    ):
+        access = by_target[target_coordinate]
+        producer = nodes.get(access.node_ref)
+        producer_values = set(_result_names(producer)) if producer is not None else set()
+        matching_values = {
+            value for value in producer_values if reshape_path(value, leaf)
+        }
+        producer_value = (
+            next(iter(matching_values)) if len(matching_values) == 1 else None
+        )
+        leaf_type = value_types.get(leaf)
+        producer_type = value_types.get(producer_value or "")
+        effects = effects_by_access.get(access.access_id, ())
+        if (
+            access.kind.value != "store"
+            or access.tensor != output
+            or access.node_ref is None
+            or access.semantic_owner_authorization is None
+            or producer is None
+            or len(matching_values) != 1
+            or access.access_id in used_accesses
+            or predicates.get(access.access_id) is not None
+            or any(
+                relation.access_ref == access.access_id
+                for relation in j.boundary.access_guard_relations
+            )
+            or len(effects) != 1
+            or effects[0].kind.value != "write"
+            or effects[0].target != output
+            or effects[0].node_ref != access.node_ref
+            or leaf_type is None
+            or not leaf_type.is_tensor
+            or leaf_type.dtype != output_type.dtype
+            or leaf_type.shape != expected_slice_shape_tuple
+            or producer_type is None
+            or not producer_type.is_tensor
+            or producer_type.dtype != output_type.dtype
+        ):
+            raise ValueError(
+                "functional logical-update store producer/effect/type authorization is incomplete"
+            )
+        used_accesses.add(access.access_id)
+        assert producer_value is not None
+        slices.append(
+            LogicalUpdateStoreSliceProjection(
+                access_id=access.access_id,
+                producer_ref=access.node_ref,
+                producer_value=producer_value,
+                values_slice=leaf,
+                source_coordinate=source_coordinate,
+                target_coordinate=target_coordinate,
+            )
+        )
+    if used_accesses != {item.access_id for item in stores}:
+        raise ValueError(
+            "functional logical-update dataflow leaves an output store unbound"
+        )
+    return LogicalUpdateStorePartitionProjection(
+        output=output,
+        update_ref=update.node_ref,
+        scatter_result=observable_value,
+        base_ref=update.base,
+        indices_ref=update.indices,
+        values_ref=update.values,
+        axis=axis,
+        combiner=update.combiner.value,
+        dtype=output_type.dtype,
+        shape=tuple(output_type.shape),
+        slices=tuple(slices),
+    )
+
+
 def _project_store_partition(
     j: Any,
     *,
@@ -2025,7 +2990,10 @@ def _project_store_partition(
         if isinstance(producer_ref, str)
         else None
     )
-    if operation is not None and operation.op == "concat":
+    assembly_context = _concat_assembly_context(
+        j, output=output, observable_value=observable_value
+    )
+    if (operation is not None and operation.op == "concat") or assembly_context is not None:
         return _project_concat_store_partition(
             j,
             output=output,
@@ -2052,6 +3020,7 @@ def _is_total_conditional_store_pair(
     predicates: Mapping[str, PredicateProjection | None],
     output_shape: Sequence[int | str],
     conditional_accesses: frozenset[str],
+    guarded_accesses: frozenset[str],
     arm_memberships: Mapping[str, tuple[tuple[str, str], ...]],
     direct_unit_dimensions: frozenset[str],
 ) -> bool:
@@ -2059,6 +3028,7 @@ def _is_total_conditional_store_pair(
 
     if len(stores) != 2 or any(
         access.access_id not in conditional_accesses
+        or access.access_id in guarded_accesses
         or predicates[access.access_id] is not None
         or access.node_ref is None
         for access in stores
@@ -3022,25 +3992,76 @@ def functional_boundary_closure_issues(
     direct_coordinates: dict[str, tuple[str | int, ...]] = {}
     issues: list[FunctionalBoundaryClosureIssue] = []
 
-    # A consumer-local boundary view changes the meaning of an otherwise
-    # Source-owned memory access.  It is legal only when Lift carried the
-    # opaque authorization issued by the exact Source/compiler ledger.  The
-    # functional checker cannot mint or validate that external provenance
-    # token; it merely keeps an owner claim from becoming an untracked local
-    # graph assertion after canonical allocation.
+    # Check the same content commitment consumed by Lift and Gate1. Issuance
+    # provenance is checked against the private Source ledger at both ingress
+    # and pre-Replay; J-only validation never mints that external authority.
     for index, access in enumerate(boundary.accesses):
-        if (
-            access.node_ref is not None
-            and access.semantic_owner_authorization is None
-        ):
+        if access.node_ref is not None:
+            try:
+                validate_source_owner_binding(
+                    j.intent.to_json()["intent_function"],
+                    [parameter.to_json() for parameter in j.signature.parameters],
+                    access.to_json(),
+                    boundary.to_json(),
+                    value_dimension_relations=j.to_json().get("value_dimension_relations"),
+                )
+            except (ValueError, TypeError, KeyError, RecursionError) as exc:
+                # This is the same closed owner validator used at ingress.
+                # Preserve only its rule identifier, never candidate content
+                # or a parser exception message, for CandidateCheck/TypeCheck.
+                owner_rule = (
+                    exc.args[0]
+                    if type(exc) is ValueError
+                    and len(exc.args) == 1
+                    and isinstance(exc.args[0], str)
+                    and re.fullmatch(r"source_owner_[a-z0-9_]{1,80}", exc.args[0])
+                    else "source_exact_owner_binding_failed"
+                )
+                issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        f"j.boundary.accesses[{index}].node_ref",
+                        owner_rule,
+                        access.access_id,
+                    )
+                )
+    # The output-only complete-store profile has a mandatory typed scatter
+    # value before any runtime coordinates are known. Check that same J-only
+    # obligation at TypeCheck so an impossible full partition cannot consume
+    # an independent Replay and fail only at Gate2. Inout poststate reloads
+    # and ordinary partial scatters are outside this narrow preflight.
+    output_only_names = {item.name for item in j.intent.outputs} - {
+        item.name for item in j.intent.inputs
+    }
+    output_mappings = {
+        item.output: item for item in boundary.output_mappings
+        if item.output in output_only_names
+    }
+    update_candidates = _logical_update_mapping_candidates(
+        j,
+        returns={item.output: item.value for item in elaboration.output_bindings},
+        mappings=output_mappings,
+        paired_store_values={},
+    )
+    for output, update in update_candidates.items():
+        mapping = output_mappings[output]
+        type_rule = _logical_update_partition_type_rule(
+            value_types, output=output, update=update,
+            observable_value=mapping.value,
+        )
+        if type_rule is not None:
             issues.append(
                 FunctionalBoundaryClosureIssue(
-                    f"j.boundary.accesses[{index}].semantic_owner_authorization",
-                    "consumer-local access has no Source/compiler owner authorization",
-                    access.access_id,
+                    "j.boundary.updates",
+                    type_rule,
+                    update.node_ref,
                 )
             )
     accesses_by_id = {item.access_id: item for item in boundary.accesses}
+    consumer_extensions_by_access: dict[str, list[Any]] = {}
+    for extension in boundary.consumer_extensions:
+        consumer_extensions_by_access.setdefault(
+            extension.access_ref, []
+        ).append(extension)
     for relation in boundary.access_guard_relations:
         access = accesses_by_id.get(relation.access_ref)
         if access is not None and access.semantic_guard_authorization is None:
@@ -3049,6 +4070,20 @@ def functional_boundary_closure_issues(
                     "j.boundary.access_guard_relations",
                     "computed access guard has no Source/compiler guard authorization",
                     relation.access_ref,
+                )
+            )
+        if (
+            access is not None
+            and access.kind.value == "load"
+            and access.node_ref is None
+            and not consumer_extensions_by_access.get(access.access_id)
+        ):
+            issues.append(
+                FunctionalBoundaryClosureIssue(
+                    "j.boundary.consumer_extensions",
+                    "node-less computed guarded load requires an explicit "
+                    "consumer extension; the host cannot infer its operand edge",
+                    access.access_id,
                 )
             )
 
@@ -3417,14 +4452,8 @@ def functional_boundary_closure_issues(
     for output, stores in stores_by_output.items():
         if len(stores) < 2:
             continue
-        producer_refs = {access.node_ref for access in stores}
-        if len(producer_refs) != 1 or None in producer_refs:
-            continue
-        producer_ref = next(iter(producer_refs))
-        assert producer_ref is not None
-        operation = nodes.get(producer_ref)
         output_type = value_types.get(output)
-        if operation is None or output_type is None:
+        if output_type is None:
             continue
         if (
             any(access.predicate is not None for access in stores)
@@ -3753,8 +4782,7 @@ def _project_access_guard_relations(
             raise ValueError("functional access guard lacks a closed Layer-A type")
         if (
             not guard_type.is_tensor
-            or guard_type.dtype is None
-            or guard_type.dtype.casefold() != "i1"
+            or not is_closed_boolean_dtype(guard_type.dtype)
         ):
             raise ValueError("functional access guard value must have dtype i1")
         axes = tuple(relation.axes)
@@ -3762,14 +4790,13 @@ def _project_access_guard_relations(
             raise ValueError(
                 "functional access guard axes must be strictly increasing and unique"
             )
-        if not _shape_can_broadcast_on_axes(
+        if unique_exact_rank_insertion_projection(
             guard_type.shape,
             target_type.shape,
-            axes,
-            unit_dimensions=direct_unit_dimensions,
-        ):
+        ) != axes:
             raise ValueError(
-                "functional access guard axes cannot project the guard to its target"
+                "functional access guard axes cannot project the guard to its target "
+                "through the canonical exact rank-insertion rule"
             )
 
         if access.kind.value == "load":
@@ -3803,16 +4830,16 @@ def _project_access_guard_relations(
                             "one direct operand edge"
                         )
                     operand = operation.operands[operand_index]
-                    candidates, ambiguous = _consumer_extension_candidates(
-                        j, operand=operand
+                    found, _path = _consumer_dependency_path(
+                        j,
+                        operand=operand,
+                        access_node_ref=access.node_ref,
+                        access_tensor=access.tensor,
                     )
-                    if (
-                        candidates.get(relation.access_ref) is None
-                        or access.tensor in ambiguous
-                    ):
+                    if not found:
                         raise ValueError(
                             "functional guarded load consumer extension has "
-                            "no unambiguous access provenance"
+                            "no access-to-operand provenance"
                         )
                     bindings.append(
                         (extension.consumer_ref, operation, operand_index)
@@ -3878,9 +4905,9 @@ def _project_access_guard_relations(
                     )
                 )
             continue
-        if access.kind.value == "update":
+        if not computed_guard_projection_supported(access.kind.value):
             raise NotImplementedError(
-                "functional access guard does not implement guarded update access"
+                "functional access guard does not implement this access kind"
             )
         if access.kind.value != "store":  # pragma: no cover - closed enum
             raise ValueError("functional access guard has an unknown access kind")
@@ -4484,6 +5511,18 @@ def _reduction_padding_analysis(
             merge_projected(projected, operand_padding[op.operands[1]])
             padding_positions[op.result] = freeze(projected)
             continue
+        if op.op == "scatter":
+            if padded_operands:
+                consumer_issues.append(
+                    FunctionalBoundaryClosureIssue(
+                        f"j.intent.intent_function.{path}.op",
+                        "functional mask projection does not implement update "
+                        "padding without an exact upstream outside-domain "
+                        "identity closure",
+                        node_ref,
+                    )
+                )
+            continue
         if op.op not in {"reduce", "scan"}:
             if padded_operands:
                 consumer_issues.append(
@@ -4713,36 +5752,6 @@ def _same_closed_scalar(left: Any, right: Any) -> bool:
     )
 
 
-def _floating_dtype(dtype: str) -> bool:
-    return is_closed_floating_dtype(dtype)
-
-
-def _is_consumer_identity(fn: str, dtype: str, value: Any) -> bool:
-    if fn == "sum":
-        return value == "ZERO" or (
-            not isinstance(value, bool)
-            and isinstance(value, (int, float))
-            and float(value) == 0.0
-        )
-    if fn == "prod":
-        return value == "ONE" or (
-            not isinstance(value, bool)
-            and isinstance(value, (int, float))
-            and float(value) == 1.0
-        )
-    if fn == "any":
-        return value is False or value == "false"
-    if fn == "all":
-        return value is True or value == "true"
-    if not _floating_dtype(dtype):
-        return False
-    if fn == "max":
-        return isinstance(value, str) and value in {"NEG_INF", "-inf"}
-    if fn == "min":
-        return isinstance(value, str) and value in {"POS_INF", "+inf", "inf"}
-    return False
-
-
 def _operation_dependencies(op: IntentOp) -> tuple[str, ...]:
     dependencies: list[str] = []
 
@@ -4882,6 +5891,197 @@ def _consumer_dependency_path(
     return visit(operand)
 
 
+def _consumer_dependency_cut(
+    j: Any, *, operand: str, access: Any, closed_consumers: frozenset[str],
+    axis_preserving: bool = False,
+) -> tuple[bool, bool]:
+    """Return (depends, has_unclosed_path) without enumerating DAG paths."""
+    if access.node_ref is None and sum(
+        item.kind.value == "load" and item.tensor == access.tensor
+        for item in j.boundary.accesses
+    ) != 1:
+        raise ValueError("functional load occurrence-to-operand binding is ambiguous")
+    producers: dict[str, tuple[str | None, IntentOp]] = {}
+    refs = {path: ref for ref, path in j.node_ids.items()}
+    for path, operation in _canonical_rows(j):
+        for value in _result_names(operation):
+            if value in producers:
+                raise ValueError("functional padding dataflow has duplicate producers")
+            producers[value] = (refs.get(path), operation)
+    memo: dict[str, tuple[bool, bool]] = {}
+    active: set[str] = set()
+    inputs = {item.name for item in j.intent.inputs}
+
+    def visit(value: str) -> tuple[bool, bool]:
+        if access.node_ref is None and value == access.tensor:
+            return True, True
+        if value in active:
+            raise ValueError("functional padding dataflow has a cycle")
+        if value in memo:
+            return memo[value]
+        active.add(value)
+        producer = producers.get(value)
+        if producer is None:
+            if value not in inputs and not is_scalar_literal(value):
+                raise ValueError("functional padding dependency has an unresolved binder")
+            answer = False, False
+        else:
+            node_ref, operation = producer
+            if access.node_ref is not None and node_ref == access.node_ref:
+                answer = True, True
+            else:
+                children = [visit(child) for child in _operation_dependencies(operation)]
+                depends = any(found for found, _open in children)
+                if depends and operation.op in {"loop", "value_if", "effect_if"}:
+                    raise ValueError("functional padding region dependency is not closed")
+                if depends and axis_preserving and operation.op not in {"map_unary", "map_binary", "cast"}:
+                    raise ValueError("functional padding dependency has no exact axis transport")
+                answer = depends, any(unclosed for _found, unclosed in children)
+                if depends and node_ref in closed_consumers:
+                    answer = True, False
+        active.remove(value)
+        memo[value] = answer
+        return answer
+
+    return visit(operand)
+
+
+def _prove_consumer_outside_value(j: Any, *, operand: str, access: Any, dtype: str, outside: Any) -> None:
+    """Prove the declared outside value from existing fills on every branch.
+
+    A relation is an obligation, not a license to assign that value. Unknown
+    data, non-uniform transforms and non-exact arithmetic remain unproved.
+    """
+    if access.node_ref is not None:
+        raise ValueError("functional outside proof needs an exact shared load occurrence")
+    types = j_elaboration(j).value_type_by_name
+    producers: dict[str, IntentOp] = {}
+    for operation in _canonical_ops(j):
+        for result in _result_names(operation):
+            if result in producers:
+                raise ValueError("functional outside proof has duplicate producers")
+            producers[result] = operation
+
+    def expression(text: str) -> str:
+        try:
+            return ast.dump(ast.parse(text, mode="eval"), include_attributes=False)
+        except (SyntaxError, TypeError) as exc:
+            raise ValueError("functional outside access expression is invalid") from exc
+
+    seeds: dict[str, Any] = {}
+    for item in j.boundary.accesses:
+        if item.kind.value != "load" or item.node_ref is not None or item.predicate is None:
+            continue
+        if expression(item.index_expression) != expression(access.index_expression) or expression(item.predicate) != expression(access.predicate):
+            continue
+        if types.get(item.tensor) != types.get(access.tensor):
+            continue
+        if sum(other.kind.value == "load" and other.tensor == item.tensor for other in j.boundary.accesses) != 1:
+            raise ValueError("functional outside load occurrence is ambiguous")
+        seeds[item.tensor] = item.fill_value
+    if access.tensor not in seeds:
+        raise ValueError("functional outside load occurrence is unbound")
+    unknown = object()
+    memo: dict[str, Any] = {}
+    affected: dict[str, bool] = {}
+    active: set[str] = set()
+
+    def number(value: Any, value_dtype: str = dtype) -> float:
+        value = {"ZERO": 0.0, "ONE": 1.0}.get(value, value) if isinstance(value, str) else value
+        bits = owner_float_bits(value, value_dtype)
+        return struct.unpack("!f" if value_dtype == "f32" else "!d", bytes.fromhex(bits))[0]
+
+    def same(left: Any, right: Any, value_dtype: str = dtype) -> bool:
+        aliases = {"ZERO": 0.0, "ONE": 1.0}
+        left = aliases.get(left, left) if isinstance(left, str) else left
+        right = aliases.get(right, right) if isinstance(right, str) else right
+        if value_dtype in {"f32", "f64"} and not isinstance(left, str) and not isinstance(right, str):
+            return owner_float_bits(left, value_dtype) == owner_float_bits(right, value_dtype)
+        return _same_closed_scalar(left, right)
+
+    def visit(value: str) -> Any:
+        if value in active:
+            raise ValueError("functional outside dataflow has a cycle")
+        if value in memo:
+            return memo[value]
+        typ = types.get(value)
+        if typ is None or typ.dtype not in {"i32", "i64", "f32", "f64"}:
+            raise ValueError("functional outside dataflow type mismatch")
+        active.add(value)
+        depends_on_padding = value in seeds
+        if value in seeds:
+            result = seeds[value]
+        else:
+            operation = producers.get(value)
+            result = unknown
+            if operation is not None:
+                children = [visit(child) for child in operation.operands]
+                child_types = [types.get(child) for child in operation.operands]
+                depends_on_padding = any(affected[child] for child in operation.operands)
+                if operation.op == "cast":
+                    if len(children) != 1 or child_types[0] is None or set(operation.attrs) != {"to_dtype"} or operation.attrs["to_dtype"] != typ.dtype or child_types[0].shape != typ.shape:
+                        raise ValueError("functional outside cast contract mismatch")
+                    if child_types[0].dtype == typ.dtype:
+                        result = children[0]
+                    else:
+                        owner_cast_kind(child_types[0].dtype, typ.dtype)
+                    if child_types[0].dtype != typ.dtype and children[0] is not unknown and child_types[0].dtype in {"f32", "f64"}:
+                        literal = number(children[0], child_types[0].dtype)
+                        if literal in {-1.0, 0.0, 1.0}:
+                            result = number(literal, typ.dtype)
+                elif any(child is None or child.dtype != typ.dtype for child in child_types):
+                    raise ValueError("functional outside implicit conversion is unproved")
+                elif typ.dtype not in {"f32", "f64"}:
+                    # Integer data is not a floating outside identity. Its
+                    # explicit cast may remain unknown, but cannot invent one.
+                    result = unknown
+                elif operation.op == "const" and not children and set(operation.attrs) == {"value"}:
+                    literal = operation.attrs["value"]
+                    if not isinstance(literal, (list, dict)):
+                        result = literal
+                elif operation.op in {"reshape", "transpose", "broadcast"} and len(children) == 1:
+                    # Uniform values alone do not transport a masked domain.
+                    # Match the Source owner obligation until a non-identity
+                    # coordinate-transport proof is available on both sides.
+                    if depends_on_padding and operation.op in {"reshape", "transpose"}:
+                        identity = (
+                            child_types[0].shape == typ.shape if operation.op == "reshape"
+                            else operation.attrs.get("perm") == list(range(len(typ.shape)))
+                        )
+                        if not identity:
+                            raise ValueError("functional outside padding coordinate transport is unproved")
+                    result = children[0]
+                elif operation.op == "pad" and len(children) == 1 and children[0] is not unknown and same(children[0], operation.attrs.get("value"), typ.dtype):
+                    result = children[0]
+                elif operation.op in {"map_unary", "map_binary"} and children and all(child is not unknown for child in children):
+                    values = [number(child, typ.dtype) for child in children]
+                    fn = operation.attrs.get("fn")
+                    if fn == "neg" and len(values) == 1:
+                        result = -values[0]
+                    elif len(values) == 2:
+                        left, right = values
+                        if fn == "mul" and (0.0 in values or 1.0 in values):
+                            result = left * right
+                        elif fn in {"add", "sub"} and 0.0 in values:
+                            result = left + right if fn == "add" else left - right
+                        elif fn == "div" and right == 1.0:
+                            result = left
+                    if result is not unknown:
+                        result = number(result, typ.dtype)
+        active.remove(value)
+        memo[value] = result
+        affected[value] = depends_on_padding
+        return result
+
+    if types.get(operand) is None or types[operand].dtype != dtype:
+        raise ValueError("functional outside result dtype differs from its consumer")
+    actual = visit(operand)
+    if actual is unknown:
+        raise ValueError("functional consumer outside value is not proven by complete dataflow")
+    if not same(actual, outside):
+        raise ValueError("functional consumer outside value differs from actual padding dataflow")
+
+
 def _consumer_extension_candidates(
     j: Any,
     *,
@@ -4943,7 +6143,9 @@ def _validate_consumer_path(
                     and relation.data == operation.operands[0]
                     and relation.indices == operation.operands[1]
                     and relation.axis == operation.attrs.get("axis")
-                    and _node_table(j).get(relation.node_ref) is operation
+                    and _same_canonical_node(
+                        _node_table(j).get(relation.node_ref), operation
+                    )
                 )
             ]
             if len(matching_bounds) != 1:
@@ -5113,7 +6315,7 @@ def _project_consumer_extensions(
             raise ValueError(
                 "outside dtype must equal the selected consumer operand dtype"
             )
-        if not _is_consumer_identity(
+        if not is_consumer_reduction_identity(
             str(fn), extension.outside.dtype, extension.outside.value
         ):
             raise ValueError(
@@ -5124,17 +6326,25 @@ def _project_consumer_extensions(
             raise ValueError(
                 "consumer extension requires one predicate-bearing load access"
             )
-        candidates, ambiguous = _consumer_extension_candidates(j, operand=operand)
-        selected = candidates.get(extension.access_ref)
-        if selected is None or access.tensor in ambiguous:
+        found, selected_path = _consumer_dependency_path(
+            j,
+            operand=operand,
+            access_node_ref=access.node_ref,
+            access_tensor=access.tensor,
+        )
+        if not found:
             raise ValueError(
-                "access provenance does not unambiguously reach this consumer operand"
+                "selected access provenance does not reach this consumer operand"
             )
         _validate_consumer_path(
             j,
-            selected[1],
+            selected_path,
             outside_value=extension.outside.value,
             outside_dtype=extension.outside.dtype,
+        )
+        _prove_consumer_outside_value(
+            j, operand=operand, access=access,
+            dtype=extension.outside.dtype, outside=extension.outside.value,
         )
         projected.append(
             ConsumerOutsideProjection(
@@ -5161,6 +6371,341 @@ def _project_consumer_extensions(
             projected,
             key=lambda item: (
                 item.consumer_ref, item.operand_index, item.access_ref
+            ),
+        )
+    )
+
+
+def _value_depends_on(
+    j: Any,
+    *,
+    value: str,
+    ancestor: str,
+) -> bool:
+    """Return whether one canonical J value transitively depends on another."""
+
+    producers: dict[str, IntentOp] = {}
+    for _path, operation in _canonical_rows(j):
+        for result in _result_names(operation):
+            previous = producers.setdefault(result, operation)
+            if previous is not operation:
+                raise ValueError(
+                    "functional update dependency has duplicate value producers"
+                )
+
+    memo: dict[str, bool] = {}
+    active: set[str] = set()
+
+    def visit(current: str) -> bool:
+        if current == ancestor:
+            return True
+        if current in memo:
+            return memo[current]
+        if current in active:
+            return False
+        active.add(current)
+        producer = producers.get(current)
+        result = bool(
+            producer is not None
+            and any(visit(item) for item in _operation_dependencies(producer))
+        )
+        active.remove(current)
+        memo[current] = result
+        return result
+
+    return visit(value)
+
+
+def _validate_logical_update_projection(
+    j: Any, update: Any, *, nodes: Mapping[str, IntentOp] | None = None,
+) -> IntentOp:
+    """Re-consume one exact J update without constructing missing semantics."""
+
+    if nodes is None:
+        nodes = _node_table(j)
+    operation = nodes.get(update.node_ref)
+    if operation is None or operation.op != "scatter":
+        raise ValueError("functional update must target one typed scatter node")
+    is_cas = operation.attrs.get("atomic") == "cas"
+    expected_operands = [update.base, update.indices]
+    if is_cas:
+        expected_operands.extend([update.compare, update.values])
+    else:
+        expected_operands.append(update.values)
+    if list(operation.operands) != expected_operands:
+        raise ValueError("functional update operands differ from its scatter")
+    if operation.attrs.get("mode") != "along_axis":
+        raise NotImplementedError(
+            "functional update projection requires scatter mode='along_axis'"
+        )
+    axis = operation.attrs.get("axis")
+    if (
+        isinstance(axis, bool)
+        or not isinstance(axis, int)
+        or axis != update.axis
+    ):
+        raise ValueError("functional update axis differs from its scatter")
+    expected_combiner = {
+        "none": "overwrite",
+        "add": "add",
+    }.get(operation.attrs.get("reduce"))
+    if expected_combiner is None or update.combiner.value != expected_combiner:
+        raise ValueError("functional update combiner differs from its scatter")
+    if is_cas:
+        results = _result_names(operation)
+        if (
+            update.compare is None
+            or len(results) != 2
+            or update.observed != results[1]
+        ):
+            raise ValueError(
+                "functional compare-exchange update bindings are incomplete"
+            )
+    elif update.compare is not None or update.observed is not None:
+        raise ValueError(
+            "functional non-CAS update must not declare compare/observed values"
+        )
+
+    matching_bounds = [
+        item
+        for item in j.boundary.index_bounds
+        if (
+            nodes.get(item.node_ref) is operation
+            and item.data == update.base
+            and item.indices == update.indices
+            and item.axis == update.axis
+        )
+    ]
+    if len(matching_bounds) != 1:
+        raise ValueError(
+            "functional update requires one exact typed index-bounds relation"
+        )
+
+    value_types = j_elaboration(j).value_type_by_name
+    base_type = value_types.get(update.base)
+    index_type = value_types.get(update.indices)
+    values_type = value_types.get(update.values)
+    result_names = _result_names(operation)
+    updated_type = value_types.get(result_names[0]) if result_names else None
+    if (
+        base_type is None
+        or index_type is None
+        or values_type is None
+        or not base_type.is_tensor
+        or not index_type.is_tensor
+        or not values_type.is_tensor
+        or base_type.dtype is None
+        or index_type.dtype is None
+        or values_type.dtype is None
+        or not is_closed_integer_dtype(index_type.dtype)
+        or values_type.dtype.casefold() != base_type.dtype.casefold()
+        or index_type.shape != values_type.shape
+        or update.axis < 0
+        or update.axis >= len(base_type.shape)
+        or updated_type != base_type
+    ):
+        raise ValueError(
+            "functional update target/value/index/result types are not closed"
+        )
+    return operation
+
+
+def _computed_guard_padding_predicate(j: Any, access: Any) -> PredicateProjection:
+    """Recheck a J-authored computed guard as a static axis bound.
+
+    The access predicate is literally true by the owner contract. Its physical
+    mask is the separately authored i1 relation, so the ordinary text parser
+    cannot recover the bound. This view changes no J predicate or access.
+    """
+    function = j.intent.to_json()["intent_function"]
+    parameters = [item.to_json() for item in j.signature.parameters]
+    boundary = j.boundary.to_json()
+    try:
+        ordinal, extent = validated_j_computed_guard_bound(
+            function, parameters, access.to_json(), boundary,
+            value_dimension_relations=j.to_json().get("value_dimension_relations"),
+        )
+    except (TypeError, ValueError, KeyError) as exc:
+        raise ValueError("functional_computed_guard_padding_unproved") from exc
+    parsed = j_elaboration(j).access_by_id.get(access.access_id)
+    coordinates = parsed.index.direct_coordinates if parsed is not None else None
+    if coordinates is None or ordinal >= len(coordinates):
+        raise ValueError("functional_computed_guard_padding_coordinate_unproved")
+    axis = coordinates[ordinal]
+    if not isinstance(axis, str) or _full_domains(j).get(axis) != extent:
+        raise ValueError("functional_computed_guard_padding_domain_unproved")
+    return PredicateProjection(frozenset(), frozenset(), ((axis, extent),))
+
+
+def _project_update_padding_relations(
+    j: Any,
+    *,
+    domains: Mapping[str, int | str],
+    axes_by_access: Mapping[str, tuple[str, ...]],
+    predicates_by_access: Mapping[str, PredicateProjection | None],
+    consumer_extensions: Sequence[ConsumerOutsideProjection],
+) -> tuple[UpdatePaddingProjection, ...]:
+    """Prove exactly which logical updates are downstream of masked padding.
+
+    An update is unrelated when no predicate-bearing load reaches any of its
+    authored operands.  A related update is admitted only when every
+    dependency path crosses an already-projected reduce consumer whose exact
+    outside-domain identity closes that access before the update.  Direct,
+    scan-preserved, ambiguous, or otherwise unclosed paths fail closed.
+    """
+
+    if not j.boundary.updates:
+        return ()
+    nodes = _node_table(j)
+    extensions_by_access: dict[str, list[ConsumerOutsideProjection]] = {}
+    for extension in consumer_extensions:
+        extensions_by_access.setdefault(extension.access_ref, []).append(extension)
+
+    for update in j.boundary.updates:
+        _validate_logical_update_projection(j, update)
+    projected: list[UpdatePaddingProjection] = []
+    seen: set[tuple[str, str, str, int, str]] = set()
+    masked_loads = [
+        access
+        for access in j.boundary.accesses
+        if (
+            access.kind.value == "load"
+            and access.predicate is not None
+        )
+    ]
+
+    for update in j.boundary.updates:
+        roles = {
+            "target": update.base,
+            "indices": update.indices,
+            "values": update.values,
+        }
+        if update.compare is not None:
+            roles["compare"] = update.compare
+        for access in masked_loads:
+            predicate = predicates_by_access.get(access.access_id)
+            if predicate is None or predicate.guards:
+                # A logical/runtime guard is not a static outside-domain law.
+                # If it reaches an update, no identity may be guessed for it.
+                static_domain_axes: tuple[str, ...] = ()
+            else:
+                static_domain_axes = tuple(
+                    axis for axis, _extent in predicate.upper_bounds
+                )
+            for role, operand in roles.items():
+                found, _unclosed = _consumer_dependency_cut(
+                    j, operand=operand, access=access, closed_consumers=frozenset(),
+                )
+                if not found:
+                    continue
+                if role == "compare":
+                    raise ValueError(
+                        "functional mask projection does not implement update "
+                        "padding for compare-exchange operands"
+                    )
+                matching_extensions: list[ConsumerOutsideProjection] = []
+                for extension in extensions_by_access.get(access.access_id, ()):
+                    consumer = nodes.get(extension.consumer_ref)
+                    if (
+                        consumer is None
+                        or consumer.op != "reduce"
+                        or not isinstance(consumer.result, str)
+                        or not _value_depends_on(
+                            j,
+                            value=operand,
+                            ancestor=consumer.result,
+                        )
+                    ):
+                        continue
+                    if len(consumer.operands) != 1 or extension.operand_index != 0:
+                        raise ValueError("functional update padding requires one exact reduction operand")
+                    reaches, _open = _consumer_dependency_cut(
+                        j, operand=consumer.operands[0], access=access,
+                        closed_consumers=frozenset(), axis_preserving=True,
+                    )
+                    if not reaches:
+                        raise ValueError("functional update padding relation has no exact load dependency")
+                    access_axes = parse_direct_axes(access.index_expression)
+                    eliminated = consumer.attrs.get("axes", [])
+                    if (
+                        any(type(axis) is not int or not 0 <= axis < len(access_axes) for axis in eliminated)
+                        or not set(static_domain_axes).issubset({access_axes[axis] for axis in eliminated})
+                        or j_elaboration(j).value_type_by_name.get(consumer.operands[0])
+                        != j_elaboration(j).value_type_by_name.get(access.tensor)
+                    ):
+                        raise ValueError("functional update padding axes are not eliminated by reduction")
+                    matching_extensions.append(extension)
+                if not matching_extensions or not static_domain_axes:
+                    raise ValueError(
+                        "functional mask projection does not implement update "
+                        "padding without an exact upstream outside-domain "
+                        "identity closure"
+                    )
+                access_axes = set(axes_by_access.get(access.access_id, ()))
+                if any(
+                    axis not in access_axes or domains.get(axis) != extent
+                    for axis, extent in predicate.upper_bounds
+                ):
+                    raise ValueError(
+                        "functional update padding predicate differs from its "
+                        "closed logical domain"
+                    )
+                _found, unclosed = _consumer_dependency_cut(
+                    j, operand=operand, access=access,
+                    closed_consumers=frozenset(item.consumer_ref for item in matching_extensions),
+                )
+                if unclosed:
+                    raise ValueError("functional update padding has a path bypassing its identity closure")
+                for extension in matching_extensions:
+                    consumer = nodes[extension.consumer_ref]
+                    fn = consumer.attrs.get("fn")
+                    if (
+                        not isinstance(fn, str)
+                        or not is_consumer_reduction_identity(
+                            fn, extension.dtype, extension.value
+                        )
+                    ):
+                        raise ValueError(
+                            "functional update padding has no exact consumer identity"
+                        )
+                    key = (
+                        update.node_ref,
+                        access.access_id,
+                        extension.consumer_ref,
+                        extension.operand_index,
+                        role,
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    projected.append(
+                        UpdatePaddingProjection(
+                            update_ref=update.node_ref,
+                            access_ref=access.access_id,
+                            consumer_ref=extension.consumer_ref,
+                            operand_index=extension.operand_index,
+                            update_operand_role=role,
+                            base_ref=update.base,
+                            indices_ref=update.indices,
+                            values_ref=update.values,
+                            update_axis=update.axis,
+                            combiner=update.combiner.value,
+                            domain_axes=static_domain_axes,
+                            outside_dtype=extension.dtype,
+                            outside_value=extension.value,
+                            identity_law=extension.identity_law,
+                        )
+                    )
+
+    return tuple(
+        sorted(
+            projected,
+            key=lambda item: (
+                item.update_ref,
+                item.access_ref,
+                item.consumer_ref,
+                item.operand_index,
+                item.update_operand_role,
             ),
         )
     )
@@ -5234,6 +6779,57 @@ def _validate_reduction_padding_closure(
             raise NotImplementedError(
                 f"functional projection requires neutral {fn!r} identity"
             )
+
+
+def validate_padding_authority_before_fallback(j: Any) -> None:
+    """A capability fallback cannot turn an unproved padding law into truth.
+
+    This reuses J-only obligations; it grants neither an output partition nor
+    Source issuance. Dynamic/runtime-only predicates remain fail-closed here.
+    """
+    j = elaborate_j(j)
+    masked_loads = [item for item in j.boundary.accesses if item.kind.value == "load" and item.predicate is not None]
+    if not masked_loads:
+        return
+    try:
+        domains = _full_domains(j)
+        guards = _logical_boolean_guards(j)
+        parsed = j_elaboration(j).access_by_id
+        predicates: dict[str, PredicateProjection | None] = {}
+        axes: dict[str, tuple[str, ...]] = {}
+        computed_guards = {
+            item.access_ref for item in j.boundary.access_guard_relations
+        }
+        for access in masked_loads:
+            try:
+                predicates[access.access_id] = (
+                    _computed_guard_padding_predicate(j, access)
+                    if access.access_id in computed_guards
+                    else _j_predicate_projection(
+                        j, parsed[access.access_id].predicate,
+                        logical_guards=guards,
+                    )
+                )
+                axes[access.access_id] = parse_direct_axes(access.index_expression)
+            except NotImplementedError:
+                predicates[access.access_id] = None
+                axes[access.access_id] = ()
+        padding, consumer, requirements, affected = _reduction_padding_analysis(
+            j, predicate_overrides=predicates,
+        )
+        _validate_reduction_padding_closure(
+            j, has_physical_padding=True, padding_issues=padding,
+            consumer_issues=consumer, affected_consumers=affected,
+        )
+        extensions = _project_consumer_extensions(j, requirements)
+        if not j.boundary.updates:
+            return
+        _project_update_padding_relations(
+            j, domains=domains, axes_by_access=axes,
+            predicates_by_access=predicates, consumer_extensions=extensions,
+        )
+    except NotImplementedError as exc:
+        raise ValueError("functional_padding_proof_required_before_fallback") from exc
 
 
 def _structured_loop_boundary_refs(
@@ -5363,10 +6959,6 @@ def _project_functional_boundary(
         access.predicate is not None or access.fill_value is not None
         for access in boundary.accesses
     )
-    if has_predicate_or_fill and boundary.updates:
-        raise NotImplementedError(
-            "functional mask projection does not implement update padding"
-        )
 
     nodes = _node_table(j)
     effect_if_arm_nodes = _effect_if_arm_node_refs(j)
@@ -5419,6 +7011,12 @@ def _project_functional_boundary(
         prior = paired_store_values.setdefault(store_access_id, poststate)
         if prior != poststate:
             raise ValueError("functional inout store has conflicting reload values")
+    logical_update_mapping_candidates = _logical_update_mapping_candidates(
+        j,
+        returns=returns,
+        mappings=mappings,
+        paired_store_values=paired_store_values,
+    )
     access_ids = [item.access_id for item in boundary.accesses]
     if len(access_ids) != len(set(access_ids)):
         raise ValueError("functional boundary has duplicate access ids")
@@ -5443,6 +7041,7 @@ def _project_functional_boundary(
     }
     whole_load_tensors: set[str] = set()
     constant_gathers: list[ConstantGatherProjection] = []
+    node_less_constant_loads_by_tensor: dict[str, list[Any]] = {}
     index_bounded_gathers: list[IndexBoundedGatherProjection] = []
     mixed_radix_accesses: list[MixedRadixAccessProjection] = []
     constant_gather_edges: dict[str, dict[tuple[str, int], str]] = {}
@@ -5470,6 +7069,36 @@ def _project_functional_boundary(
     parsed_accesses = elaboration.access_by_id
     value_types = elaboration.value_type_by_name
     predicates_are_domain_total = access_predicates_are_logical_domain_total(j)
+    # A predicate-bearing load feeding a reduce/scan may obtain its physical
+    # outside-domain value from the exact per-consumer extension rather than
+    # from access.fill_value.  TypeCheck already requires those rows, but the
+    # RefEval projection used to reject the load before it reached the shared
+    # extension validator below.  Admit only access ids whose complete static
+    # requirement set is present verbatim; _project_consumer_extensions still
+    # validates the consumer edge, local tile axis, dtype, two-sided identity,
+    # and dependency path before the projection can execute.
+    consumer_extension_requirements = functional_consumer_extension_requirements(
+        j
+    )
+    declared_consumer_extensions = {
+        (item.consumer_ref, item.operand_index, item.access_ref)
+        for item in boundary.consumer_extensions
+    }
+    requirements_by_access: dict[str, set[tuple[str, int, str]]] = {}
+    for requirement in consumer_extension_requirements:
+        requirements_by_access.setdefault(requirement.access_ref, set()).add(
+            (
+                requirement.consumer_ref,
+                requirement.operand_index,
+                requirement.access_ref,
+            )
+        )
+    consumer_extension_covered_accesses = {
+        access_ref
+        for access_ref, requirements in requirements_by_access.items()
+        if requirements
+        and requirements.issubset(declared_consumer_extensions)
+    }
     expected_effect = {"load": "read", "store": "write"}
     for access in boundary.accesses:
         if access.kind.value == "update":
@@ -5584,6 +7213,26 @@ def _project_functional_boundary(
         )
         axis_refs_by_access[access.access_id] = axes
         coordinates_by_access[access.access_id] = coordinates
+        is_node_less_constant_slice = bool(
+            access.kind.value == "load"
+            and access.node_ref is None
+            and any(
+                isinstance(coordinate, int)
+                and not (
+                    coordinate == 0
+                    and _is_direct_unit_extent(
+                        extent, direct_unit_dimensions
+                    )
+                )
+                for coordinate, extent in zip(
+                    coordinates, tensor.shape, strict=True
+                )
+            )
+        )
+        if is_node_less_constant_slice:
+            node_less_constant_loads_by_tensor.setdefault(
+                access.tensor, []
+            ).append(access)
         mixed_tensor_axes = {
             item.tensor_axis
             for item in (
@@ -5744,6 +7393,8 @@ def _project_functional_boundary(
             ):
                 if (
                     bounded_gather_projection is None
+                    and access.access_id
+                    not in consumer_extension_covered_accesses
                     and not predicate_dominated_pointwise_load(
                         j, access.access_id
                     )
@@ -5806,6 +7457,7 @@ def _project_functional_boundary(
                     len(loads_by_tensor[access.tensor]) != 1
                     and poststate is None
                     and not has_authored_consumers
+                    and not is_node_less_constant_slice
                 ):
                     raise ValueError(
                         "functional node-less input load must be the sole load "
@@ -5824,7 +7476,7 @@ def _project_functional_boundary(
                         "value dataflow"
                     )
             if constant_gather is not None:
-                if predicate is not None:
+                if predicate is not None or access.access_id in projected_guarded_load_accesses:
                     raise NotImplementedError(
                         "functional constant gather load requires no access predicate"
                     )
@@ -5839,7 +7491,7 @@ def _project_functional_boundary(
                     )
                 by_edge[edge] = access.access_id
                 constant_gathers.append(constant_gather)
-            elif poststate is None:
+            elif poststate is None and not is_node_less_constant_slice:
                 whole_load_tensors.add(access.tensor)
             # A validated post-state reload still covers the logical inout
             # tensor at the boundary; it is excluded only from the whole-input
@@ -5856,10 +7508,18 @@ def _project_functional_boundary(
         observable_value = (
             paired_value if paired_value is not None else final_observable_value
         )
+        assembly_operand = _concat_assembly_operand_for_store(
+            j,
+            output=access.tensor,
+            access=access,
+            observable_value=final_observable_value,
+        )
+        is_concat_assembly_store = assembly_operand is not None
         mapping_matches_store = (
             mapping is None
             or mapping.node_ref is None
             or nodes.get(mapping.node_ref) is op
+            or is_concat_assembly_store
         )
         layout_poststate = (
             paired_value is not None
@@ -5877,18 +7537,24 @@ def _project_functional_boundary(
         is_observable_store = paired_value is None or (
             paired_value == final_observable_value and mapping_matches_store
         ) or layout_poststate
+        logical_update_candidate = logical_update_mapping_candidates.get(
+            access.tensor
+        )
         if mapping is not None:
             if (
                 mapping.node_ref is not None
                 and nodes.get(mapping.node_ref) is not op
                 and paired_value is None
                 and access.access_id not in projected_guarded_store_accesses
+                and logical_update_candidate is None
+                and not is_concat_assembly_store
             ):
                 raise ValueError("functional store disagrees with output mapping")
         if op is not None:
             if (
                 observable_value not in _result_names(op)
                 and access.access_id not in projected_guarded_store_accesses
+                and not is_concat_assembly_store
             ):
                 update = next(
                     (
@@ -5929,6 +7595,11 @@ def _project_functional_boundary(
                 if dead_exact_overwrite:
                     pass
                 elif len(carry_results) == 1:
+                    pass
+                elif logical_update_candidate is not None and paired_value is None:
+                    # This access remains rejected unless the post-pass proves
+                    # that every physical store is one exact typed slice of the
+                    # candidate update's complete output partition.
                     pass
                 elif access.node_ref in effect_if_arm_nodes:
                     produced = _result_names(op)
@@ -5982,6 +7653,87 @@ def _project_functional_boundary(
 
     if set(effects_by_access) != set(access_ids):
         raise ValueError("functional boundary has effect for unknown access")
+    # Resolve actual padding dataflow before consuming deferred output mapping
+    # obligations. Both scalar E_J and lowering use this same projection.
+    load_accesses = {
+        access.access_id: access
+        for access in boundary.accesses if access.kind.value == "load"
+    }
+    computed_guard_loads = {
+        item.access_ref for item in boundary.access_guard_relations
+        if item.access_ref in load_accesses
+    }
+    static_padding_predicates = dict(predicates)
+    update_padding_predicates = dict(predicates)
+    for access in load_accesses.values():
+        if access.access_id not in computed_guard_loads:
+            continue
+        static = _computed_guard_padding_predicate(j, access)
+        static_padding_predicates[access.access_id] = static
+        update_padding_predicates[access.access_id] = (
+            _resolve_runtime_predicate_bounds(
+                static, runtime_logical_dimensions,
+            )
+        )
+    (
+        padding_issues,
+        consumer_issues,
+        extension_requirements,
+        affected_consumers,
+    ) = _reduction_padding_analysis(
+        j, predicate_overrides=static_padding_predicates,
+    )
+    _validate_reduction_padding_closure(
+        j,
+        has_physical_padding=has_predicate_or_fill,
+        padding_issues=padding_issues,
+        consumer_issues=consumer_issues,
+        affected_consumers=affected_consumers,
+    )
+    consumer_extensions = _project_consumer_extensions(j, extension_requirements)
+    update_padding_relations = _project_update_padding_relations(
+        j,
+        domains=domains,
+        axes_by_access=axis_refs_by_access,
+        predicates_by_access=update_padding_predicates,
+        consumer_extensions=consumer_extensions,
+    )
+    logical_update_store_partitions: list[
+        LogicalUpdateStorePartitionProjection
+    ] = []
+    for output, logical_update in logical_update_mapping_candidates.items():
+        mapping = mappings[output]
+        try:
+            partition = _project_logical_update_store_partition(
+                j,
+                output=output,
+                stores=stores_by_output[output],
+                all_output_stores=tuple(
+                    access
+                    for access in boundary.accesses
+                    if access.kind.value == "store" and access.tensor == output
+                ),
+                coordinates_by_access=coordinates_by_access,
+                predicates=predicates,
+                effects_by_access=effects_by_access,
+                observable_value=returns[output],
+                mapping=mapping,
+                update=logical_update,
+                domains=domains,
+                direct_unit_dimensions=direct_unit_dimensions,
+                runtime_logical_dimensions=runtime_logical_dimensions,
+            )
+        except NotImplementedError as exc:
+            # Gate2 may route generic capability failures to another J
+            # executor.  A deferred store/output mismatch is instead a
+            # mandatory proof obligation and must remain fail-closed.
+            raise ValueError(
+                "functional logical-update store partition is not closed"
+            ) from exc
+        logical_update_store_partitions.append(partition)
+    logical_update_partition_outputs = {
+        item.output for item in logical_update_store_partitions
+    }
     canonical_output_input_refs = {
         item.value
         for item in j_elaboration(j).output_bindings
@@ -6011,6 +7763,18 @@ def _project_functional_boundary(
         raise NotImplementedError(
             "functional boundary must cover every live logical tensor input"
         )
+    constant_load_partitions = tuple(
+        _project_constant_load_partition(
+            j,
+            tensor_name=tensor,
+            loads=loads,
+            all_tensor_loads=loads_by_tensor.get(tensor, ()),
+            coordinates_by_access=coordinates_by_access,
+            predicates=predicates,
+            direct_unit_dimensions=direct_unit_dimensions,
+        )
+        for tensor, loads in sorted(node_less_constant_loads_by_tensor.items())
+    )
     canonical_nodes = _canonical_nodes(j)
     for tensor, matched_edges in constant_gather_edges.items():
         if tensor in whole_load_tensors:
@@ -6030,6 +7794,8 @@ def _project_functional_boundary(
     direct_store_partitions: list[DirectStorePartitionProjection] = []
     for output, stores in stores_by_output.items():
         if not boundary.accesses:
+            continue
+        if output in logical_update_partition_outputs:
             continue
         if len(stores) == 1:
             coordinates = coordinates_by_access[stores[0].access_id]
@@ -6062,6 +7828,9 @@ def _project_functional_boundary(
             output_shape=tensors[output].shape,
             conditional_accesses=frozenset(
                 item.access_id for item in conditional_effect_stores
+            ),
+            guarded_accesses=frozenset(
+                item.access_ref for item in boundary.access_guard_relations
             ),
             arm_memberships=effect_if_arm_memberships,
             direct_unit_dimensions=direct_unit_dimensions,
@@ -6097,22 +7866,6 @@ def _project_functional_boundary(
     # semantics remain checked per access and per consumer below.
 
     _validate_broadcast_closure(j, broadcast_axes)
-    (
-        padding_issues,
-        consumer_issues,
-        extension_requirements,
-        affected_consumers,
-    ) = _reduction_padding_analysis(j, predicate_overrides=predicates)
-    _validate_reduction_padding_closure(
-        j,
-        has_physical_padding=has_predicate_or_fill,
-        padding_issues=padding_issues,
-        consumer_issues=consumer_issues,
-        affected_consumers=affected_consumers,
-    )
-    consumer_extensions = _project_consumer_extensions(
-        j, extension_requirements
-    )
 
     # Canonical elaboration owns the one complete output-binding rule:
     # IntentFunction.returns is authoritative for every output.  Boundary
@@ -6274,11 +8027,16 @@ def _project_functional_boundary(
         ),
         runtime_predicate_proofs=tuple(runtime_predicate_proofs),
         consumer_extensions=consumer_extensions,
+        update_padding_relations=update_padding_relations,
         value_dimension_relations=value_dimension_pairs,
         dimension_relations=dimension_relation_tuples,
         constant_gathers=tuple(constant_gathers),
+        constant_load_partitions=constant_load_partitions,
         concat_store_partitions=tuple(concat_store_partitions),
         direct_store_partitions=tuple(direct_store_partitions),
+        logical_update_store_partitions=tuple(
+            logical_update_store_partitions
+        ),
         access_guard_relations=access_guard_relations,
         mixed_radix_accesses=tuple(mixed_radix_accesses),
         context_domains=context_domains,
@@ -6383,18 +8141,23 @@ __all__ = [
     "AccessGuardProjection",
     "ConsumerExtensionRequirement",
     "ConstantGatherProjection",
+    "ConstantLoadPartitionProjection",
+    "ConstantLoadSliceProjection",
     "ConcatStorePartitionProjection",
     "ConcatStoreSliceProjection",
     "ConditionalEffectStoreProjection",
     "IndexBoundedGatherProjection",
     "DirectStorePartitionProjection",
     "DirectStoreSliceProjection",
+    "LogicalUpdateStorePartitionProjection",
+    "LogicalUpdateStoreSliceProjection",
     "FunctionalBoundaryClosureIssue",
     "FunctionalBoundaryProjection",
     "complete_conditional_effect_outputs",
     "ConsumerOutsideProjection",
     "PredicateProjection",
     "RuntimePredicateProofReceipt",
+    "UpdatePaddingProjection",
     "functional_boundary_closure_issues",
     "functional_consumer_extension_requirements",
     "functional_reduction_padding_issues",

@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
-from itertools import combinations
 import json
-import math
 import re
 from typing import Any, Mapping, Sequence
 
@@ -31,12 +29,29 @@ from intentir.ir.canonical_construction import (
     CANONICAL_J_WIRE_FIELDS,
     CANONICAL_PI_REQUIRED_FIELDS,
     CANONICAL_SOURCE_OWNED_HANDLE_PREFIXES,
+    SOURCE_OWNER_TOKEN_PATTERN,
+    is_canonical_ordinal,
+    source_host_launch_contract_receipt,
+    source_fill_json_literal,
+    tensor_owner_digest,
+    unique_exact_rank_insertion_projection,
 )
 from intentir.ir.intent_op_contract import (
     CANONICAL_DTYPES,
     CANONICAL_J_OPS,
     STRUCTURED_INTENT_OPS,
     intent_op_json_schema,
+)
+from intentir.ir.source_projection_contracts import (
+    PROVIDER_DIMENSION_EXTENT_RULE,
+    build_source_semantic_obligations,
+    owner_broadcast_requirements,
+    provider_dimension_alias_map,
+    provider_shape_from_canonical,
+    validate_source_semantic_obligations,
+)
+from intentir.extraction.lifters.source_store_partition import (
+    validate_source_store_partition_assembly,
 )
 from intentir.verify.gate1.model import (
     Gate1Artifact,
@@ -58,36 +73,9 @@ def unique_access_guard_projection_axes(
     predicate_shape: Sequence[str | int],
     target_shape: Sequence[str | int],
 ) -> tuple[int, ...] | None:
-    """Return the sole rank-insertion projection for one access guard.
+    """Compatibility name for the canonical exact guard projection."""
 
-    This is the shared provider-preflight/canonical-constructor predicate
-    shape rule.  It compares already declared symbolic extents exactly and
-    never broadcasts by concrete runtime value or chooses between multiple
-    legal axis sets.
-    """
-
-    if len(predicate_shape) > len(target_shape):
-        return None
-    matches = [
-        inserted_axes
-        for inserted_axes in combinations(
-            range(len(target_shape)),
-            len(target_shape) - len(predicate_shape),
-        )
-        if all(
-            predicate_extent == target_shape[axis]
-            for predicate_extent, axis in zip(
-                predicate_shape,
-                (
-                    axis
-                    for axis in range(len(target_shape))
-                    if axis not in inserted_axes
-                ),
-                strict=True,
-            )
-        )
-    ]
-    return matches[0] if len(matches) == 1 else None
+    return unique_exact_rank_insertion_projection(predicate_shape, target_shape)
 
 
 # This is the only provider-authored projection of a candidate.  The complete
@@ -757,13 +745,18 @@ def _boundary_schema() -> dict[str, Any]:
         {
             "node_ref": _STRING,
             "operand": _STRING,
-            "axes": _array(_INT_OR_STRING),
+            "axes": _array({"type": "integer"}),
         },
         ("node_ref", "operand", "axes"),
         description=(
             "Implicit operand-broadcast annotation for one map_binary or "
-            "select node only. node_ref must name that node and operand must "
-            "be one of its operands. Never emit a boundary.broadcasts entry "
+            "select node only. axes contains JSON integer TARGET-axis "
+            "positions, not dimension labels or the "
+            "source-axis positions in a Source owner outline; scalar-to-tensor "
+            "owner broadcasts still require a relation row, while [] and "
+            "explicit target axes share the scalar empty input map. node_ref "
+            "must name that node and operand must be one of its operands. "
+            "Never emit a boundary.broadcasts entry "
             "for an explicit broadcast_in_dim node, reshape, transpose, or "
             "any other operation: the explicit operation's own attributes "
             "already carry that transformation."
@@ -890,9 +883,9 @@ def _boundary_schema() -> dict[str, Any]:
         description=(
             "One LLM-authored Layer-B relation from a predicate-bearing load "
             "access to one reduce/scan operand. The referenced BoundaryAccess "
-            "continues to own the predicate; no predicate is promoted to "
-            "Layer-A SSA. The relation supports only two-sided sum/max/min "
-            "identities."
+            "owns the predicate. Existing typed fill-to-operand dataflow must "
+            "prove the two-sided identity on every branch; a declaration alone "
+            "grants no authority."
         ),
     )
     index_bounds = _closed_object(
@@ -1800,11 +1793,26 @@ def _canonical_empty_for_schema(value: Any, path: str) -> Any:
 # remain available through one bounded schema lookup.
 _FIRST_TURN_BOUNDARY_ROWS = (
     "accesses",
+    # Responses has no schema_lookup action. Owner authoring requires both
+    # rows on its first submission, including the integer `axes` leaf; a
+    # prompt-only description left that leaf outside the mounted wire.
+    "broadcasts",
+    "access_guard_relations",
     "effects",
     "index_bounds",
     "output_mappings",
+    # consumer_extensions.tile_axis is checked against the matching
+    # reduce/scan boundary contract. Direct Responses therefore needs the
+    # canonical reduction row schema in the same first-turn projection; an
+    # isolated consumer-extension schema cannot express its join authority.
+    "reductions",
     "updates",
     "result_relations",
+    # Direct Responses has no schema_lookup action.  A guarded load feeding a
+    # reduce/scan therefore needs this exact row schema in the first request;
+    # the short semantic_required route alone cannot convey operand_index,
+    # tile_axis, the typed outside value, and the closed identity law.
+    "consumer_extensions",
 )
 _FIRST_TURN_OPERATION_NAMES = (
     "const",
@@ -1882,17 +1890,45 @@ def _compact_schema_node(
     value: Any,
     *,
     depth: int = 0,
+    definitions: Mapping[str, Any] | None = None,
+    _resolving_refs: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Keep high-signal machine constraints for a bounded MCP hint.
 
     This is a projection of the authoritative schema, not a second operation
     schema.  Recursive branches are capped so exact enum/union/closed-object
     constraints remain visible without copying the full recursive IntentOp
-    definition into every first-turn packet.
+    definition into every first-turn packet.  Local ``$ref`` leaves are kept
+    visible and, when their definition is available, include one compact
+    resolved view.  Dropping a reference used to turn
+    ``const.attrs.value`` into ``{}`` on the provider wire even though the
+    ingress validator still enforced the recursive ``const_literal`` contract.
+    That made the canonical graph contract internally inconsistent: an Agent
+    could not learn the accepted value domain from MCP, then received a
+    deterministic rejection at the write boundary.  A recursive reference is
+    intentionally left as a reference after one expansion rather than being
+    guessed or truncated into a permissive value.
     """
 
     if not isinstance(value, dict):
         return {}
+    reference = value.get("$ref")
+    if isinstance(reference, str):
+        result: dict[str, Any] = {"$ref": reference}
+        if reference.startswith("#/$defs/") and isinstance(definitions, Mapping):
+            name = reference[len("#/$defs/") :]
+            target = definitions.get(name)
+            if isinstance(target, Mapping):
+                if name in _resolving_refs:
+                    result["recursive"] = True
+                else:
+                    result["resolved"] = _compact_schema_node(
+                        target,
+                        depth=depth,
+                        definitions=definitions,
+                        _resolving_refs=(*_resolving_refs, name),
+                    )
+        return result
     result: dict[str, Any] = {}
     for key in (
         "type",
@@ -1915,24 +1951,44 @@ def _compact_schema_node(
         properties = value.get("properties")
         if isinstance(properties, dict):
             result["properties"] = {
-                key: _compact_schema_node(item, depth=depth + 1)
+                key: _compact_schema_node(
+                    item,
+                    depth=depth + 1,
+                    definitions=definitions,
+                    _resolving_refs=_resolving_refs,
+                )
                 for key, item in properties.items()
             }
         items = value.get("items")
         if isinstance(items, dict):
-            result["items"] = _compact_schema_node(items, depth=depth + 1)
+            result["items"] = _compact_schema_node(
+                items,
+                depth=depth + 1,
+                definitions=definitions,
+                _resolving_refs=_resolving_refs,
+            )
         elif items is False:
             result["items"] = False
         for key in ("oneOf", "anyOf", "allOf"):
             branches = value.get(key)
             if isinstance(branches, list):
                 result[key] = [
-                    _compact_schema_node(item, depth=depth + 1)
+                    _compact_schema_node(
+                        item,
+                        depth=depth + 1,
+                        definitions=definitions,
+                        _resolving_refs=_resolving_refs,
+                    )
                     for item in branches
                 ]
         negated = value.get("not")
         if isinstance(negated, dict):
-            result["not"] = _compact_schema_node(negated, depth=depth + 1)
+            result["not"] = _compact_schema_node(
+                negated,
+                depth=depth + 1,
+                definitions=definitions,
+                _resolving_refs=_resolving_refs,
+            )
     return result
 
 
@@ -1950,6 +2006,18 @@ def _compact_operation_contracts(
     """
 
     contracts: dict[str, Any] = {}
+    definitions = operation_schema.get("$defs")
+    if not isinstance(definitions, Mapping):
+        definitions = {}
+    else:
+        definitions = dict(definitions)
+    # ``intent_op_json_schema`` owns ``const_literal`` locally, while its
+    # recursive structured branches refer to the enclosing document's
+    # ``#/$defs/intent_op``.  The mounted artifact adds that outer definition
+    # after obtaining this operation schema.  Make the compact projection
+    # resolve the same recursive name without inventing a second operation
+    # catalog; recursive occurrences are stopped by ``_resolving_refs``.
+    definitions.setdefault("intent_op", operation_schema)
     common_fields: list[str] = []
     common_required: list[str] = []
     common_properties: dict[str, Any] = {}
@@ -2046,7 +2114,10 @@ def _compact_operation_contracts(
                 "required": required,
                 "closed": True,
                 "properties": {
-                    field: _compact_schema_node(value)
+                    field: _compact_schema_node(
+                        value,
+                        definitions=definitions,
+                    )
                     for field, value in wire_properties.items()
                     if field in fields
                 },
@@ -2072,10 +2143,16 @@ def _compact_operation_contracts(
         attrs = properties.get("attrs")
         if isinstance(attrs, dict):
             item["attrs_required"] = list(attrs.get("required", []))
-            item["attrs"] = _compact_schema_node(attrs)
+            item["attrs"] = _compact_schema_node(
+                attrs,
+                definitions=definitions,
+            )
         for field in ("predicate", "result", "type", "trip", "yield"):
             if field in properties:
-                item[field] = _compact_schema_node(properties[field])
+                item[field] = _compact_schema_node(
+                    properties[field],
+                    definitions=definitions,
+                )
         contracts[name] = item
     return contracts
 
@@ -2559,18 +2636,10 @@ def _provider_output_construction(
     canonical dimension outside the declared alias set.
     """
 
-    aliases: dict[str, str] = {}
-    for row in provider_dimension_aliases:
-        local = row.get("local") if isinstance(row, Mapping) else None
-        ordinal = row.get("ordinal") if isinstance(row, Mapping) else None
-        if (
-            not isinstance(local, str)
-            or not isinstance(ordinal, int)
-            or ordinal < 0
-            or local != f"dim{ordinal}"
-        ):
-            raise ValueError("provider output construction lacks dense dimension aliases")
-        aliases[f"x{ordinal}"] = local
+    try:
+        aliases = provider_dimension_alias_map(list(provider_dimension_aliases))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("provider output construction lacks dense dimension aliases") from exc
 
     projection: list[dict[str, Any]] = []
     for raw_row in output_construction:
@@ -2581,17 +2650,7 @@ def _provider_output_construction(
         shape = output_type.get("shape") if isinstance(output_type, Mapping) else None
         if not isinstance(shape, list):
             raise ValueError("output construction has no closed logical type")
-        rewritten_shape: list[Any] = []
-        for extent in shape:
-            if isinstance(extent, str) and re.fullmatch(r"x[0-9]+", extent):
-                alias = aliases.get(extent)
-                if alias is None:
-                    raise ValueError(
-                        "provider output construction references an undeclared dimension"
-                    )
-                rewritten_shape.append(alias)
-            else:
-                rewritten_shape.append(copy.deepcopy(extent))
+        rewritten_shape = provider_shape_from_canonical(shape, aliases)
         row["output_type"] = {
             **dict(output_type),
             "shape": rewritten_shape,
@@ -2618,13 +2677,10 @@ def _semantic_access_wire_slot(row: Mapping[str, Any]) -> dict[str, Any]:
     index = row.get("index")
     dimensions = index.get("dimensions") if isinstance(index, Mapping) else None
     if (
-        isinstance(ordinal, bool)
-        or not isinstance(ordinal, int)
-        or ordinal < 0
+        not is_canonical_ordinal(ordinal)
         or label != f"access{ordinal}"
         or kind not in {"load", "store", "update"}
         or not isinstance(dimensions, list)
-        or not dimensions
         or any(not isinstance(item, str) or not item for item in dimensions)
     ):
         raise ValueError("canonical semantic transfer access row is malformed")
@@ -2662,8 +2718,18 @@ def _semantic_access_wire_slot(row: Mapping[str, Any]) -> dict[str, Any]:
     provider_owned_expression_fields = ["index_expression"]
     provider_owned_relations: dict[str, dict[str, str]] = {}
     authorizations = row.get("semantic_authorizations")
-    owner_authorization = (
-        authorizations.get("owner") if isinstance(authorizations, Mapping) else None
+    owner = authorizations.get("owner") if isinstance(authorizations, Mapping) else None
+    # ``update`` is a physical write/update occurrence just like ``store``.
+    # The Source authoring preflight and canonical access/effect construction
+    # both require an exact owner for it; omitting the node/effect relation
+    # here would leave no provider-wire slot in which that already-proven
+    # obligation could be declared.  Keep the same narrow condition for both
+    # write kinds rather than letting a later checker reject a row that the
+    # projection made impossible to author.
+    exact_owner = (
+        kind in {"store", "update"}
+        and isinstance(owner, Mapping)
+        and isinstance(owner.get("operation_family"), str)
     )
     guard_authorization = (
         authorizations.get("computed_guard")
@@ -2671,10 +2737,6 @@ def _semantic_access_wire_slot(row: Mapping[str, Any]) -> dict[str, Any]:
     )
     access_view_authorization = (
         authorizations.get("access_view") if isinstance(authorizations, Mapping) else None
-    )
-    owner_token = (
-        owner_authorization.get("token")
-        if isinstance(owner_authorization, Mapping) else None
     )
     guard_token = (
         guard_authorization.get("token")
@@ -2684,7 +2746,7 @@ def _semantic_access_wire_slot(row: Mapping[str, Any]) -> dict[str, Any]:
         access_view_authorization.get("token")
         if isinstance(access_view_authorization, Mapping) else None
     )
-    if kind == "load" and isinstance(access_view_token, str):
+    if (kind == "load" or exact_owner) and isinstance(access_view_token, str):
         # Multiple exact physical Source loads may read one logical input with
         # different views. This receipt identifies the source occurrence only;
         # it never authorizes a consumer node or a provider-authored view.
@@ -2697,23 +2759,14 @@ def _semantic_access_wire_slot(row: Mapping[str, Any]) -> dict[str, Any]:
         required.append("semantic_guard_authorization")
     predicate = row.get("predicate")
     if row.get("masked") is True and predicate is None:
-        predicate = "<provider_local_boolean_result>"
+        predicate = "<provider_authored_predicate>"
         provider_owned_fields.append("predicate")
-        if kind in {"load", "store"} and isinstance(owner_token, str):
-            # A computed access guard is consumed only at one provider-selected
-            # Layer-A operation already authorized for this exact Source row.
-            # For an output-only guarded store that operation remains the
-            # Source-attested value producer; it is not rewritten into an
-            # invented inout/select merge. Ordinary access rows retain their
-            # explicit null owner template and are never promoted to a guessed
-            # operation.
-            required.append("node_ref")
-            required.append("semantic_owner_authorization")
-            provider_owned_fields.extend(("node_ref", "effect_node_ref"))
-            provider_owned_relations["effect_node_ref"] = {
-                "must_equal": "node_ref",
-                "reference": "provider_local_operation_id",
-            }
+    if exact_owner:
+        required.append("node_ref")
+        provider_owned_fields.extend(("node_ref", "effect_node_ref"))
+        provider_owned_relations["effect_node_ref"] = {
+            "must_equal": "node_ref", "reference": "provider_local_operation_id",
+        }
     # ``tensor`` can still be unknown while the compiler-side occurrence
     # binder is completing.  That is a normal fail-closed Source preparation
     # state, not a malformed wire.  It remains explicit so no consumer
@@ -2732,27 +2785,17 @@ def _semantic_access_wire_slot(row: Mapping[str, Any]) -> dict[str, Any]:
         # must never infer a missing kind/target/node owner from the access.
         "effect_kind": effect_kind,
         "effect_target": tensor,
-        "effect_node_ref": (
-            "<provider_local_consumer_operation_id>"
-            if "effect_node_ref" in provider_owned_fields
-            else None
-        ),
+        "effect_node_ref": "<provider_local_consumer_operation_id>" if exact_owner else None,
+        **({
+            "node_ref": "<provider_local_consumer_operation_id>",
+        } if exact_owner else {}),
         **(
             {"semantic_access_authorization": access_view_token}
             if "semantic_access_authorization" in required else {}
         ),
         **(
-            {"semantic_owner_authorization": owner_token}
-            if "semantic_owner_authorization" in required else {}
-        ),
-        **(
             {"semantic_guard_authorization": guard_token}
             if isinstance(guard_token, str) else {}
-        ),
-        **(
-            {"node_ref": "<provider_local_consumer_operation_id>"}
-            if "node_ref" in provider_owned_fields
-            else {}
         ),
     }
     return {
@@ -2767,7 +2810,7 @@ def _semantic_access_wire_slot(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _provider_source_fill_literal(value: object) -> bool | int | float | str | None:
+def _provider_source_fill_literal(value: object) -> int | float | str | None:
     """Project one closed Source ``other=`` scalar onto JSON J spelling.
 
     Transfer occurrences retain a lexical Source expression so the ledger can
@@ -2778,27 +2821,7 @@ def _provider_source_fill_literal(value: object) -> bool | int | float | str | N
     never evaluates an expression or fabricates a fill.
     """
 
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if text in {"true", "false"}:
-        return text == "true"
-    if re.fullmatch(
-        r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?",
-        text,
-    ) is None:
-        # ``-inf`` is a closed J spelling but must be authored rather than
-        # ingress-filled; preserve it as the only non-finite explicit value.
-        return "-inf" if text in {"-inf", "NEG_INF"} else None
-    try:
-        if "." not in text and "e" not in text.lower():
-            return int(text)
-        number = float(text)
-    except ValueError:
-        return None
-    if not math.isfinite(number):
-        return None
-    return int(number) if number.is_integer() else number
+    return source_fill_json_literal(value)
 
 
 def _logical_transfer_projection(construction: Any) -> dict[str, Any]:
@@ -2824,8 +2847,14 @@ def _logical_transfer_projection(construction: Any) -> dict[str, Any]:
     declared_dimensions = tuple(allocator.declared("x"))
     if any(re.fullmatch(r"x[0-9]+", item) is None for item in declared_dimensions):
         raise ValueError("canonical allocator dimensions are malformed")
-    dimensions = [f"dim{index}" for index in range(len(declared_dimensions))]
-    provider_dimension_for_canonical = dict(zip(declared_dimensions, dimensions, strict=True))
+    provider_dimension_for_canonical = provider_dimension_alias_map(
+        [
+            {"ordinal": index, "local": f"dim{index}"}
+            for index, _handle in enumerate(declared_dimensions)
+        ],
+        canonical_dimensions=declared_dimensions,
+    )
+    dimensions = list(provider_dimension_for_canonical.values())
     dimension_for_token = {
         coordinate: dimensions[index]
         for index, (coordinate, _extent) in enumerate(
@@ -2872,10 +2901,8 @@ def _logical_transfer_projection(construction: Any) -> dict[str, Any]:
                 raise ValueError(
                     "canonical Source tensor shape references an undeclared dimension"
                 ) from exc
-            # Rank-zero logical scalars share this declaration table but can
-            # never be a memory-transfer owner.  Retain their empty shape for
-            # ABI validation; the occurrence-specific check below rejects one
-            # if it is ever presented as an indexed access.
+            # Empty shape is valid for a physical rank-zero tensor. The exact
+            # Source pointer binding below distinguishes it from an ABI scalar.
             if any(not item for item in provider_shape):
                 raise ValueError("canonical Source tensor shape is malformed")
             previous = tensor_dimensions.get(name)
@@ -2946,8 +2973,17 @@ def _logical_transfer_projection(construction: Any) -> dict[str, Any]:
     binding_by_ordinal = {
         row.get("ordinal"): row
         for row in getattr(ledger, "bindings", ())
-        if isinstance(row, Mapping) and isinstance(row.get("ordinal"), int)
+        if isinstance(row, Mapping) and is_canonical_ordinal(row.get("ordinal"))
     }
+
+    # Keep one compact receipt beside the semantic transfer rows.  It binds
+    # this projection to the exact host launch/ABI contract already frozen in
+    # SourceFacts, while keeping physical ABI names and launch expressions out
+    # of the provider authoring surface.
+    host_launch_receipt = source_host_launch_contract_receipt(
+        source_facts,
+        ledger,
+    )
 
     occurrences: list[dict[str, Any]] = []
     for occurrence in ledger.occurrences:
@@ -2959,8 +2995,15 @@ def _logical_transfer_projection(construction: Any) -> dict[str, Any]:
             logical_tensor = None
         if isinstance(logical_tensor, str):
             occurrence_dimensions = tensor_dimensions.get(logical_tensor)
-            if not occurrence_dimensions:
+            if occurrence_dimensions is None:
                 raise ValueError("Source transfer occurrence lacks a closed logical tensor shape")
+            if not occurrence_dimensions:
+                argument = source_facts.argument_by_position(occurrence.pointer_position)
+                if (
+                    argument is None or argument.get("kind") not in {"tensor", "pointer"}
+                    or argument.get("shape") != []
+                ):
+                    raise ValueError("rank-zero access requires an exact Source tensor pointer")
         else:
             # Before a Source observation binds a logical owner, this row is
             # explicitly blocked and cannot be submitted.  Retain the broad
@@ -3011,19 +3054,40 @@ def _logical_transfer_projection(construction: Any) -> dict[str, Any]:
             if isinstance(raw_authorizations, Mapping) else None
         )
 
-        def public_authorization(value: object) -> dict[str, str] | None:
+        def public_authorization(value: object, *, owner: bool = False) -> dict[str, Any] | None:
             if (
                 not isinstance(value, Mapping)
                 or value.get("status") != "pass"
                 or not isinstance(value.get("token"), str)
-                or re.fullmatch(r"so_[0-9a-f]{32}", value["token"]) is None
+                or re.fullmatch(
+                    SOURCE_OWNER_TOKEN_PATTERN if owner else r"so_[0-9a-f]{32}", value["token"]
+                ) is None
                 or not isinstance(value.get("operation_family"), str)
             ):
                 return None
-            return {
+            public = {
                 "token": value["token"],
                 "operation_family": value["operation_family"],
             }
+            outline = value.get("authoring_outline") if owner else None
+            if outline is not None:
+                # Only a Source-issued logical graph whose complete store
+                # commitment matches the token may enter the authoring wire.
+                if (
+                    not isinstance(outline, Mapping)
+                    or set(outline) != {"store", "graph"}
+                    or not isinstance(outline["store"], Mapping)
+                    or not isinstance(outline["graph"], list)
+                    or tensor_owner_digest(outline["store"], outline["graph"])
+                    != value["token"].rsplit("_", 1)[1]
+                ):
+                    raise ValueError("Source owner authoring outline is not committed")
+                public["authoring_outline"] = copy.deepcopy(outline)
+            if owner:
+                # The host verifies the authored node_ref against its private
+                # receipt. The provider must not round-trip an owner token.
+                public.pop("token")
+            return public
 
         row: dict[str, Any] = {
             "ordinal": occurrence.ordinal,
@@ -3062,7 +3126,7 @@ def _logical_transfer_projection(construction: Any) -> dict[str, Any]:
             ),
             "semantic_authorizations": {
                 "access_view": public_authorization(access_view_authorization),
-                "owner": public_authorization(owner_authorization),
+                "owner": public_authorization(owner_authorization, owner=True),
                 "computed_guard": public_authorization(guard_authorization),
             },
         }
@@ -3075,8 +3139,8 @@ def _logical_transfer_projection(construction: Any) -> dict[str, Any]:
         if occurrence.masked and row["predicate"] is None:
             if isinstance(row["semantic_authorizations"].get("computed_guard"), Mapping):
                 row["predicate_requirement"] = (
-                    "author one prior local i1 result and carry the exact "
-                    "computed-guard authorization"
+                    "author a domain predicate checked by the exact producer "
+                    "proof, or a prior local i1 with the issued guard receipt"
                 )
             else:
                 row["predicate_requirement"] = (
@@ -3102,6 +3166,7 @@ def _logical_transfer_projection(construction: Any) -> dict[str, Any]:
         occurrences.append(row)
     projection = {
         "status": ledger.status,
+        "host_launch_contract": host_launch_receipt,
         "occurrences": occurrences,
         "access_label_pattern": r"^access[0-9]+$",
         "semantic_reference_policy": {
@@ -3110,6 +3175,32 @@ def _logical_transfer_projection(construction: Any) -> dict[str, Any]:
             "local_value": "prior r* only",
         },
     }
+    # Keep the private/public authorization boundary enforced at the source of
+    # the projection, not only in one consumer.  Access/guard receipts may
+    # expose their deliberately public token/family pair; owner tokens,
+    # status, and compiler attestations never may.  The host retains the
+    # complete receipt in ``ledger.bindings`` for preflight and admission.
+    for occurrence_row in occurrences:
+        authorizations = occurrence_row.get("semantic_authorizations")
+        if (
+            not isinstance(authorizations, Mapping)
+            or set(authorizations) != {"access_view", "owner", "computed_guard"}
+        ):
+            raise ValueError("semantic transfer authorization projection is malformed")
+        for name, authorization in authorizations.items():
+            if authorization is None:
+                continue
+            if not isinstance(authorization, Mapping):
+                raise ValueError("semantic transfer authorization projection is malformed")
+            if "status" in authorization or "compiler_attestation" in authorization:
+                raise ValueError("semantic transfer projection leaked private receipt fields")
+            if name == "owner":
+                if "token" in authorization or set(authorization) - {
+                    "operation_family", "authoring_outline"
+                }:
+                    raise ValueError("semantic transfer projection leaked Source owner token")
+            elif set(authorization) != {"token", "operation_family"}:
+                raise ValueError("semantic transfer authorization public shape is malformed")
     if re.search(
         r"(?<![A-Za-z0-9_])[pc][0-9]+(?![A-Za-z0-9_])",
         json.dumps(projection, sort_keys=True, ensure_ascii=False),
@@ -3123,6 +3214,7 @@ def _semantic_construction_requirements(
     output_construction: Sequence[Mapping[str, Any]],
     *,
     transfer_projection: Mapping[str, Any] | None = None,
+    provider_dimension_aliases: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Build the one targeted semantic ingress contract for a Source.
 
@@ -3146,6 +3238,10 @@ def _semantic_construction_requirements(
     ledger = getattr(construction, "transfer_ledger", None)
     if ledger is None:
         raise TypeError("semantic construction requirements need a transfer ledger")
+    dimension_aliases = provider_dimension_alias_map(
+        list(provider_dimension_aliases),
+        canonical_dimensions=tuple(construction.allocator.declared("x")),
+    )
     projection = (
         dict(transfer_projection)
         if isinstance(transfer_projection, Mapping)
@@ -3174,7 +3270,7 @@ def _semantic_construction_requirements(
             )
         }
         if (
-            not isinstance(wire_slot["ordinal"], int)
+            not is_canonical_ordinal(wire_slot["ordinal"])
             or wire_slot["access_label"] != f"access{wire_slot['ordinal']}"
             or not isinstance(wire_slot["provider_fields"], list)
             or not isinstance(wire_slot["provider_owned_fields"], list)
@@ -3231,9 +3327,17 @@ def _semantic_construction_requirements(
                 "semantic_authorizations": copy.deepcopy(
                     row.get("semantic_authorizations")
                 ),
+                "predicate_requirement": row.get("predicate_requirement"),
                 "pi_binding": copy.deepcopy(row.get("pi_binding")),
             },
         }
+        authorizations = row.get("semantic_authorizations")
+        owner = authorizations.get("owner") if isinstance(authorizations, Mapping) else None
+        outline = owner.get("authoring_outline") if isinstance(owner, Mapping) else None
+        if isinstance(outline, Mapping):
+            item["source_semantics"]["owner_broadcast_requirements"] = (
+                owner_broadcast_requirements(outline)
+            )
         index = row.get("index")
         missing: list[str] = []
         if not isinstance(row.get("tensor"), str):
@@ -3270,22 +3374,296 @@ def _semantic_construction_requirements(
             },
         )
 
+    def source_store_requirements(output_name: Any) -> list[dict[str, Any]] | None:
+        """Group only already-authorized physical writes for one output.
+
+        This is a compact navigation aid for the provider.  It is deliberately
+        not a partition proof and never chooses a J producer or a local label.
+        If any matching physical write lacks a closed Source owner outline or
+        a closed coordinate list, omit the grouping rather than projecting a
+        partial relation that could be mistaken for complete coverage.
+        """
+
+        if not isinstance(output_name, str):
+            return None
+        selected: list[dict[str, Any]] = []
+        for access_row in access_rows:
+            if not isinstance(access_row, Mapping):
+                continue
+            source = access_row.get("source_semantics")
+            if not isinstance(source, Mapping):
+                continue
+            if (
+                source.get("kind") not in {"store", "update"}
+                or source.get("tensor") != output_name
+            ):
+                continue
+            authorizations = source.get("semantic_authorizations")
+            owner = (
+                authorizations.get("owner")
+                if isinstance(authorizations, Mapping)
+                else None
+            )
+            outline = (
+                owner.get("authoring_outline")
+                if isinstance(owner, Mapping)
+                else None
+            )
+            store = outline.get("store") if isinstance(outline, Mapping) else None
+            coordinates = store.get("coordinates") if isinstance(store, Mapping) else None
+            family = owner.get("operation_family") if isinstance(owner, Mapping) else None
+            ordinal = access_row.get("ordinal")
+            if (
+                not is_canonical_ordinal(ordinal)
+                or not isinstance(family, str)
+                or not family
+                or not isinstance(coordinates, list)
+                or any(
+                    not (
+                        isinstance(item, str)
+                        and (
+                            re.fullmatch(r"axis[0-9]+", item) is not None
+                            or re.fullmatch(r"[0-9]+", item) is not None
+                        )
+                    )
+                    and not (isinstance(item, int) and not isinstance(item, bool))
+                    for item in coordinates
+                )
+            ):
+                return None
+            selected.append(
+                {
+                    "ordinal": ordinal,
+                    "kind": source.get("kind"),
+                    "operation_family": family,
+                    "coordinates": copy.deepcopy(coordinates),
+                }
+            )
+        return selected or None
+
+    def source_store_partition_assembly(
+        output_name: Any,
+        output_type: Any,
+        store_rows: Sequence[Mapping[str, Any]] | None,
+    ) -> dict[str, Any] | None:
+        """Project only a statically closed physical-store assembly.
+
+        A locator is not enough to make a provider-visible logical result.  An
+        assembly is exposed only when the existing Source owner outlines and
+        store coordinates prove one complete, ordered, unit-width partition of
+        the declared logical output.  No J producer label is allocated here;
+        the provider must still author the canonical ``concat`` operation and
+        the later functional-boundary proof remains authoritative.
+        """
+
+        if (
+            not isinstance(output_name, str)
+            or not isinstance(output_type, Mapping)
+            or not isinstance(output_type.get("dtype"), str)
+            or not isinstance(output_type.get("shape"), list)
+            or not isinstance(store_rows, list)
+            or len(store_rows) < 2
+        ):
+            return None
+        output_shape = copy.deepcopy(output_type["shape"])
+        output_dtype = output_type["dtype"]
+        rank = len(output_shape)
+        if rank < 1 or any(
+            not (
+                isinstance(extent, str)
+                and bool(extent)
+                or isinstance(extent, int)
+                and not isinstance(extent, bool)
+                and extent >= 0
+            )
+            for extent in output_shape
+        ):
+            return None
+
+        access_by_ordinal = {
+            row.get("ordinal"): row
+            for row in access_rows
+            if isinstance(row, Mapping) and is_canonical_ordinal(row.get("ordinal"))
+        }
+        owner_rows: list[tuple[dict[str, Any], list[Any], dict[str, Any]]] = []
+        for store_row in store_rows:
+            ordinal = store_row.get("ordinal")
+            access_row = access_by_ordinal.get(ordinal)
+            source = access_row.get("source_semantics") if isinstance(access_row, Mapping) else None
+            authorizations = (
+                source.get("semantic_authorizations")
+                if isinstance(source, Mapping)
+                else None
+            )
+            owner = (
+                authorizations.get("owner")
+                if isinstance(authorizations, Mapping)
+                else None
+            )
+            outline = (
+                owner.get("authoring_outline")
+                if isinstance(owner, Mapping)
+                else None
+            )
+            graph = outline.get("graph") if isinstance(outline, Mapping) else None
+            root = graph[-1] if isinstance(graph, list) and graph else None
+            coordinates = store_row.get("coordinates")
+            if (
+                not isinstance(source, Mapping)
+                or source.get("kind") != "store"
+                or source.get("tensor") != output_name
+                or source.get("masked") is True
+                or source.get("predicate") is not None
+                or not isinstance(owner, Mapping)
+                or not isinstance(outline, Mapping)
+                or not isinstance(graph, list)
+                or not isinstance(root, (list, tuple))
+                or len(root) != 5
+                or not isinstance(root[1], str)
+                or not isinstance(root[2], list)
+                or not isinstance(coordinates, list)
+                or len(coordinates) != rank
+            ):
+                return None
+            try:
+                root_shape = provider_shape_from_canonical(
+                    root[2], dimension_aliases
+                )
+            except ValueError:
+                return None
+            if any(
+                not (
+                    isinstance(extent, str)
+                    and bool(extent)
+                    or isinstance(extent, int)
+                    and not isinstance(extent, bool)
+                    and extent >= 0
+                )
+                for extent in root_shape
+            ):
+                return None
+            owner_rows.append(
+                (
+                    dict(store_row),
+                    copy.deepcopy(coordinates),
+                    {
+                        "dtype": root[1],
+                        "shape": root_shape,
+                    },
+                )
+            )
+
+        if len({row[0].get("ordinal") for row in owner_rows}) != len(owner_rows):
+            return None
+        candidates: list[tuple[int, list[tuple[dict[str, Any], list[Any], dict[str, Any]]]]] = []
+        for axis in range(rank):
+            extent = output_shape[axis]
+            if type(extent) is not int or extent != len(owner_rows):
+                continue
+            axis_coordinates = [row[1][axis] for row in owner_rows]
+            if (
+                any(type(value) is not int for value in axis_coordinates)
+                or sorted(axis_coordinates) != list(range(extent))
+            ):
+                continue
+            if any(
+                any(
+                    row[1][dimension] != owner_rows[0][1][dimension]
+                    for row in owner_rows
+                )
+                for dimension in range(rank)
+                if dimension != axis
+            ):
+                continue
+            expected_slice_shape = [
+                value for dimension, value in enumerate(output_shape) if dimension != axis
+            ]
+            if any(
+                row[2]["dtype"] != output_dtype
+                or row[2]["shape"] != expected_slice_shape
+                for row in owner_rows
+            ):
+                continue
+            candidates.append((axis, owner_rows))
+        if len(candidates) != 1:
+            return None
+        axis, rows = candidates[0]
+        ordered = sorted(rows, key=lambda row: row[1][axis])
+        slice_type = {
+            "dtype": output_dtype,
+            "shape": [
+                value for dimension, value in enumerate(output_shape) if dimension != axis
+            ],
+        }
+        assembly = {
+            "canonical_op": "concat",
+            "axis": axis,
+            "operand_store_ordinals": [row[0]["ordinal"] for row in ordered],
+            "operand_coordinates": [row[1] for row in ordered],
+            "operand_type": slice_type,
+            "result_type": {
+                "dtype": output_dtype,
+                "shape": output_shape,
+            },
+        }
+        validate_source_store_partition_assembly(
+            {"assembly": assembly},
+            access_rows=access_rows,
+            output_name=output_name,
+            output_type=output_type,
+            expected_stores=[row[0] for row in ordered],
+            dimension_aliases=dimension_aliases,
+        )
+        return assembly
+
     outputs: list[dict[str, Any]] = []
     for row in output_construction:
         if not isinstance(row, Mapping):
             raise TypeError("output construction has a malformed row")
-        outputs.append(
-            {
-                "output": row.get("output"),
-                "output_type": copy.deepcopy(row.get("output_type")),
-                "required_fields": ["value"],
-                # Output ordinal/name/type are Source/host facts.  The one
-                # provider wire is deliberately just the selected semantic
-                # value, so an MCP receipt can show the exact legal shape
-                # rather than inviting the provider to echo these descriptors.
-                "wire_template": {"value": "<local_result_or_source_t>"},
-            }
-        )
+        output_row = {
+            "output": row.get("output"),
+            "output_type": copy.deepcopy(row.get("output_type")),
+            "required_fields": ["value"],
+            # Output ordinal/name/type are Source/host facts.  The one
+            # provider wire is deliberately just the selected semantic
+            # value, so an MCP receipt can show the exact legal shape
+            # rather than inviting the provider to echo these descriptors.
+            "wire_template": {"value": "<local_result_or_source_t>"},
+        }
+        store_rows = source_store_requirements(row.get("output"))
+        if store_rows is not None:
+            # These are Source facts for navigation only.  They do not prove
+            # complete partition coverage and do not authorize a producer.
+            output_row["source_store_requirements"] = store_rows
+            if len(store_rows) > 1:
+                # Multiple Source-authorized physical writes may be slices of
+                # one logical output.  Expose that already-observed relation
+                # explicitly so graph authoring does not mistake a slice root
+                # for the final output value.  This is a requirement locator,
+                # not a partition proof and does not choose scatter/update
+                # semantics; the existing canonical/functional checks remain
+                # responsible for proving the complete binding later.
+                output_row["source_store_partition_requirement"] = {
+                    "output": row.get("output"),
+                    "store_ordinals": [
+                        item["ordinal"] for item in store_rows
+                    ],
+                    "store_coordinates": [
+                        copy.deepcopy(item["coordinates"])
+                        for item in store_rows
+                    ],
+                    "relation": (
+                        "physical_store_slices_require_complete_logical_output_binding"
+                    ),
+                }
+                assembly = source_store_partition_assembly(
+                    row.get("output"), row.get("output_type"), store_rows
+                )
+                if assembly is not None:
+                    output_row["source_store_partition_requirement"]["assembly"] = (
+                        assembly
+                    )
+        outputs.append(output_row)
 
     return {
         "authority": "SourceFacts + SourceTransferLedger + CanonicalHandleAllocator",
@@ -3328,7 +3706,8 @@ def _semantic_construction_requirements(
                 "rows": ["accesses", "output_mappings"],
                 "rule": (
                     "submit access and effect semantics in Source order plus "
-                    "outputs in ABI order; host adds canonical ids only"
+                    "outputs in ABI order; host allocates ids and attaches "
+                    "owner receipts only after checking the declared node_ref"
                 ),
             },
             "accesses": {
@@ -3340,6 +3719,22 @@ def _semantic_construction_requirements(
                 "count": len(outputs),
                 "rows": outputs,
                 "order": "Source output ABI order",
+            },
+            "consumer_extensions": {
+                "required_when": (
+                    "one predicate-bearing load access contributes an operand "
+                    "to a reduce or inclusive scan"
+                ),
+                "rule": (
+                    "author one consumer_extensions row for every distinct direct "
+                    "consumer operand edge; consumer_ref is the provider-local op* "
+                    "consumer, access_ref is the exact provider-local accessN row, "
+                    "tile_axis exactly equals the non-negative integer tile_axis "
+                    "in that same consumer_ref's one boundary.reductions row, and "
+                    "outside is the typed two-sided identity for that consumer. "
+                    "Do not merge edges, infer an extension for another operation "
+                    "class, or ask the host to create one"
+                ),
             },
         },
         "host_derived": [
@@ -3579,6 +3974,10 @@ def _semantic_mcp_write_protocol(
             "declare_operation_graph": {
                 "field": "body_text",
                 "json_container": "array",
+                # Responses receives this declaration as JSON text. Keep the
+                # non-empty-array invariant in the shared write contract so
+                # the provider-facing function schema cannot generate `[]`.
+                "pattern": r"^\s*\[\s*\{",
             },
             "declare_accesses": {
                 "field": "accesses_text",
@@ -3607,79 +4006,66 @@ def _semantic_mcp_write_protocol(
         # must not carry a second handwritten description table.
         "descriptions": {
             "begin_candidate": (
-                "Start one fresh schema-derived semantic J candidate from the "
-                "current Source-owned authoring entry."
+                "Start one fresh schema-derived semantic J candidate."
             ),
             "declare_operation_graph": (
-                "Set the complete, non-empty J operation-body array in producer "
-                "order; `[]` is never a valid operation graph. "
-                "`op` is the canonical J operation name; `id` and `result` are "
-                "provider-local labels. `x0`, `x1`, and all `x*` labels are "
-                "canonical host dimensions, never an operation `id` or `result`; "
-                "use `value0`, `mask0`, or `cast0` instead. Do not put local "
-                "op0 labels in `op`; "
-                "a map_binary/select whose declared operand/result types require "
-                "a non-trailing boundary broadcast must supply a local `id`, so its "
-                "later broadcast row can name that same node; "
-                "for every Source ABI output type, the completed graph must expose "
-                "at least one function-visible value of exactly that dtype/shape "
-                "(a Source input or top-level typed result); the host does not "
-                "choose the later output mapping; "
-                "for every Source access whose predicate is provider-local, the "
-                "graph must likewise expose at least one function-visible local "
-                "i1/bool result with a unique typed guard projection to that "
-                "access tensor and at least one single-result direct consumer "
-                "with a provider-local `id`; the host does not create or select "
-                "that predicate or consumer; "
-                "the host allocates n*/v*."
+                "Each call atomically REPLACES the whole body; it never "
+                "appends. Every call must therefore contain the complete, "
+                "non-empty producer-order graph—not one row or a patch—with "
+                "one J row for every begin receipt source_operation_requirement "
+                "and every listed Source owner-DAG operation. Read exact "
+                "operation leaves from schema_lookup. Each row has operands "
+                "as an array (use [] for zero-input ops), canonical op/attrs, "
+                "and fresh local id/result labels matching "
+                "[A-Za-z_][A-Za-z0-9_.:-]*; do not use host ids, reserved "
+                "numeric n*/v*/x*/p*/c*/a*/e* labels, TTIR spellings, or "
+                "invent operations, attrs, predicates, or relations. Preserve "
+                "Source dependency order and owner-DAG operations. Every "
+                "result needs its exact exposed dtype/shape. Make each "
+                "typed_output_requirement function-visible as an exact typed "
+                "result or Source input; mapping cannot create/promote it. "
+                "Each masked access needs an existing canonical-i1 result "
+                "with exactly one authorized rank-insertion match; host does "
+                "not create predicates or choose labels. Preserve all "
+                "source_store_requirements and coordinates. On any graph "
+                "error, rebuild and resubmit the entire graph from current "
+                "Source facts; the host never completes a partial graph."
             ),
             "declare_accesses": (
-                "Set the complete provider-authored Source-order boundary-access "
-                "JSON array: it must contain exactly every row in the "
-                "begin_candidate required_slots.accesses receipt, never `[]` or "
-                "a prefix. Each row must copy the canonical semantic-transfer "
-                "wire_template exactly for every non-provider-owned field. "
-                "index_expression is provider-authored logical J with exactly the "
-                "rank listed by the transfer row; its listed dimensions/inputs are "
-                "available symbols, not coordinates to copy. Every required field "
-                "must be present, including an explicit null effect_node_ref when "
-                "the template says null; `id` is not an access field. A row whose "
-                "provider_owned_relations declares effect_node_ref must use the "
-                "same legal provider-local operation id for node_ref and "
-                "effect_node_ref. Effect semantics are mandatory and the host only "
-                "allocates e*. "
-                "A provider-local predicate must select "
-                "one compatible function-visible i1/bool result already declared "
-                "by the accepted graph. When its load slot also requires "
-                "`node_ref`, use the same provider-local operation `id` for "
-                "`effect_node_ref`; that operation must have one result and consume "
-                "that access tensor exactly once."
+                "After the required post-graph transfer-ledger reread, set the "
+                "complete Source-order access array from its access rows; never "
+                "submit a prefix or empty array. "
+                "Copy every non-provider-owned field from the exposed wire "
+                "template exactly. Supply only the exposed logical index, "
+                "predicate/fill and provider-local owner relations. When "
+                "the Source row exposes index_expression_requirement, copy "
+                "that exact expression into index_expression; otherwise use "
+                "a real provider-local expression, never a placeholder or null. Preserve "
+                "domain, rank, mask and effect semantics. Do not emit host ids "
+                "or invent coordinates, owners or predicates."
             ),
             "declare_output_mappings": (
-                "Set the complete Source-output-order selection array. Every row "
-                "must contain exactly `{value}`; output and node_ref are host-owned."
+                "Set the complete Source-output-order value-selection array. "
+                "Each row is exactly `{value}` and must reference an exposed "
+                "Source input or declared local result; output/node_ref are host-owned."
             ),
             "declare_boundary_fields": (
-                "Set the schema-derived semantic boundary collections object, or `{}` "
-                "when none apply. A map_binary/select with a non-trailing operand "
-                "broadcast must include its exact `broadcasts` rows here; effects and "
-                "index bounds remain host-derived. For Source-proven program domains, "
-                "either omit `domains` entirely so the host atomically projects the "
-                "complete Source-proven map, or submit a complete exact provider map. "
-                "Never submit a partial domain map: once non-empty, host reuses only "
-                "an exact matching provider domain and never fills a missing one."
+                "Set the exposed boundary object, or `{}` when none applies. "
+                "Submit only exact exposed broadcasts, domains or result relations; "
+                "effects and index bounds are host-derived. Never submit a partial "
+                "map or invent padding/identity/update relations."
             ),
             "declare_j_fields": (
-                "Set a JSON object of schema-derived semantic J collections outside "
+                "Set only the exposed schema-derived semantic J fields outside "
                 "intent and boundary."
             ),
             "declare_normalization_classes": (
-                "Set the optional JSON array of J-proven normalization classes; all "
-                "other pi rows are host-derived."
+                "Set only the optional exposed normalization classes; other pi "
+                "rows are host-derived."
             ),
             "finalize_candidate": (
-                "Serialize the accumulated semantic J and run the fail-closed "
-                "ingress constructor and CandidateCheck preflight."
+                "Finalize once through the fail-closed ingress and CandidateCheck "
+                "preflight."
             ),
         },
         "writes": {
@@ -3895,7 +4281,10 @@ def _semantic_provider_wire(profile: Mapping[str, Any]) -> dict[str, Any]:
         required = row.get("required")
         if not isinstance(fields, list) or not isinstance(required, list):
             raise TypeError("canonical semantic boundary fields are malformed")
-        host_fields = [field for field in ("access_id", "effect_id") if field in fields]
+        host_fields = [
+            field for field in ("access_id", "effect_id", "semantic_owner_authorization")
+            if field in fields
+        ]
         provider_fields = [field for field in fields if field not in host_fields]
         provider_required = [field for field in required if field not in host_fields]
         if name == "accesses":
@@ -4009,6 +4398,7 @@ def _semantic_provider_wire(profile: Mapping[str, Any]) -> dict[str, Any]:
             "provider_form": "dim0, dim1, ...",
             "canonical_form": "x0, x1, ...",
             "host_rewrites": True,
+            "operation_shape_extent_rule": PROVIDER_DIMENSION_EXTENT_RULE,
         },
         "host_derived_pi_fields": list(host_pi_rows),
         "operations": operations,
@@ -4427,20 +4817,10 @@ def _provider_semantic_operand_inputs(
     inputs = function.get("inputs") if isinstance(function, Mapping) else None
     if not isinstance(inputs, list):
         raise ValueError("canonical Source seed lacks logical inputs")
-    aliases_by_canonical: dict[str, str] = {}
-    for row in provider_dimension_aliases:
-        ordinal = row.get("ordinal") if isinstance(row, Mapping) else None
-        local = row.get("local") if isinstance(row, Mapping) else None
-        if (
-            isinstance(ordinal, int)
-            and not isinstance(ordinal, bool)
-            and ordinal >= 0
-            and isinstance(local, str)
-            and re.fullmatch(r"dim[0-9]+", local) is not None
-        ):
-            aliases_by_canonical[f"x{ordinal}"] = local
-        else:
-            raise ValueError("provider dimension alias projection is malformed")
+    aliases_by_canonical = provider_dimension_alias_map(
+        list(provider_dimension_aliases),
+        canonical_dimensions=allocator.declared("x"),
+    )
     value_types: dict[str, dict[str, Any]] = {}
     for row in inputs:
         name = row.get("name") if isinstance(row, Mapping) else None
@@ -4544,13 +4924,9 @@ def _provider_program_domain_requirements(
     canonical_dimensions = sorted(
         set(_source_domain_extent_symbols(projected_boundary).values())
     )
-    alias_by_canonical = {
-        f"x{row.get('ordinal')}": row.get("local")
-        for row in provider_dimension_aliases
-        if isinstance(row, Mapping)
-        and isinstance(row.get("ordinal"), int)
-        and isinstance(row.get("local"), str)
-    }
+    alias_by_canonical = provider_dimension_alias_map(
+        list(provider_dimension_aliases)
+    )
     required_dimensions = [
         alias_by_canonical[dimension]
         for dimension in canonical_dimensions
@@ -4558,9 +4934,30 @@ def _provider_program_domain_requirements(
     ]
     if len(required_dimensions) != len(canonical_dimensions):
         raise ValueError("Source domain projection has no provider dimension alias")
+    # The owner checker consumes logical J coordinates, not dimension extents.
+    # Publish only coordinate labels already proved by the same Source-domain
+    # projector. Do not infer one from dimension order or a runtime extent.
+    domain_coordinates: dict[str, str] = {}
+    projected_domains = projected_boundary.get("domains")
+    if not isinstance(projected_domains, Mapping):
+        raise ValueError("Source domain projection lost the domain map")
+    for domain_ref, dimension in _source_domain_extent_symbols(projected_boundary).items():
+        expression = projected_domains.get(domain_ref)
+        match = re.fullmatch(
+            r"0 <= (i[0-9]+) and \1 < (x[0-9]+)", expression
+        ) if isinstance(expression, str) else None
+        if match is None or match.group(2) != dimension:
+            raise ValueError("Source domain projection has no exact coordinate label")
+        alias = alias_by_canonical.get(dimension)
+        if alias is None or alias in domain_coordinates:
+            raise ValueError("Source domain projection has ambiguous coordinate label")
+        domain_coordinates[alias] = match.group(1)
+    if set(domain_coordinates) != set(required_dimensions):
+        raise ValueError("Source domain projection lacks a required coordinate")
     return {
         "status": "pass",
         "required_dimensions": required_dimensions,
+        "domain_coordinates": domain_coordinates,
         "coverage": "exactly_one_zero_based_rectangular_domain_per_required_dimension",
         # This is an atomic provenance choice, not permission for the host to
         # repair a provider map. With no provider domain rows the production
@@ -4574,6 +4971,72 @@ def _provider_program_domain_requirements(
             "nonempty_provider_map_is_provider_authored; host_reuses_exact_match_only"
         ),
     }
+
+
+def _attach_source_proven_index_requirements(
+    requirements: dict[str, Any], domain_requirements: Mapping[str, Any],
+    provider_dimension_aliases: Sequence[Mapping[str, Any]],
+) -> None:
+    """Expose only coordinate expressions already committed by owner outlines."""
+
+    if domain_requirements.get("status") != "pass":
+        return
+    coordinates = domain_requirements.get("domain_coordinates")
+    accesses = requirements["semantic_required"]["accesses"]["rows"]
+    if not isinstance(coordinates, Mapping) or not isinstance(accesses, list):
+        return
+    aliases = provider_dimension_alias_map(list(provider_dimension_aliases))
+    by_token: dict[str, dict[str, Any]] = {}
+    for row in accesses:
+        auth = row.get("source_semantics", {}).get("semantic_authorizations", {})
+        view = auth.get("access_view") if isinstance(auth, Mapping) else None
+        token = view.get("token") if isinstance(view, Mapping) else None
+        if isinstance(token, str):
+            if token in by_token:
+                raise ValueError("Source access view token is ambiguous")
+            by_token[token] = row
+
+    def expression(shape: Any, axes: Any) -> str | None:
+        if not isinstance(shape, list) or not isinstance(axes, list) or len(shape) != len(axes):
+            return None
+        parts: list[str] = []
+        for ordinal, (extent, axis) in enumerate(zip(shape, axes, strict=True)):
+            if axis == f"axis{ordinal}" and isinstance(extent, str):
+                coordinate = coordinates.get(aliases.get(extent))
+                if not isinstance(coordinate, str) or re.fullmatch(r"i[0-9]+", coordinate) is None:
+                    return None
+                parts.append(coordinate)
+            elif type(axis) is int and type(extent) is int and 0 <= axis < extent:
+                parts.append(str(axis))
+            else:
+                return None
+        return "[" + ", ".join(parts) + "]"
+
+    def attach(row: dict[str, Any], shape: Any, axes: Any) -> None:
+        index = expression(shape, axes)
+        if index is None:
+            return
+        previous = row.get("index_expression_requirement")
+        if previous is not None and previous != index:
+            raise ValueError("Source owner outlines disagree on an access index")
+        row["index_expression_requirement"] = index
+
+    for row in accesses:
+        auth = row.get("source_semantics", {}).get("semantic_authorizations", {})
+        owner = auth.get("owner") if isinstance(auth, Mapping) else None
+        outline = owner.get("authoring_outline") if isinstance(owner, Mapping) else None
+        if not isinstance(outline, Mapping):
+            continue
+        store = outline.get("store")
+        if isinstance(store, Mapping):
+            attach(row, store.get("shape"), store.get("coordinates"))
+        for graph_row in outline.get("graph", ()):
+            if not isinstance(graph_row, (list, tuple)) or len(graph_row) != 5 or graph_row[0] != "load":
+                continue
+            load = graph_row[3]
+            target = by_token.get(load.get("occurrence")) if isinstance(load, Mapping) else None
+            if target is not None:
+                attach(target, load.get("shape"), load.get("coordinates"))
 
 
 def canonical_source_wire_bundle(construction: Any) -> dict[str, Any]:
@@ -4611,6 +5074,10 @@ def canonical_source_wire_bundle(construction: Any) -> dict[str, Any]:
         }
         for index, _canonical in enumerate(declared_dimensions)
     ]
+    provider_dimension_alias_map(
+        provider_dimension_aliases,
+        canonical_dimensions=declared_dimensions,
+    )
     transfer_projection = _logical_transfer_projection(construction)
     # Keep the Source-owned output order/type facts, but publish their shape
     # through the same provider ``dim*`` aliases used by operation result
@@ -4624,6 +5091,7 @@ def canonical_source_wire_bundle(construction: Any) -> dict[str, Any]:
         construction,
         output_construction,
         transfer_projection=transfer_projection,
+        provider_dimension_aliases=provider_dimension_aliases,
     )
     semantic_operand_inputs = _provider_semantic_operand_inputs(
         construction,
@@ -4635,6 +5103,84 @@ def canonical_source_wire_bundle(construction: Any) -> dict[str, Any]:
         seed,
         provider_dimension_aliases,
     )
+    _attach_source_proven_index_requirements(
+        semantic_construction_requirements,
+        program_domain_requirements,
+        provider_dimension_aliases,
+    )
+    semantic_required = semantic_construction_requirements.get(
+        "semantic_required"
+    )
+    obligation_accesses = (
+        semantic_required.get("accesses")
+        if isinstance(semantic_required, Mapping)
+        else None
+    )
+    obligation_outputs = (
+        semantic_required.get("outputs")
+        if isinstance(semantic_required, Mapping)
+        else None
+    )
+    obligation_access_rows = (
+        obligation_accesses.get("rows")
+        if isinstance(obligation_accesses, Mapping)
+        else None
+    )
+    obligation_output_rows = (
+        obligation_outputs.get("rows")
+        if isinstance(obligation_outputs, Mapping)
+        else None
+    )
+    if not isinstance(obligation_access_rows, list) or not isinstance(
+        obligation_output_rows, list
+    ):
+        raise ValueError("Source semantic obligation inputs are malformed")
+    # This table is the only identity/state contract for Source-derived
+    # semantic work.  Existing access/output rows remain the detailed Source
+    # facts; MCP, CandidateCheck, and Relift refer back to them through stable
+    # obligation ids instead of rebuilding a second rule-to-locator mapping.
+    semantic_construction_requirements["obligations"] = (
+        build_source_semantic_obligations(
+            source_facts_digest=construction.source_facts.digest,
+            access_rows=obligation_access_rows,
+            output_rows=obligation_output_rows,
+            program_domain_requirements=program_domain_requirements,
+        )
+    )
+    validate_source_semantic_obligations(
+        semantic_construction_requirements["obligations"],
+        construction.source_facts.digest,
+    )
+    # The exact index expression is already proved from the Source owner
+    # outline and declared program-domain coordinates. Carry that same value
+    # on the canonical transfer row so MCP readers and the mounted writer
+    # consume one projection instead of leaving it stranded in the parallel
+    # requirements table.
+    access_requirements = semantic_construction_requirements.get(
+        "semantic_required", {}
+    ).get("accesses", {}).get("rows", ())
+    projected_accesses = transfer_projection.get("occurrences", ())
+    if (
+        not isinstance(access_requirements, list)
+        or not isinstance(projected_accesses, list)
+        or len(access_requirements) != len(projected_accesses)
+    ):
+        raise ValueError("Source access index projection is malformed")
+    for ordinal, (requirement, projected) in enumerate(
+        zip(access_requirements, projected_accesses, strict=True)
+    ):
+        if (
+            not isinstance(requirement, Mapping)
+            or not isinstance(projected, dict)
+            or requirement.get("ordinal") != ordinal
+            or projected.get("ordinal") != ordinal
+        ):
+            raise ValueError("Source access index projection ordinal is malformed")
+        index_requirement = requirement.get("index_expression_requirement")
+        if index_requirement is not None:
+            if not isinstance(index_requirement, str) or not index_requirement:
+                raise ValueError("Source access index expression requirement is malformed")
+            projected["index_expression_requirement"] = index_requirement
     return {
         "protocol": "intentir.scrc.canonical-source-wire-bundle",
         "profile": profile,
@@ -4645,7 +5191,13 @@ def canonical_source_wire_bundle(construction: Any) -> dict[str, Any]:
         "candidate_owned_namespaces": profile["candidate_owned_namespaces"],
         "construction_records": copy.deepcopy(profile["construction_records"]),
         "construction_digest": construction.authority_digest,
+        "source_facts_digest": construction.source_facts.digest,
+        "source_slice_digest": construction.source_facts.source_slice_digest,
         "source_transfer_ledger": construction.transfer_ledger.to_json(),
+        "host_launch_contract": source_host_launch_contract_receipt(
+            construction.source_facts,
+            construction.transfer_ledger,
+        ),
         "semantic_transfer_projection": transfer_projection,
         "semantic_construction_requirements": semantic_construction_requirements,
         # The only provider-facing Source argument -> J operand bridge.  The
@@ -4696,6 +5248,8 @@ def render_canonical_wire_contract() -> str:
         "The operation rows are a bounded first-turn summary; use one exact "
         "schema_lookup(op:NAME) leaf when an attribute contract is missing. "
         "Fields marked host_allocated_fields or host_derived must be omitted. "
+        "In particular, semantic_owner_authorization belongs only to the "
+        "completed host artifact: submit node_ref, never an owner token or null. "
         "Provider submissions may use only Source t* handles and provider-local "
         "labels. Never submit canonical n*, v*, x*, p*, c*, a*, or e* handles; use "
         "op*/r*/dim*/access* local labels and let the host rewrite them. Canonical "

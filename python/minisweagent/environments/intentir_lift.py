@@ -21,10 +21,23 @@ from typing import Any, Callable, Mapping, Sequence
 
 from pydantic import BaseModel
 
-from intentir.ir.canonical_construction import semantic_operation_wire_rows
+from intentir.ir.canonical_construction import (
+    computed_guard_projection_supported,
+    is_canonical_ordinal,
+    semantic_operation_wire_rows,
+)
+from intentir.ir.source_projection_contracts import (
+    PROVIDER_DIMENSION_EXTENT_RULE,
+    is_provider_dimension_extent,
+    provider_dimension_alias_map,
+    provider_shape_from_canonical,
+    semantic_obligation_diagnostic,
+    validate_source_semantic_obligations,
+)
 from intentir.ir.intent_op_contract import (
     STRUCTURED_INTENT_OPS,
     _broadcast_projection,
+    is_closed_boolean_dtype,
     operation_attr_contract,
     operation_operands_match_arity,
 )
@@ -36,6 +49,9 @@ from minisweagent.exceptions import (
 from intentir.extraction.lifters.scrc_schema import (
     canonical_semantic_mcp_write_protocol,
     unique_access_guard_projection_axes,
+)
+from intentir.extraction.lifters.source_store_partition import (
+    validate_source_store_partition_assembly,
 )
 from minisweagent.mcp_lift import (
     IntentIRLiftMCPServer,
@@ -101,15 +117,11 @@ MAX_CANDIDATE_CHECK_OBSERVED_ITEMS = 20
 MAX_CANDIDATE_CHECK_RESULT_BYTES = 128 * 1024
 MAX_STARTUP_CONTEXT_BYTES = 64 * 1024
 _SANDBOX_START_MARKER = b"__INTENTIR_LIFT_SANDBOX_STARTED__\n"
-# A fresh semantic graph normally needs one declaration.  With the fixed
-# 16-turn budget, Source brief + transfer + one bounded lookup + begin take
-# four turns and access/output/finalize take three more.  Permit five changed
-# graph corrections (the sixth failure terminates) so a provider that receives
-# one precise receipt at a time can repair independent operand, shape, and
-# attribute mistakes without consuming the lifecycle's required final steps.
-# This remains a finite, observable preparation boundary; it is not a second
-# candidate, a repair base, or an increase to the model step limit.
-_MAX_OPERATION_GRAPH_DECLARATION_FAILURES = 6
+# Graph correction uses the owner's ordinary step/stagnation budget.  The old
+# six-failure cap was based on a retired 16-turn budget and terminated changed,
+# provider-correctable graph declarations before the current 32-turn owner
+# could reach accesses, outputs, or finalize.  Identical resubmissions still
+# fail immediately; no graph failure becomes a candidate or repair base.
 # Access declarations have the same bounded pre-candidate lifecycle as an
 # operation graph.  Without this boundary a provider can keep resubmitting an
 # empty or prefix array after the begin receipt has already supplied every
@@ -127,11 +139,59 @@ _PROVIDER_CORRECTABLE_ACCESS_DECLARATION_DIAGNOSTICS = frozenset(
         "access_declaration_must_not_use_id_alias",
         "access_declaration_provider_predicate_must_be_local_label",
         "access_declaration_provider_predicate_must_select_compatible_boolean_result",
+        "access_declaration_provider_index_expression_must_be_local_expression",
         "access_declaration_provider_node_ref_must_be_local_label",
         "access_declaration_provider_node_ref_must_select_direct_consumer",
+        "access_declaration_effect_node_owner_must_match_access_owner",
         "access_declaration_must_match_source_wire_template",
+        "access_declaration_must_match_source_index_requirement",
     }
 )
+
+
+def _safe_access_host_failure_rule(exc: BaseException) -> str:
+    """Classify access-host failures without retaining declaration text."""
+
+    if isinstance(exc, json.JSONDecodeError):
+        return "access_declaration_invalid_json"
+    detail = str(exc)
+    if detail.startswith("duplicate JSON key "):
+        return "access_declaration_duplicate_json_key"
+    if detail.startswith("invalid JSON constant:"):
+        return "access_declaration_non_json_constant"
+    if detail in {
+        "canonical_source_access_wire_template_is_malformed",
+        "canonical MCP declaration argument is unavailable",
+    }:
+        return detail
+    if isinstance(exc, KeyError):
+        return "access_declaration_host_key_error"
+    if isinstance(exc, TypeError):
+        return "access_declaration_host_type_error"
+    if isinstance(exc, ValueError):
+        return "access_declaration_host_value_error"
+    return "access_declaration_host_validation_unclassified"
+
+
+def _safe_access_host_origin(exc: BaseException) -> str | None:
+    """Return only a repository-local frame identity, never a full path."""
+
+    traceback_node = exc.__traceback__
+    while traceback_node is not None and traceback_node.tb_next is not None:
+        traceback_node = traceback_node.tb_next
+    if traceback_node is None:
+        return None
+    frame = traceback_node.tb_frame
+    filename = Path(frame.f_code.co_filename).name
+    function = frame.f_code.co_name
+    if (
+        filename != "intentir_lift.py"
+        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", function) is None
+    ):
+        return None
+    return f"{filename}:{function}:{traceback_node.tb_lineno}"
+
+
 # Output selection is provider-owned and can be corrected only by choosing a
 # different already-authored, function-visible value.  Bound that preparation
 # loop exactly like graph/access authoring: a bad mapping never becomes a
@@ -166,6 +226,16 @@ _MAX_BOUNDARY_FIELDS_DECLARATION_FAILURES = 4
 # per-edge preparation ceiling. Neither boundary creates or accepts a draft.
 _MAX_REPEATED_MCP_PHASE_RULE_FAILURES = 2
 _MAX_MCP_PHASE_APPLICATION_FAILURES = 4
+# A graph declaration which never crosses the phase boundary cannot make
+# progress merely because its JSON bytes change. Keep a bounded correction
+# window and stop with a safe no-progress receipt before the 32-step owner
+# limit is consumed.
+_MAX_OPERATION_GRAPH_DECLARATION_FAILURES = 8
+# Two occurrences of one graph rule at the same phase are enough to prove that
+# changing provider JSON has not crossed the phase boundary.  Stop before a
+# third model turn can turn a deterministic authoring rejection into an
+# unrelated provider/SSE timeout; this is not the Agent step limit.
+_MAX_SEMANTIC_NO_PROGRESS_RULE_FAILURES = 2
 _PROVIDER_CORRECTABLE_OPERATION_GRAPH_DIAGNOSTICS = frozenset(
     {
         "operation_graph_must_be_valid_json",
@@ -194,6 +264,7 @@ _PROVIDER_CORRECTABLE_OPERATION_GRAPH_DIAGNOSTICS = frozenset(
         "operation_result_type_shape_must_match_operands",
         "operation_iota_result_type_must_match_attrs",
         "operation_nontrailing_broadcast_requires_local_id",
+        "operation_graph_must_expose_source_output_assembly",
         "operation_graph_must_expose_each_source_output_type",
         "operation_graph_must_expose_compatible_access_predicate_type",
         "operation_graph_must_expose_access_consumer_id",
@@ -214,36 +285,329 @@ def _operation_attr_value_matches_schema(value: Any, schema: Any) -> bool:
 
     if not isinstance(schema, Mapping):
         return False
+
+    def strict_equal(left: Any, right: Any) -> bool:
+        # Python considers True == 1 and False == 0. JSON Schema does not;
+        # keep enum/const checks type-injective at the MCP boundary.
+        if isinstance(left, bool) or isinstance(right, bool):
+            return isinstance(left, bool) and isinstance(right, bool) and left == right
+        if isinstance(left, (int, float)) and not isinstance(left, bool):
+            if isinstance(right, (int, float)) and not isinstance(right, bool):
+                return left == right
+            return False
+        if isinstance(right, (int, float)) and not isinstance(right, bool):
+            return False
+        if isinstance(left, list) or isinstance(right, list):
+            return (
+                isinstance(left, list)
+                and isinstance(right, list)
+                and len(left) == len(right)
+                and all(strict_equal(a, b) for a, b in zip(left, right))
+            )
+        if isinstance(left, Mapping) or isinstance(right, Mapping):
+            return (
+                isinstance(left, Mapping)
+                and isinstance(right, Mapping)
+                and set(left) == set(right)
+                and all(strict_equal(left[key], right[key]) for key in left)
+            )
+        return type(left) is type(right) and left == right
+
+    if "not" in schema and isinstance(schema.get("not"), Mapping):
+        if _operation_attr_value_matches_schema(value, schema["not"]):
+            return False
+    all_of = schema.get("allOf")
+    if isinstance(all_of, list) and any(
+        not _operation_attr_value_matches_schema(value, item)
+        for item in all_of
+    ):
+        return False
+    one_of = schema.get("oneOf")
+    if isinstance(one_of, list) and sum(
+        _operation_attr_value_matches_schema(value, item) for item in one_of
+    ) != 1:
+        return False
     if "const" in schema:
-        return value == schema["const"]
+        return strict_equal(value, schema["const"])
     enum = schema.get("enum")
     if isinstance(enum, list):
-        return value in enum
+        return any(strict_equal(value, item) for item in enum)
     alternatives = schema.get("anyOf")
     if isinstance(alternatives, list):
-        return any(_operation_attr_value_matches_schema(value, item) for item in alternatives)
+        return bool(alternatives) and any(
+            _operation_attr_value_matches_schema(value, item)
+            for item in alternatives
+        )
+    reference = schema.get("$ref")
+    if reference == "#/$defs/const_literal":
+        if isinstance(value, bool) or (
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+        ):
+            return True
+        if isinstance(value, str):
+            return value in {"-inf", "inf", "nan"}
+        return isinstance(value, list) and all(
+            _operation_attr_value_matches_schema(
+                item,
+                {"$ref": "#/$defs/const_literal"},
+            )
+            for item in value
+        )
     expected_type = schema.get("type")
+    if isinstance(expected_type, list):
+        return any(
+            _operation_attr_value_matches_schema(value, {"type": item})
+            for item in expected_type
+            if isinstance(item, str)
+        )
     if expected_type == "boolean":
         return isinstance(value, bool)
     if expected_type == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
+        valid = isinstance(value, int) and not isinstance(value, bool)
+        if valid and isinstance(schema.get("minimum"), (int, float)):
+            valid = value >= schema["minimum"]
+        if valid and isinstance(schema.get("maximum"), (int, float)):
+            valid = value <= schema["maximum"]
+        if valid and isinstance(schema.get("exclusiveMinimum"), (int, float)):
+            valid = value > schema["exclusiveMinimum"]
+        if valid and isinstance(schema.get("exclusiveMaximum"), (int, float)):
+            valid = value < schema["exclusiveMaximum"]
+        return valid
     if expected_type == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
+        valid = isinstance(value, (int, float)) and not isinstance(value, bool)
+        if valid and isinstance(schema.get("minimum"), (int, float)):
+            valid = value >= schema["minimum"]
+        if valid and isinstance(schema.get("maximum"), (int, float)):
+            valid = value <= schema["maximum"]
+        if valid and isinstance(schema.get("exclusiveMinimum"), (int, float)):
+            valid = value > schema["exclusiveMinimum"]
+        if valid and isinstance(schema.get("exclusiveMaximum"), (int, float)):
+            valid = value < schema["exclusiveMaximum"]
+        return valid
     if expected_type == "string":
-        return isinstance(value, str)
+        if not isinstance(value, str):
+            return False
+        minimum = schema.get("minLength")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return False
+        maximum = schema.get("maxLength")
+        if isinstance(maximum, int) and len(value) > maximum:
+            return False
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str):
+            try:
+                if re.search(pattern, value) is None:
+                    return False
+            except re.error:
+                return False
+        return True
     if expected_type == "array":
         if not isinstance(value, list):
             return False
+        minimum = schema.get("minItems")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return False
+        maximum = schema.get("maxItems")
+        if isinstance(maximum, int) and len(value) > maximum:
+            return False
+        if schema.get("uniqueItems") is True and any(
+            strict_equal(left, right)
+            for index, left in enumerate(value)
+            for right in value[index + 1 :]
+        ):
+            return False
         item_schema = schema.get("items")
+        if item_schema is False:
+            return not value
         return (
             not isinstance(item_schema, Mapping)
             or all(_operation_attr_value_matches_schema(item, item_schema) for item in value)
         )
     if expected_type == "object":
-        return isinstance(value, Mapping)
-    # A schema leaf without an immediately checkable container restriction is
-    # left to the canonical validator instead of guessed at ingress.
-    return True
+        if not isinstance(value, Mapping):
+            return False
+        properties = schema.get("properties")
+        if isinstance(properties, Mapping):
+            required = schema.get("required", ())
+            if isinstance(required, list) and any(name not in value for name in required):
+                return False
+            if schema.get("additionalProperties") is False and set(value) - set(properties):
+                return False
+            if any(
+                name in properties
+                and not _operation_attr_value_matches_schema(value[name], properties[name])
+                for name in value
+            ):
+                return False
+        return True
+    # A schema leaf outside this bounded canonical projection is not safe to
+    # infer at ingress. Reject it rather than silently turning an unknown leaf
+    # into an accepted provider declaration.
+    return False
+
+
+def _validate_mounted_source_store_projection(
+    access_rows: Sequence[Any],
+    output_rows: Sequence[Any],
+    output_construction: Sequence[Any],
+    dimension_aliases: Mapping[str, str],
+) -> None:
+    """Keep begin-candidate slots bound to the mounted Source access rows.
+
+    The context reader performs the same check before exposing ``source-brief``.
+    Repeat it at the MCP write boundary because the environment consumes the
+    mounted bundle directly when constructing ``required_slots``.  This is a
+    consistency check only: it never creates an owner, producer, coordinate,
+    partition, or logical output binding.
+    """
+
+    if len(output_rows) != len(output_construction):
+        raise ValueError("canonical Source output projection cardinality is inconsistent")
+    for output_ordinal, (required_row, output_row) in enumerate(
+        zip(output_rows, output_construction, strict=True)
+    ):
+        if not isinstance(required_row, Mapping) or not isinstance(output_row, Mapping):
+            raise ValueError("canonical Source output store projection is malformed")
+        output_name = output_row.get("output")
+        if not isinstance(output_name, str) or not output_name:
+            raise ValueError("canonical Source output store projection lacks output")
+        stores = required_row.get("source_store_requirements")
+        partition = required_row.get("source_store_partition_requirement")
+        if stores is None:
+            if partition is not None:
+                raise ValueError(
+                    "canonical Source partition locator lacks store requirements"
+                )
+            continue
+        if not isinstance(stores, list) or not stores:
+            raise ValueError(
+                f"canonical Source store requirements are malformed at output {output_ordinal}"
+            )
+        expected: list[dict[str, Any]] = []
+        for access_row in access_rows:
+            if not isinstance(access_row, Mapping):
+                raise ValueError("canonical Source access requirements are malformed")
+            access_ordinal = access_row.get("ordinal")
+            if not is_canonical_ordinal(access_ordinal):
+                raise ValueError("canonical Source access ordinal is malformed")
+            source = access_row.get("source_semantics")
+            if not isinstance(source, Mapping):
+                continue
+            if source.get("kind") not in {"store", "update"}:
+                continue
+            if source.get("tensor") != output_name:
+                continue
+            authorizations = source.get("semantic_authorizations")
+            owner = (
+                authorizations.get("owner")
+                if isinstance(authorizations, Mapping)
+                else None
+            )
+            outline = (
+                owner.get("authoring_outline")
+                if isinstance(owner, Mapping)
+                else None
+            )
+            store = outline.get("store") if isinstance(outline, Mapping) else None
+            coordinates = store.get("coordinates") if isinstance(store, Mapping) else None
+            family = owner.get("operation_family") if isinstance(owner, Mapping) else None
+            if not isinstance(family, str) or not family or not isinstance(coordinates, list):
+                continue
+            expected.append(
+                {
+                    "ordinal": access_ordinal,
+                    "kind": source.get("kind"),
+                    "operation_family": family,
+                    "coordinates": copy.deepcopy(coordinates),
+                }
+            )
+        if stores != expected:
+            raise ValueError(
+                f"canonical Source store requirements are not access-bound at output {output_ordinal}"
+            )
+        if len(stores) > 1:
+            if (
+                not isinstance(partition, Mapping)
+                or set(partition)
+                not in (
+                    {"output", "store_ordinals", "store_coordinates", "relation"},
+                    {
+                        "output",
+                        "store_ordinals",
+                        "store_coordinates",
+                        "relation",
+                        "assembly",
+                    },
+                )
+                or partition.get("output") != output_name
+                or partition.get("relation")
+                != "physical_store_slices_require_complete_logical_output_binding"
+                or partition.get("store_ordinals")
+                != [item["ordinal"] for item in expected]
+                or partition.get("store_coordinates")
+                != [item["coordinates"] for item in expected]
+            ):
+                raise ValueError(
+                    f"canonical Source partition locator is not store-bound at output {output_ordinal}"
+                )
+            validate_source_store_partition_assembly(
+                partition,
+                access_rows=access_rows,
+                output_name=output_name,
+                output_type=output_row.get("output_type"),
+                expected_stores=expected,
+                dimension_aliases=dimension_aliases,
+            )
+        elif partition is not None:
+            raise ValueError(
+                f"canonical Source partition locator is unnecessary at output {output_ordinal}"
+            )
+
+
+def _validate_mounted_source_output_projection(
+    bundle: Mapping[str, Any],
+    output_construction: Sequence[Any],
+) -> None:
+    """Bind provider-facing output types to the canonical Source seed."""
+
+    seed = bundle.get("artifact_seed")
+    j = seed.get("j") if isinstance(seed, Mapping) else None
+    intent = j.get("intent") if isinstance(j, Mapping) else None
+    function = intent.get("intent_function") if isinstance(intent, Mapping) else None
+    seed_outputs = function.get("outputs") if isinstance(function, Mapping) else None
+    dimension_aliases = provider_dimension_alias_map(
+        bundle.get("provider_dimension_aliases")
+    )
+    if not isinstance(seed_outputs, list) or len(seed_outputs) != len(output_construction):
+        raise ValueError("canonical Source output projection cardinality is inconsistent")
+    for output_ordinal, (output_row, seed_row) in enumerate(
+        zip(output_construction, seed_outputs, strict=True)
+    ):
+        if not isinstance(output_row, Mapping) or not isinstance(seed_row, Mapping):
+            raise ValueError("canonical Source output declaration is malformed")
+        seed_name = seed_row.get("name")
+        seed_dtype = seed_row.get("dtype")
+        seed_shape = seed_row.get("shape")
+        if (
+            not isinstance(seed_name, str)
+            or not isinstance(seed_dtype, str)
+            or not isinstance(seed_shape, list)
+        ):
+            raise ValueError("canonical Source seed output declaration is malformed")
+        try:
+            provider_shape = provider_shape_from_canonical(
+                seed_shape, dimension_aliases
+            )
+        except ValueError as exc:
+            raise ValueError("canonical Source seed output dimension is malformed") from exc
+        if (
+            output_row.get("output") != seed_name
+            or output_row.get("output_type")
+            != {"dtype": seed_dtype, "shape": provider_shape}
+        ):
+            raise ValueError(
+                f"canonical Source output construction is not seed-bound at output {output_ordinal}"
+            )
 
 
 def _reject_non_json_constant(value: str) -> None:
@@ -304,6 +668,39 @@ def _json_container_kind(value: Any) -> str:
     return type(value).__name__
 
 
+def _expected_result_shape_for_known_operands(
+    operation: Mapping[str, Any],
+    operand_shapes: Sequence[tuple[str | int, ...]],
+) -> tuple[str | int, ...] | None:
+    """Return the narrow shape relation enforced at graph ingress.
+
+    ``None`` means that the ingress check deliberately has no unique proof and
+    must defer the relation to the canonical constructor/boundary authority.
+    An empty tuple is a real scalar shape, so it must not be used as the
+    unconstrained sentinel.  Keeping this relation in one helper is important:
+    the rejection predicate and its safe MCP feedback must identify exactly the
+    same scalar/vector case instead of disagreeing about whether a diagnostic
+    exists.
+    """
+
+    operation_name = operation.get("op")
+    if operation_name in {"cast", "map_unary"} and len(operand_shapes) == 1:
+        return operand_shapes[0]
+    if operation_name != "map_binary" or len(operand_shapes) != 2:
+        return None
+
+    maximum_rank = max(len(shape) for shape in operand_shapes)
+    maximal = {shape for shape in operand_shapes if len(shape) == maximum_rank}
+    if len(maximal) != 1:
+        return None
+    expected = next(iter(maximal))
+    # Only the already-proven scalar-to-tensor broadcast is accepted by this
+    # narrow ingress rule.  Non-trailing or otherwise ambiguous broadcasting
+    # remains the responsibility of the boundary proof and is not inferred
+    # here.
+    if all(shape == expected or not shape for shape in operand_shapes):
+        return expected
+    return None
 def _exception_candidate_check_diagnostics(
     exc: BaseException,
 ) -> list[dict[str, Any]] | None:
@@ -468,6 +865,15 @@ class IntentIRLiftEnvironmentConfig(BaseModel):
     }
 
 
+@dataclass(frozen=True)
+class _SemanticAccessPredicateChoices:
+    """Existing typed local values eligible for one Source access predicate."""
+
+    compatible_labels: frozenset[str]
+    boolean_result_count: int
+    incompatible_boolean_shape_count: int
+
+
 class IntentIRLiftEnvironment:
     """Execute agent shell actions with only /input, /output, and /work visible."""
 
@@ -495,6 +901,9 @@ class IntentIRLiftEnvironment:
         # remains available through the bounded transfer-ledger resource.
         self._semantic_construction_identity = (
             self._mounted_semantic_construction_identity()
+        )
+        self._semantic_provider_dimension_aliases = (
+            self._mounted_semantic_provider_dimension_aliases()
         )
         self._semantic_construction_slots = (
             self._mounted_semantic_construction_slots()
@@ -575,6 +984,7 @@ class IntentIRLiftEnvironment:
         # Access authoring additionally requires one refresh after the graph
         # has been accepted, bound to this same in-memory transaction.
         self._semantic_transfer_read_generation = 0
+        self._semantic_transfer_expected_start = 1
         self._semantic_operation_graph_transfer_generation: int | None = None
         self._semantic_access_transfer_generation: int | None = None
         self._semantic_transaction_identity: str | None = None
@@ -590,6 +1000,9 @@ class IntentIRLiftEnvironment:
         # creating a second provider-authored operation template.
         self._semantic_entry_operation_fact_count = 0
         self._semantic_entry_non_boundary_operation_fact_count = 0
+        self._semantic_entry_operation_requirements: tuple[
+            dict[str, Any], ...
+        ] = ()
         self._semantic_entry_required_operation_families: dict[str, int] = {}
         self._semantic_entry_required_operation_attributes: tuple[
             tuple[str, str, str, int], ...
@@ -733,9 +1146,19 @@ class IntentIRLiftEnvironment:
                 row is not None
                 and (
                     not isinstance(row, Mapping)
-                    or set(row) != {"field", "json_container"}
+                    or set(row)
+                    not in (
+                        {"field", "json_container"},
+                        {"field", "json_container", "pattern"},
+                    )
                     or not isinstance(row.get("field"), str)
                     or row.get("json_container") not in {"array", "object"}
+                    or "pattern" in row
+                    and (
+                        not isinstance(row.get("pattern"), str)
+                        or row.get("json_container") != "array"
+                        or not row.get("pattern")
+                    )
                 )
                 for row in tool_arguments.values()
             )
@@ -823,8 +1246,51 @@ class IntentIRLiftEnvironment:
             or not isinstance(source_wire, Mapping)
             or source_wire.get("construction_digest") != construction_digest
             or source_wire.get("source_transfer_ledger") != transfer_ledger
+            or source_wire.get("source_facts_digest")
+            != construction.get("source_facts_digest")
         ):
             raise ValueError("canonical construction identity is malformed")
+        if source_wire.get("source_slice_digest") != (
+            source_facts.get("source_slice_digest")
+            if isinstance(source_facts, Mapping)
+            else None
+        ):
+            raise ValueError("canonical Source slice lineage is malformed")
+        host_receipt = source_wire.get("host_launch_contract")
+        transfer_projection = source_wire.get("semantic_transfer_projection")
+        compiler_facts = (
+            source_facts.get("compiler_facts")
+            if isinstance(source_facts, Mapping)
+            else None
+        )
+        contract = (
+            compiler_facts.get("host_launch_contract")
+            if isinstance(compiler_facts, Mapping)
+            else None
+        )
+        if (
+            not isinstance(host_receipt, Mapping)
+            or not isinstance(transfer_projection, Mapping)
+            or transfer_projection.get("host_launch_contract") != host_receipt
+            or host_receipt.get("source_facts_digest") != source_facts_digest
+        ):
+            raise ValueError("canonical host launch receipt lineage is malformed")
+        if host_receipt.get("transfer_ledger_digest") != self._stable_host_digest(transfer_ledger):
+            raise ValueError("canonical host launch transfer lineage is malformed")
+        if not isinstance(contract, Mapping) or not contract:
+            if host_receipt.get("status") != "unavailable":
+                raise ValueError("canonical host launch receipt falsely claims availability")
+            if (
+                isinstance(source_facts, Mapping)
+                and source_facts.get("frontend") == "triton"
+                and source_facts.get("source_kind") == "python"
+            ):
+                raise ValueError("canonical Triton host launch contract is unavailable")
+        else:
+            if host_receipt.get("status") != "pass":
+                raise ValueError("canonical host launch receipt is not closed")
+            if host_receipt.get("contract_digest") != self._stable_host_digest(contract):
+                raise ValueError("canonical host launch contract digest is stale")
         payload = {
             key: value
             for key, value in construction.items()
@@ -880,6 +1346,77 @@ class IntentIRLiftEnvironment:
                 "canonical Source transfer ledger is not closed: "
                 f"{source_transfer.get('reason')}"
             )
+        if (
+            not isinstance(transfer_projection, Mapping)
+            or transfer_projection.get("status") != "pass"
+            or not isinstance(transfer_projection.get("occurrences"), list)
+            or transfer_projection.get("host_launch_contract")
+            != bundle.get("host_launch_contract")
+        ):
+            raise ValueError("canonical Source transfer projection is not closed")
+        source_owner_outlines: dict[int, dict[str, Any]] = {}
+        for occurrence in transfer_projection["occurrences"]:
+            if not isinstance(occurrence, Mapping):
+                raise ValueError("canonical Source transfer occurrence is malformed")
+            ordinal = occurrence.get("ordinal")
+            # ``semantic_transfer_projection`` is the public occurrence
+            # projection emitted by ``_logical_transfer_projection``.  Its
+            # Source semantic fields (including authorizations) live on the
+            # occurrence row itself; ``source_semantics`` is the nested shape
+            # used later by ``semantic_construction_requirements``.  Reading
+            # the latter here silently discarded every public owner outline
+            # and made a Source-authorized physical store look unavailable.
+            # Keep this join on the canonical public row and let the private
+            # ledger/outline checks below remain the authority.
+            authorizations = occurrence.get("semantic_authorizations")
+            owner = (
+                authorizations.get("owner")
+                if isinstance(authorizations, Mapping)
+                else None
+            )
+            outline = owner.get("authoring_outline") if isinstance(owner, Mapping) else None
+            if outline is None:
+                continue
+            if (
+                not is_canonical_ordinal(ordinal)
+                or not isinstance(outline, Mapping)
+                or set(outline) != {"store", "graph"}
+                or not isinstance(outline.get("store"), Mapping)
+                or not isinstance(outline.get("graph"), list)
+            ):
+                raise ValueError("canonical Source owner outline is malformed")
+            previous = source_owner_outlines.get(ordinal)
+            if previous is not None and previous != dict(outline):
+                raise ValueError("canonical Source owner outline is ambiguous")
+            source_owner_outlines[ordinal] = copy.deepcopy(dict(outline))
+        public_projection_text = json.dumps(
+            transfer_projection,
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        # The public projection may contain a deliberately public computed
+        # guard/access token, but never a host owner token or private receipt
+        # fields.  The full private ledger remains in the mounted host record
+        # and is consumed only by host-side admission.
+        if (
+            re.search(r"(?<![A-Za-z0-9_])so_[0-9a-f]{32}_[0-9a-f]{64}(?![A-Za-z0-9_])", public_projection_text)
+            or any(
+                isinstance(auth, Mapping)
+                and (
+                    "status" in auth
+                    or "compiler_attestation" in auth
+                    or (name == "owner" and "token" in auth)
+                )
+                for row in transfer_projection["occurrences"]
+                if isinstance(row, Mapping)
+                for name, auth in (
+                    row.get("semantic_authorizations", {}).items()
+                    if isinstance(row.get("semantic_authorizations"), Mapping)
+                    else ()
+                )
+            )
+        ):
+            raise ValueError("canonical Source projection leaks a private authorization field")
         semantic_required = (
             requirements.get("semantic_required")
             if isinstance(requirements, Mapping)
@@ -897,6 +1434,11 @@ class IntentIRLiftEnvironment:
         )
         access_rows = accesses.get("rows") if isinstance(accesses, Mapping) else None
         output_rows = outputs.get("rows") if isinstance(outputs, Mapping) else None
+        obligation_rows = (
+            requirements.get("obligations")
+            if isinstance(requirements, Mapping)
+            else None
+        )
         projected_access_rows = (
             transfer_projection.get("occurrences")
             if isinstance(transfer_projection, Mapping)
@@ -912,6 +1454,185 @@ class IntentIRLiftEnvironment:
             or any(not isinstance(row, Mapping) for row in output_rows)
         ):
             raise ValueError("canonical Source semantic completion slots are malformed")
+        if bundle.get("source_facts_digest") != self._semantic_construction_identity.get(
+            "source_facts_digest"
+        ):
+            raise ValueError("canonical Source semantic obligation identity is stale")
+        validated_obligations = validate_source_semantic_obligations(
+            obligation_rows,
+            self._semantic_construction_identity["source_facts_digest"],
+        )
+
+        private_occurrences = source_transfer.get("occurrences")
+        if (
+            not isinstance(private_occurrences, list)
+            or len(private_occurrences) != len(projected_access_rows)
+            or any(not isinstance(row, Mapping) for row in private_occurrences)
+        ):
+            raise ValueError("canonical Source private occurrence ledger is malformed")
+        private_bindings = source_transfer.get("bindings")
+        if (
+            not isinstance(private_bindings, list)
+            or len(private_bindings) != len(projected_access_rows)
+            or any(not isinstance(row, Mapping) for row in private_bindings)
+        ):
+            raise ValueError("canonical Source private authorization ledger is malformed")
+
+        def public_authorization_is_closed(
+            value: object,
+            *,
+            owner: bool = False,
+        ) -> bool:
+            if value is None:
+                return True
+            if not isinstance(value, Mapping):
+                return False
+            if "status" in value or "compiler_attestation" in value:
+                return False
+            if owner:
+                return (
+                    "token" not in value
+                    and set(value).issubset({"operation_family", "authoring_outline"})
+                    and isinstance(value.get("operation_family"), str)
+                )
+            return (
+                set(value) == {"token", "operation_family"}
+                and isinstance(value.get("token"), str)
+                and isinstance(value.get("operation_family"), str)
+            )
+
+        def public_authorization_matches_private(
+            private: object,
+            public: object,
+            *,
+            owner: bool = False,
+        ) -> bool:
+            if not isinstance(private, Mapping):
+                return public is None
+            status = private.get("status")
+            if status == "unavailable":
+                return public is None and set(private) == {"status", "reason"}
+            if status != "pass" or not isinstance(public, Mapping):
+                return False
+            family = private.get("operation_family")
+            token = private.get("token")
+            if not isinstance(family, str) or not isinstance(token, str):
+                return False
+            if owner:
+                expected = {"operation_family"}
+                outline = private.get("authoring_outline")
+                if outline is not None:
+                    expected.add("authoring_outline")
+                return (
+                    set(public) == expected
+                    and "token" not in public
+                    and public.get("operation_family") == family
+                    and (
+                        outline is None
+                        or public.get("authoring_outline") == outline
+                    )
+                )
+            return (
+                set(public) == {"token", "operation_family"}
+                and public.get("token") == token
+                and public.get("operation_family") == family
+            )
+
+        for ordinal, (
+            private_row,
+            private_binding,
+            wire_row,
+            requirement_row,
+        ) in enumerate(
+            zip(
+                private_occurrences,
+                private_bindings,
+                projected_access_rows,
+                access_rows,
+                strict=True,
+            )
+        ):
+            private_auth = private_binding.get("semantic_authorizations")
+            public_auth = wire_row.get("semantic_authorizations")
+            if (
+                not is_canonical_ordinal(ordinal)
+                or not is_canonical_ordinal(private_row.get("ordinal"))
+                or not is_canonical_ordinal(private_binding.get("ordinal"))
+                or not is_canonical_ordinal(wire_row.get("ordinal"))
+                or not is_canonical_ordinal(requirement_row.get("ordinal"))
+                or private_row.get("ordinal") != ordinal
+                or private_binding.get("ordinal") != ordinal
+                or wire_row.get("ordinal") != ordinal
+                or requirement_row.get("ordinal") != ordinal
+                or wire_row.get("access_label") != f"access{ordinal}"
+                or requirement_row.get("access_label") != f"access{ordinal}"
+                or wire_row.get("kind") != private_row.get("kind")
+                or wire_row.get("masked") != private_row.get("masked")
+                or wire_row.get("tensor") != private_row.get("logical_ref")
+                or not isinstance(private_auth, Mapping)
+                or not isinstance(public_auth, Mapping)
+                or not public_authorization_is_closed(
+                    public_auth.get("access_view")
+                )
+                or not public_authorization_is_closed(
+                    public_auth.get("owner"),
+                    owner=True,
+                )
+                or not public_authorization_is_closed(
+                    public_auth.get("computed_guard")
+                )
+                or set(private_auth) != {"access_view", "owner", "computed_guard"}
+                or not public_authorization_matches_private(
+                    private_auth.get("access_view"),
+                    public_auth.get("access_view"),
+                )
+                or not public_authorization_matches_private(
+                    private_auth.get("owner"),
+                    public_auth.get("owner"),
+                    owner=True,
+                )
+                or not public_authorization_matches_private(
+                    private_auth.get("computed_guard"),
+                    public_auth.get("computed_guard"),
+                )
+            ):
+                raise ValueError(
+                    "canonical Source occurrence projection is not bound to its ledger"
+                )
+
+            requirement_source = requirement_row.get("source_semantics")
+            wire_auth = wire_row.get("semantic_authorizations")
+            requirement_auth = (
+                requirement_source.get("semantic_authorizations")
+                if isinstance(requirement_source, Mapping)
+                else None
+            )
+            if (
+                not isinstance(requirement_source, Mapping)
+                or requirement_source.get("kind") != wire_row.get("kind")
+                or requirement_source.get("tensor") != wire_row.get("tensor")
+                or requirement_source.get("masked") != wire_row.get("masked")
+                or requirement_source.get("predicate") != wire_row.get("predicate")
+                or requirement_source.get("fill_value") != wire_row.get("fill_value")
+                or requirement_source.get("index") != wire_row.get("index")
+                or requirement_source.get("effect_order") != wire_row.get("effect_order")
+                or requirement_source.get("pi_binding") != wire_row.get("pi_binding")
+                or requirement_auth != wire_auth
+                or requirement_row.get("required_fields") != wire_row.get("required_fields")
+                or requirement_row.get("provider_fields") != wire_row.get("provider_fields")
+                or requirement_row.get("provider_owned_fields")
+                != wire_row.get("provider_owned_fields")
+                or requirement_row.get("provider_owned_expression_fields")
+                != wire_row.get("provider_owned_expression_fields")
+                or requirement_row.get("provider_owned_relations")
+                != wire_row.get("provider_owned_relations")
+                or requirement_row.get("wire_template") != wire_row.get("wire_template")
+                or requirement_row.get("index_expression_requirement")
+                != wire_row.get("index_expression_requirement")
+            ):
+                raise ValueError(
+                    "canonical Source requirements are not bound to transfer projection"
+                )
 
         access_slots: list[dict[str, Any]] = []
         for ordinal, (requirement_row, wire_row) in enumerate(
@@ -921,6 +1642,24 @@ class IntentIRLiftEnvironment:
             required = wire_row.get("required_fields")
             template = wire_row.get("wire_template")
             provider_owned_fields = wire_row.get("provider_owned_fields", [])
+            provider_owned_expression_fields = wire_row.get(
+                "provider_owned_expression_fields", []
+            )
+            provider_owned_relations = wire_row.get("provider_owned_relations")
+            index_expression_requirement = wire_row.get(
+                "index_expression_requirement"
+            )
+            semantic_authorizations = wire_row.get("semantic_authorizations")
+            owner_authorization = (
+                semantic_authorizations.get("owner")
+                if isinstance(semantic_authorizations, Mapping)
+                else None
+            )
+            owner_operation_family = (
+                owner_authorization.get("operation_family")
+                if isinstance(owner_authorization, Mapping)
+                else None
+            )
             if (
                 requirement_row.get("ordinal") != ordinal
                 or requirement_row.get("access_label") != label
@@ -939,6 +1678,31 @@ class IntentIRLiftEnvironment:
                     or field not in template
                     for field in provider_owned_fields
                 )
+                or not isinstance(provider_owned_expression_fields, list)
+                or any(
+                    not isinstance(field, str)
+                    or field not in required
+                    or field not in template
+                    or field in provider_owned_fields
+                    for field in provider_owned_expression_fields
+                )
+                or not isinstance(provider_owned_relations, Mapping)
+                or (
+                    index_expression_requirement is not None
+                    and (
+                        not isinstance(index_expression_requirement, str)
+                        or not index_expression_requirement
+                        or "index_expression" not in provider_owned_expression_fields
+                    )
+                )
+                or (
+                    "node_ref" in provider_owned_fields
+                    and (
+                        wire_row.get("kind") not in {"store", "update"}
+                        or not isinstance(owner_operation_family, str)
+                        or not owner_operation_family
+                    )
+                )
             ):
                 raise ValueError("canonical Source access completion slots are malformed")
             access_slots.append(
@@ -948,35 +1712,201 @@ class IntentIRLiftEnvironment:
                     "required_fields": list(required),
                     "wire_template": copy.deepcopy(dict(template)),
                     "provider_owned_fields": list(provider_owned_fields),
+                    # Expression-valued provider fields have a different
+                    # contract from provider-local labels.  Preserve this
+                    # distinction in the mounted completion slot; otherwise
+                    # the access validator treats a legitimate local index
+                    # expression as if it had to equal the Source placeholder.
+                    "provider_owned_expression_fields": list(
+                        provider_owned_expression_fields
+                    ),
+                    # Keep the already-validated relation contract attached
+                    # to the same slot.  It is consumed by admission and by
+                    # bounded repair feedback; no second hard-coded relation
+                    # table is allowed to replace it.
+                    "provider_owned_relations": copy.deepcopy(
+                        dict(provider_owned_relations)
+                    ),
+                    "source_index_expression_requirement": index_expression_requirement,
+                    # A Source-authorized store/update owner is the root of
+                    # its issued owner DAG, not a load's direct tensor
+                    # consumer. Preserve the already-bound operation family
+                    # on the internal slot so graph preflight can offer only
+                    # same-family local labels; final Source owner admission
+                    # still proves the complete root/DAG relation.
+                    "source_owner_operation_family": owner_operation_family,
+                    "obligations": [
+                        copy.deepcopy(obligation)
+                        for obligation in validated_obligations
+                        if obligation["source_locator"].get("ordinal") == ordinal
+                    ],
                 }
             )
+            if not access_slots[-1]["obligations"]:
+                raise ValueError(
+                    "canonical Source access completion slot has no obligations"
+                )
 
         output_slots: list[dict[str, Any]] = []
-        for ordinal, row in enumerate(output_rows):
+        output_construction = bundle.get("output_construction")
+        if (
+            not isinstance(output_construction, list)
+            or len(output_construction) != len(output_rows)
+            or any(not isinstance(row, Mapping) for row in output_construction)
+        ):
+            raise ValueError("canonical Source output construction is malformed")
+        _validate_mounted_source_output_projection(bundle, output_construction)
+        _validate_mounted_source_store_projection(
+            access_rows,
+            output_rows,
+            output_construction,
+            self._semantic_provider_dimension_aliases,
+        )
+        for ordinal, (row, source_output) in enumerate(
+            zip(output_rows, output_construction, strict=True)
+        ):
             required = row.get("required_fields")
             template = row.get("wire_template")
             if (
                 not isinstance(row.get("output"), str)
+                or row.get("output") != source_output.get("output")
+                or row.get("output_type") != source_output.get("output_type")
                 or not isinstance(required, list)
                 or required != ["value"]
                 or not isinstance(template, Mapping)
                 or set(template) != {"value"}
             ):
                 raise ValueError("canonical Source output completion slots are malformed")
+            source_store_requirements = row.get("source_store_requirements")
+            if source_store_requirements is not None:
+                if (
+                    not isinstance(source_store_requirements, list)
+                    or not source_store_requirements
+                    or any(
+                        not isinstance(item, Mapping)
+                        or set(item) != {"ordinal", "kind", "operation_family", "coordinates"}
+                        or not is_canonical_ordinal(item.get("ordinal"))
+                        or item.get("kind") not in {"store", "update"}
+                        or not isinstance(item.get("operation_family"), str)
+                        or not item.get("operation_family")
+                        or not isinstance(item.get("coordinates"), list)
+                        or any(
+                            not (
+                                isinstance(coordinate, int)
+                                and not isinstance(coordinate, bool)
+                            )
+                            and not (
+                                isinstance(coordinate, str)
+                                and (
+                                    re.fullmatch(r"axis[0-9]+", coordinate) is not None
+                                    or re.fullmatch(r"[0-9]+", coordinate) is not None
+                                )
+                            )
+                            for coordinate in item.get("coordinates", ())
+                        )
+                        for item in source_store_requirements
+                    )
+                    or len({item["ordinal"] for item in source_store_requirements})
+                    != len(source_store_requirements)
+                ):
+                    raise ValueError("canonical Source output store requirements are malformed")
+            partition_requirement = row.get(
+                "source_store_partition_requirement"
+            )
+            if partition_requirement is not None:
+                if (
+                    not isinstance(partition_requirement, Mapping)
+                        or set(partition_requirement)
+                        not in (
+                            {
+                                "output",
+                                "store_ordinals",
+                                "store_coordinates",
+                                "relation",
+                            },
+                            {
+                                "output",
+                                "store_ordinals",
+                                "store_coordinates",
+                                "relation",
+                                "assembly",
+                            },
+                        )
+                    or partition_requirement.get("output") != row.get("output")
+                    or partition_requirement.get("relation")
+                    != "physical_store_slices_require_complete_logical_output_binding"
+                    or not isinstance(
+                        partition_requirement.get("store_ordinals"), list
+                    )
+                    or not isinstance(
+                        partition_requirement.get("store_coordinates"), list
+                    )
+                    or len(partition_requirement["store_ordinals"])
+                    != len(partition_requirement["store_coordinates"])
+                    or not partition_requirement["store_ordinals"]
+                    or any(
+                        type(item) is not int
+                        for item in partition_requirement["store_ordinals"]
+                    )
+                    or any(
+                        not isinstance(item, list)
+                        for item in partition_requirement["store_coordinates"]
+                    )
+                ):
+                    raise ValueError(
+                        "canonical Source output partition requirement is malformed"
+                    )
+            source_owner_authoring_outlines: list[dict[str, Any]] = []
+            if source_store_requirements is not None:
+                for requirement in source_store_requirements:
+                    ordinal_ref = requirement["ordinal"]
+                    outline = source_owner_outlines.get(ordinal_ref)
+                    if outline is None:
+                        raise ValueError(
+                            "canonical Source output owner outline is unavailable"
+                        )
+                    source_owner_authoring_outlines.append(
+                        {
+                            "ordinal": ordinal_ref,
+                            "outline": copy.deepcopy(outline),
+                        }
+                    )
             # Output names/types remain in the transfer-ledger view.  An ABI
             # ordinal plus the schema-owned required selection is all that is
             # needed to prevent an omitted mapping while preserving a compact
             # first construction response.
-            output_slots.append(
-                {
-                    "ordinal": ordinal,
-                    "required_fields": ["value"],
-                    "wire_template": copy.deepcopy(dict(template)),
-                }
-            )
+            output_slot = {
+                "ordinal": ordinal,
+                "required_fields": ["value"],
+                "wire_template": copy.deepcopy(dict(template)),
+                "obligations": [
+                    copy.deepcopy(obligation)
+                    for obligation in validated_obligations
+                    if obligation["source_locator"].get("output_ordinal")
+                    == ordinal
+                ],
+            }
+            if not output_slot["obligations"]:
+                raise ValueError(
+                    "canonical Source output completion slot has no obligations"
+                )
+            if source_store_requirements is not None:
+                output_slot["source_store_requirements"] = copy.deepcopy(
+                    source_store_requirements
+                )
+            if partition_requirement is not None:
+                output_slot["source_store_partition_requirement"] = copy.deepcopy(
+                    partition_requirement
+                )
+            if source_owner_authoring_outlines:
+                output_slot["source_owner_authoring_outlines"] = (
+                    source_owner_authoring_outlines
+                )
+            output_slots.append(output_slot)
         return {
             "accesses": tuple(access_slots),
             "outputs": tuple(output_slots),
+            "obligations": tuple(validated_obligations),
         }
 
     def _mounted_semantic_source_tensor_declarations(
@@ -1028,23 +1958,54 @@ class IntentIRLiftEnvironment:
                 if name in collection_names:
                     raise ValueError("canonical Source tensor declarations are ambiguous")
                 collection_names.add(name)
-                provider_shape: list[str | int] = []
-                for extent in shape:
-                    if isinstance(extent, int) and not isinstance(extent, bool) and extent >= 0:
-                        provider_shape.append(extent)
-                        continue
-                    if isinstance(extent, str):
-                        match = re.fullmatch(r"x([0-9]+)", extent)
-                        if match is not None:
-                            provider_shape.append(f"dim{match.group(1)}")
-                            continue
-                    raise ValueError("canonical Source tensor declarations are malformed")
+                try:
+                    provider_shape = provider_shape_from_canonical(
+                        shape, self._semantic_provider_dimension_aliases
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        "canonical Source tensor declarations are malformed"
+                    ) from exc
                 declaration = (dtype, tuple(provider_shape))
                 previous = result.get(name)
                 if previous is not None and previous != declaration:
                     raise ValueError("canonical Source tensor declarations are ambiguous")
                 result[name] = declaration
         return result
+
+    def _mounted_semantic_provider_dimension_aliases(self) -> dict[str, str]:
+        """Read the Source-issued canonical-to-provider dimension mapping."""
+
+        construction_path = self.config.input_dir / "canonical_construction.json"
+        source_wire_path = (
+            self.config.input_dir / "schema" / "canonical_source_wire_bundle.json"
+        )
+        if (
+            not construction_path.is_file()
+            or construction_path.is_symlink()
+            or not source_wire_path.is_file()
+            or source_wire_path.is_symlink()
+        ):
+            raise ValueError("canonical Source dimension projection is unavailable")
+        construction = json.loads(construction_path.read_text(encoding="utf-8"))
+        source_wire = json.loads(source_wire_path.read_text(encoding="utf-8"))
+        allocator = (
+            construction.get("allocator")
+            if isinstance(construction, Mapping)
+            else None
+        )
+        canonical_dimensions = (
+            allocator.get("x") if isinstance(allocator, Mapping) else None
+        )
+        aliases = (
+            source_wire.get("provider_dimension_aliases")
+            if isinstance(source_wire, Mapping)
+            else None
+        )
+        return provider_dimension_alias_map(
+            aliases,
+            canonical_dimensions=canonical_dimensions,
+        )
 
     def _mounted_semantic_source_tensor_handles(self) -> frozenset[str]:
         """Read the closed Source ``t*`` set used by graph ingress checks."""
@@ -1147,9 +2108,127 @@ class IntentIRLiftEnvironment:
     def _semantic_slot_receipt(self) -> dict[str, Any]:
         """Return the bounded required-slot view for ``begin_candidate``."""
 
+        typed_output_requirements: list[dict[str, Any]] = []
+        source_owner_producer_requirements: list[dict[str, Any]] = []
+        source_logical_output_assembly_requirements: list[dict[str, Any]] = []
+        # The provider has already read the Source-order transfer ledger before
+        # begin_candidate.  That ledger is the sole owner of complete
+        # source_owner_authoring_outline graphs and of access/output wire
+        # slots.  Repeating those rows here used to make one begin receipt
+        # large enough for the Responses observation wrapper to elide its
+        # middle, which hid the typed output obligations from the graph author.
+        # Keep only graph-phase facts in this receipt; the private construction
+        # slots remain unchanged and the later mandatory transfer reread still
+        # supplies every access/output row.
+        source_access_ordinals = {
+            row.get("ordinal")
+            for row in self._semantic_construction_slots["accesses"]
+            if isinstance(row, Mapping) and is_canonical_ordinal(row.get("ordinal"))
+        }
+        for ordinal, (dtype, shape) in enumerate(
+            self._semantic_source_output_tensor_value_types
+        ):
+            requirement = {
+                "ordinal": ordinal,
+                "dtype": dtype,
+                "shape": list(shape),
+            }
+            partition_requirement = self._semantic_construction_slots[
+                "outputs"
+            ][ordinal].get("source_store_partition_requirement")
+            if partition_requirement is not None:
+                assembly = partition_requirement.get("assembly")
+                if isinstance(assembly, Mapping):
+                    source_logical_output_assembly_requirements.append(
+                        {
+                            "output_ordinal": ordinal,
+                            "output": partition_requirement.get("output"),
+                            "requirement": copy.deepcopy(assembly),
+                        }
+                    )
+            source_owner_authoring_outlines = self._semantic_construction_slots[
+                "outputs"
+            ][ordinal].get("source_owner_authoring_outlines")
+            if source_owner_authoring_outlines is not None:
+                # Keep the graph-phase obligation adjacent to the typed output
+                # requirement, but do not duplicate the owner DAG.  The DAG is
+                # already exposed in ``source_owner_authoring_outlines``; this
+                # compact index binds its Source output ordinal, owner ordinal,
+                # and exact typed root to the operation-graph phase.  It is a
+                # projection of existing Source owner evidence only: it never
+                # allocates a J result, chooses a producer, or proves a
+                # partition.
+                for owner_row in source_owner_authoring_outlines:
+                    if not isinstance(owner_row, Mapping):
+                        raise ValueError(
+                            "canonical Source owner authoring outline is malformed"
+                        )
+                    owner_ordinal = owner_row.get("ordinal")
+                    outline = owner_row.get("outline")
+                    graph = outline.get("graph") if isinstance(outline, Mapping) else None
+                    if (
+                        not is_canonical_ordinal(owner_ordinal)
+                        or not isinstance(graph, list)
+                        or not graph
+                        or owner_ordinal not in source_access_ordinals
+                    ):
+                        raise ValueError(
+                            "canonical Source owner producer outline is malformed"
+                        )
+                    root = graph[-1]
+                    if (
+                        not isinstance(root, (list, tuple))
+                        or len(root) != 5
+                        or not isinstance(root[0], str)
+                        or not isinstance(root[1], str)
+                        or not isinstance(root[2], list)
+                        or any(
+                            not (
+                                isinstance(extent, str) and bool(extent)
+                                or isinstance(extent, int)
+                                and not isinstance(extent, bool)
+                                and extent >= 0
+                            )
+                            for extent in root[2]
+                        )
+                        or not isinstance(root[4], list)
+                    ):
+                        raise ValueError(
+                            "canonical Source owner producer root is malformed"
+                        )
+                    provider_root_shape = provider_shape_from_canonical(
+                        root[2], self._semantic_provider_dimension_aliases
+                    )
+                    source_owner_producer_requirements.append(
+                        {
+                            "output_ordinal": ordinal,
+                            "owner_ordinal": owner_ordinal,
+                            "outline_field": "source_owner_authoring_outlines",
+                            "producer_scope": (
+                                "physical_store_slice"
+                                if partition_requirement is not None
+                                else "logical_output_value"
+                            ),
+                            "graph_node_count": len(graph),
+                            # The complete DAG is already present in the
+                            # transfer-ledger access row with this ordinal.
+                            # This locator is Source evidence, not a guessed
+                            # owner or a provider-submitted token.
+                            "transfer_access_ordinal": owner_ordinal,
+                            "root_operation": root[0],
+                            "root_type": {
+                                "dtype": root[1],
+                                # Owner outlines are stored in canonical x*
+                                # dimensions.  The provider graph is authored
+                                # in dim* dimensions; exposing x* here made a
+                                # valid slice root look incompatible with the
+                                # graph ingress type contract.
+                                "shape": provider_root_shape,
+                            },
+                        }
+                    )
+            typed_output_requirements.append(requirement)
         return {
-            "accesses": [dict(row) for row in self._semantic_construction_slots["accesses"]],
-            "outputs": [dict(row) for row in self._semantic_construction_slots["outputs"]],
             "operation_graph": {
                 "source_operation_facts": self._semantic_entry_operation_fact_count,
                 "non_boundary_source_operation_facts": (
@@ -1169,10 +2248,60 @@ class IntentIRLiftEnvironment:
                         self._semantic_entry_required_operation_attributes
                     )
                 ],
-                "requirement": (
-                    "represent the complete Source calculation spine; index and "
-                    "mask setup alone are not a complete operation graph"
+                # This is the already-validated flat Source obligation view.
+                # It is repeated once at the graph boundary so the provider
+                # does not have to reconstruct or remember a 28-leaf Source
+                # spine from an earlier brief.  The rows remain read-only
+                # Source facts; they do not allocate provider labels or
+                # authorize guessed operands/producers.
+                "source_operation_requirements": copy.deepcopy(
+                    list(self._semantic_entry_operation_requirements)
                 ),
+                "typed_output_requirements": typed_output_requirements,
+                "source_owner_producer_requirements": (
+                    source_owner_producer_requirements
+                ),
+                "source_logical_output_assembly_requirements": (
+                    source_logical_output_assembly_requirements
+                ),
+                "obligations": [
+                    copy.deepcopy(obligation)
+                    for obligation in self._semantic_construction_slots[
+                        "obligations"
+                    ]
+                    if obligation.get("kind")
+                    in {
+                        "operation_graph",
+                        "source_owner_producer",
+                        "physical_store_partition",
+                    }
+                ],
+                "requirement": (
+                    "represent the complete Source calculation spine and every "
+                    "listed Source-authorized typed owner DAG from the matching "
+                    "transfer-ledger access rows; index and mask setup alone "
+                    "are not a complete operation graph"
+                ),
+            },
+            "completion_contract": {
+                "accesses": {
+                    "count": len(self._semantic_construction_slots["accesses"]),
+                    "source": "semantic_transfer_after_operation_graph",
+                },
+                "outputs": {
+                    "count": len(self._semantic_construction_slots["outputs"]),
+                    "source": "semantic_transfer_after_operation_graph",
+                },
+                "obligations": {
+                    "count": len(
+                        self._semantic_construction_slots["obligations"]
+                    ),
+                    "authority": "source_construction",
+                    "resolution": "host_validator_receipt_only",
+                    "mcp_pass_scope": (
+                        "wire_or_relation_preflight_unless_final_admission_receipt_is_explicit"
+                    ),
+                },
             },
         }
 
@@ -1249,8 +2378,22 @@ class IntentIRLiftEnvironment:
                     {"row_index": index},
                 )
             provider_owned = slot.get("provider_owned_fields", ())
+            provider_owned_expressions = slot.get(
+                "provider_owned_expression_fields", ()
+            )
             if not isinstance(provider_owned, (list, tuple)) or any(
                 not isinstance(field, str) for field in provider_owned
+            ):
+                return (
+                    "canonical_source_access_wire_template_is_malformed",
+                    {"row_index": index},
+                )
+            if not isinstance(provider_owned_expressions, (list, tuple)) or any(
+                not isinstance(field, str)
+                or field not in slot["required_fields"]
+                or field not in template
+                or field in provider_owned
+                for field in provider_owned_expressions
             ):
                 return (
                     "canonical_source_access_wire_template_is_malformed",
@@ -1275,6 +2418,28 @@ class IntentIRLiftEnvironment:
                 "effect_target",
                 "effect_node_ref",
             ):
+                if field in provider_owned_expressions:
+                    value = row.get(field)
+                    if not isinstance(value, str) or not value or value.startswith(
+                        "<"
+                    ):
+                        return (
+                            "access_declaration_provider_index_expression_must_be_local_expression",
+                            {"row_index": index, "field": field},
+                        )
+                    if (
+                        field == "index_expression"
+                        and isinstance(
+                            slot.get("source_index_expression_requirement"), str
+                        )
+                        and value
+                        != slot["source_index_expression_requirement"]
+                    ):
+                        return (
+                            "access_declaration_must_match_source_index_requirement",
+                            {"row_index": index, "field": field},
+                        )
+                    continue
                 if field in provider_owned:
                     value = row.get(field)
                     if (
@@ -1326,7 +2491,7 @@ class IntentIRLiftEnvironment:
                                 "canonical_source_access_wire_template_is_malformed",
                                 {"row_index": index, "field": field},
                             )
-                        if value not in predicate_choices[index]:
+                        if value not in predicate_choices[index].compatible_labels:
                             return (
                                 "access_declaration_provider_predicate_must_select_compatible_boolean_result",
                                 {"row_index": index, "field": field},
@@ -1380,15 +2545,61 @@ class IntentIRLiftEnvironment:
                             "category": "source_wire_value_mismatch",
                         },
                     )
-            if (
-                "node_ref" in provider_owned
-                and "effect_node_ref" in provider_owned
-                and row.get("node_ref") != row.get("effect_node_ref")
-            ):
+            relation_error = self._semantic_access_provider_relation_error(
+                slot, row
+            )
+            if relation_error is not None:
                 return (
-                    "access_declaration_effect_node_owner_must_match_access_owner",
-                    {"row_index": index, "field": "effect_node_ref"},
+                    relation_error,
+                    {
+                        "row_index": index,
+                        "field": "effect_node_ref"
+                        if relation_error
+                        == "access_declaration_effect_node_owner_must_match_access_owner"
+                        else "provider_owned_relations",
+                    },
                 )
+        return None
+
+    @staticmethod
+    def _semantic_access_provider_relation_error(
+        slot: Mapping[str, Any], row: Mapping[str, Any]
+    ) -> str | None:
+        """Validate the Source-issued provider relation map for one access.
+
+        ``provider_owned_relations`` is part of the mounted Source wire.  The
+        method performs only the relation check already authorized there; it
+        never allocates a node or infers an equality.  The current contract
+        has one relation (``effect_node_ref`` must equal ``node_ref``), but
+        consuming the map generically keeps future relation extensions from
+        creating another parallel hard-coded validator.
+        """
+
+        relations = slot.get("provider_owned_relations")
+        provider_owned = slot.get("provider_owned_fields")
+        if not isinstance(relations, Mapping) or not isinstance(
+            provider_owned, (list, tuple)
+        ):
+            return "canonical_source_access_wire_template_is_malformed"
+        for field, relation in relations.items():
+            if (
+                not isinstance(field, str)
+                or field not in provider_owned
+                or not isinstance(relation, Mapping)
+                or set(relation) != {"must_equal", "reference"}
+                or not isinstance(relation.get("must_equal"), str)
+                or relation.get("must_equal") not in provider_owned
+                or not isinstance(relation.get("reference"), str)
+                or not relation.get("reference")
+            ):
+                return "canonical_source_access_wire_template_is_malformed"
+            reference = relation["must_equal"]
+            if row.get(field) != row.get(reference):
+                if field == "effect_node_ref" and reference == "node_ref":
+                    return (
+                        "access_declaration_effect_node_owner_must_match_access_owner"
+                    )
+                return "canonical_source_access_wire_template_is_malformed"
         return None
 
     def _semantic_access_failure_template(self, accesses: Sequence[Any]) -> dict[str, Any] | None:
@@ -1402,12 +2613,22 @@ class IntentIRLiftEnvironment:
         def safe_template(slot: Mapping[str, Any]) -> dict[str, Any]:
             required = slot.get("required_fields")
             provider_owned = slot.get("provider_owned_fields", ())
+            provider_owned_expressions = slot.get(
+                "provider_owned_expression_fields", ()
+            )
             if not isinstance(required, list):
                 return {}
             owned = set(provider_owned) if isinstance(provider_owned, (list, tuple)) else set()
+            expression_owned = (
+                set(provider_owned_expressions)
+                if isinstance(provider_owned_expressions, (list, tuple))
+                else set()
+            )
             result: dict[str, Any] = {}
             for field in required:
-                if field == "access_label":
+                if field in expression_owned:
+                    result[field] = "<provider_authored_index_expression>"
+                elif field == "access_label":
                     result[field] = slot.get("access_label")
                 elif field == "ordinal":
                     result[field] = slot.get("ordinal")
@@ -1415,6 +2636,11 @@ class IntentIRLiftEnvironment:
                     result[field] = "<provider_local_value>"
                 else:
                     result[field] = "<copy_from_initial_source_wire>"
+            source_index_requirement = slot.get(
+                "source_index_expression_requirement"
+            )
+            if isinstance(source_index_requirement, str):
+                result["index_expression_requirement"] = source_index_requirement
             return result
 
         expected = self._semantic_construction_slots["accesses"]
@@ -1431,8 +2657,14 @@ class IntentIRLiftEnvironment:
             template = slot.get("wire_template")
             if isinstance(template, Mapping):
                 provider_owned = slot.get("provider_owned_fields", ())
-                if not isinstance(provider_owned, (list, tuple)):
+                provider_owned_expressions = slot.get(
+                    "provider_owned_expression_fields", ()
+                )
+                if not isinstance(provider_owned, (list, tuple)) or not isinstance(
+                    provider_owned_expressions, (list, tuple)
+                ):
                     return safe_template(slot)
+                expression_owned = set(provider_owned_expressions)
                 for field in (
                     "kind",
                     "tensor",
@@ -1444,7 +2676,15 @@ class IntentIRLiftEnvironment:
                     "effect_target",
                     "effect_node_ref",
                 ):
-                    if field in provider_owned:
+                    if field in expression_owned:
+                        value = row.get(field)
+                        if (
+                            not isinstance(value, str)
+                            or not value
+                            or value.startswith("<")
+                        ):
+                            return safe_template(slot)
+                    elif field in provider_owned:
                         value = row.get(field)
                         if (
                             not isinstance(value, str)
@@ -1454,13 +2694,73 @@ class IntentIRLiftEnvironment:
                             return safe_template(slot)
                     elif field in slot["required_fields"] and row.get(field) != template.get(field):
                         return safe_template(slot)
-                if (
-                    "node_ref" in provider_owned
-                    and "effect_node_ref" in provider_owned
-                    and row.get("node_ref") != row.get("effect_node_ref")
-                ):
+                if self._semantic_access_provider_relation_error(slot, row) is not None:
                     return safe_template(slot)
         return None
+
+    def _semantic_access_failure_context(self) -> list[dict[str, Any]]:
+        """Project compact safe templates for access-declaration repair.
+
+        A failed access write must be rebuilt as one complete Source-ordered
+        array, but repeating the full construction-slot records on every
+        correction turn needlessly expands the model context.  Keep only the
+        fixed row identity, required/provider-owned field names, and a
+        value-free row template.  This projection never copies a rejected
+        declaration or chooses a predicate, owner, coordinate, or local
+        operation value.
+        """
+
+        result: list[dict[str, Any]] = []
+        for slot in self._semantic_construction_slots["accesses"]:
+            if not isinstance(slot, Mapping):
+                continue
+            required = slot.get("required_fields")
+            provider_owned = slot.get("provider_owned_fields", ())
+            provider_owned_expressions = slot.get(
+                "provider_owned_expression_fields", ()
+            )
+            template = slot.get("wire_template")
+            if not isinstance(required, list) or not isinstance(template, Mapping):
+                continue
+            owned = set(provider_owned) if isinstance(provider_owned, (list, tuple)) else set()
+            expression_owned = (
+                set(provider_owned_expressions)
+                if isinstance(provider_owned_expressions, (list, tuple))
+                else set()
+            )
+            safe_template: dict[str, Any] = {}
+            for field in required:
+                if field in expression_owned:
+                    safe_template[field] = "<provider_authored_index_expression>"
+                elif field in owned:
+                    safe_template[field] = "<provider_local_value>"
+                elif field in template:
+                    safe_template[field] = copy.deepcopy(template[field])
+                else:
+                    safe_template[field] = "<copy_from_initial_source_wire>"
+            source_index_requirement = slot.get(
+                "source_index_expression_requirement"
+            )
+            if isinstance(source_index_requirement, str):
+                safe_template["index_expression_requirement"] = (
+                    source_index_requirement
+                )
+            result.append(
+                {
+                    "access_label": slot.get("access_label"),
+                    "ordinal": slot.get("ordinal"),
+                    "required_fields": list(required),
+                    "provider_owned_fields": sorted(owned),
+                    "provider_owned_expression_fields": sorted(expression_owned),
+                    "provider_owned_relations": copy.deepcopy(
+                        dict(slot.get("provider_owned_relations", {}))
+                    )
+                    if isinstance(slot.get("provider_owned_relations"), Mapping)
+                    else {},
+                    "wire_template": safe_template,
+                }
+            )
+        return result
 
     def _semantic_output_value_types(
         self,
@@ -1475,6 +2775,15 @@ class IntentIRLiftEnvironment:
         the visibility/type preconditions of ``canonical_output_records``
         without constructing an output mapping or selecting a value.
         """
+
+        def valid_shape(value: Any) -> bool:
+            return isinstance(value, list) and all(
+                isinstance(extent, str) and bool(extent)
+                or isinstance(extent, int)
+                and not isinstance(extent, bool)
+                and extent >= 0
+                for extent in value
+            )
 
         rows = semantic_operation_wire_rows(function)
         if rows is None:
@@ -1500,7 +2809,7 @@ class IntentIRLiftEnvironment:
                 isinstance(raw_result, str)
                 and isinstance(operation_type, Mapping)
                 and isinstance(operation_type.get("dtype"), str)
-                and isinstance(operation_type.get("shape"), list)
+                and valid_shape(operation_type.get("shape"))
             ):
                 visible_types[raw_result] = (
                     operation_type["dtype"],
@@ -1518,7 +2827,7 @@ class IntentIRLiftEnvironment:
                     isinstance(result, str)
                     and isinstance(carry_type, Mapping)
                     and isinstance(carry_type.get("dtype"), str)
-                    and isinstance(carry_type.get("shape"), list)
+                    and valid_shape(carry_type.get("shape"))
                 ):
                     visible_types[result] = (
                         carry_type["dtype"],
@@ -1551,24 +2860,157 @@ class IntentIRLiftEnvironment:
                 return ordinal, required_type
         return None
 
-    def _semantic_access_predicate_choices(
+    def _semantic_graph_matching_output_type_count(
         self,
         body: Sequence[Any],
-    ) -> tuple[frozenset[str], ...] | None:
-        """Return compatible provider-local booleans for each access slot.
+        required_type: tuple[str, tuple[str | int, ...]],
+    ) -> int:
+        """Count already-visible values with one exact Source output type.
 
-        The graph owns result labels/types and the Source wire owns each
-        access target.  This projection only asks whether an already authored
-        boolean has the same unique guard projection later consumed by the
-        canonical constructor.  It never selects a label or creates a guard.
+        This is diagnostic projection only.  It never selects a producer,
+        creates a result, or treats a matching type as proof of output
+        ownership; the later output/Source checks remain authoritative.
         """
 
         projection = self._semantic_output_value_types({"body": list(body)})
         if projection is None:
+            return 0
+        _local_results, visible_types = projection
+        return sum(
+            value_type == required_type
+            for value_type in visible_types.values()
+        )
+
+    def _semantic_output_assembly_requirements(self) -> tuple[Mapping[str, Any], ...]:
+        """Return only Source-proven logical-output assembly requirements."""
+
+        requirements: list[Mapping[str, Any]] = []
+        for ordinal, slot in enumerate(self._semantic_construction_slots["outputs"]):
+            if not isinstance(slot, Mapping):
+                continue
+            partition = slot.get("source_store_partition_requirement")
+            assembly = partition.get("assembly") if isinstance(partition, Mapping) else None
+            if not isinstance(assembly, Mapping):
+                continue
+            requirements.append(
+                {
+                    "output_ordinal": ordinal,
+                    "output": partition.get("output"),
+                    "requirement": assembly,
+                }
+            )
+        return tuple(requirements)
+
+    def _semantic_graph_missing_output_assembly(
+        self,
+        body: Sequence[Any],
+    ) -> Mapping[str, Any] | None:
+        """Require the exact typed concat that closes a proven store partition.
+
+        This is deliberately narrower than accepting any same-shaped value:
+        the assembly operation, axis, ordered operand count/types and result
+        type all come from the already validated Source partition projection.
+        Provider-local labels remain opaque and are never selected by the host.
+        """
+
+        requirements = self._semantic_output_assembly_requirements()
+        if not requirements:
             return None
+        rows = semantic_operation_wire_rows({"body": list(body)})
+        projection = self._semantic_output_value_types({"body": list(body)})
+        if rows is None or projection is None:
+            return requirements[0]
         local_results, visible_types = projection
-        choices: list[frozenset[str]] = []
-        for slot in self._semantic_construction_slots["accesses"]:
+        for requirement in requirements:
+            assembly = requirement.get("requirement")
+            if not isinstance(assembly, Mapping):
+                return requirement
+            result_type = assembly.get("result_type")
+            operand_type = assembly.get("operand_type")
+            operand_count = assembly.get("operand_store_ordinals")
+            axis = assembly.get("axis")
+            if (
+                not isinstance(result_type, Mapping)
+                or not isinstance(operand_type, Mapping)
+                or not isinstance(operand_count, list)
+                or type(axis) is not int
+            ):
+                return requirement
+            expected_result = (
+                result_type.get("dtype"),
+                tuple(result_type.get("shape", ())),
+            )
+            expected_operand = (
+                operand_type.get("dtype"),
+                tuple(operand_type.get("shape", ())),
+            )
+            found = False
+            for path, operation in rows:
+                if (
+                    not isinstance(path, str)
+                    or re.fullmatch(r"body\[[0-9]+\]", path) is None
+                    or operation.get("op") != "concat"
+                    or not isinstance(operation.get("attrs"), Mapping)
+                    or operation["attrs"].get("axis") != axis
+                    or not isinstance(operation.get("operands"), list)
+                    or len(operation["operands"]) != len(operand_count)
+                    or not all(
+                        isinstance(operand, str)
+                        and operand in local_results
+                        and visible_types.get(operand) == expected_operand
+                        for operand in operation["operands"]
+                    )
+                    or len(set(operation["operands"])) != len(operation["operands"])
+                ):
+                    continue
+                result = operation.get("result")
+                if (
+                    not isinstance(result, str)
+                    or visible_types.get(result) != expected_result
+                ):
+                    continue
+                found = True
+                break
+            if not found:
+                return requirement
+        return None
+
+    @staticmethod
+    def _semantic_graph_operation_family_counts(
+        rows: Sequence[tuple[str, Mapping[str, Any]]],
+    ) -> dict[str, int]:
+        """Count canonical operation families from one shared wire walk.
+
+        Graph ingress and its safe rejection diagnostic must observe the same
+        lexical operation rows.  Keeping this count in one helper prevents a
+        future nested-region change from making ingress reject one count while
+        feedback reports another.  The helper is diagnostic/structural only:
+        it neither maps Source facts nor creates a missing operation.
+        """
+
+        counts: dict[str, int] = {}
+        for _path, operation in rows:
+            name = operation.get("op")
+            if isinstance(name, str):
+                counts[name] = counts.get(name, 0) + 1
+        return counts
+
+    def _semantic_access_predicate_relations(
+        self,
+    ) -> tuple[Mapping[str, Any], ...] | None:
+        """Project one typed predicate relation for every Source access slot.
+
+        The MCP graph preflight and the canonical computed-guard adapter must
+        consume the same relation: provider-local predicate dtype, the Source
+        access target type, and the unique rank-insertion rule.  Keeping this
+        relation at the slot boundary avoids a load-only shortcut here that
+        would disagree with the later store/update guard validation.  This
+        helper only exposes already-mounted types; it never selects a result,
+        creates a predicate, or infers a target shape.
+        """
+
+        relations: list[Mapping[str, Any]] = []
+        for ordinal, slot in enumerate(self._semantic_construction_slots["accesses"]):
             if not isinstance(slot, Mapping):
                 return None
             provider_owned = slot.get("provider_owned_fields", ())
@@ -1578,8 +3020,19 @@ class IntentIRLiftEnvironment:
                 or not isinstance(template, Mapping)
             ):
                 return None
-            if "predicate" not in provider_owned:
-                choices.append(frozenset())
+            requires_predicate = "predicate" in provider_owned
+            relation: dict[str, Any] = {
+                "ordinal": ordinal,
+                "requires_predicate": requires_predicate,
+                "kind": template.get("kind"),
+                "tensor": template.get("tensor"),
+                "computed_guard": (
+                    isinstance(template.get("semantic_guard_authorization"), str)
+                    and bool(template.get("semantic_guard_authorization"))
+                ),
+            }
+            if not requires_predicate:
+                relations.append(relation)
                 continue
             tensor = template.get("tensor")
             kind = template.get("kind")
@@ -1590,26 +3043,93 @@ class IntentIRLiftEnvironment:
             )
             if target_type is None or kind not in {"load", "store", "update"}:
                 return None
+            if relation["computed_guard"] and not computed_guard_projection_supported(kind):
+                # The Source ledger may identify a computed guard on an
+                # unsupported access kind, but no downstream canonical
+                # representation exists for it.  Keep the graph ingress
+                # fail-closed instead of allowing a later phase to disagree.
+                relation["shape_rule"] = "computed_guard_projection_unsupported_for_access_kind"
+                relations.append(relation)
+                continue
+            relation["target_dtype"] = target_type[0]
+            relation["target_shape"] = tuple(target_type[1])
+            relation["shape_rule"] = (
+                "i1_with_one_unique_exact_rank_insertion"
+            )
+            relations.append(relation)
+        return tuple(relations)
+
+    def _semantic_access_predicate_choices(
+        self,
+        body: Sequence[Any],
+    ) -> tuple[_SemanticAccessPredicateChoices, ...] | None:
+        """Return typed local predicate candidates per Source access slot.
+
+        The graph owns result labels/types and the Source wire owns each
+        access target.  This projection only asks whether an already authored
+        boolean has the same unique guard projection later consumed by the
+        canonical constructor. It also records a count-only distinction
+        between a missing boolean result and booleans whose shapes do not
+        satisfy that relation. It never selects a label or creates a guard.
+        """
+
+        projection = self._semantic_output_value_types({"body": list(body)})
+        if projection is None:
+            return None
+        local_results, visible_types = projection
+        relations = self._semantic_access_predicate_relations()
+        if relations is None:
+            return None
+        choices: list[_SemanticAccessPredicateChoices] = []
+        for relation in relations:
+            if not relation.get("requires_predicate"):
+                choices.append(_SemanticAccessPredicateChoices(frozenset(), 0, 0))
+                continue
+            if (
+                relation.get("computed_guard")
+                and not computed_guard_projection_supported(relation.get("kind"))
+            ):
+                choices.append(_SemanticAccessPredicateChoices(frozenset(), 0, 0))
+                continue
+            target_shape = relation.get("target_shape")
+            if not isinstance(target_shape, tuple):
+                return None
             compatible: set[str] = set()
+            boolean_result_count = 0
             for label in local_results:
                 predicate_type = visible_types.get(label)
                 if (
                     predicate_type is None
-                    or predicate_type[0].casefold() not in {"i1", "bool"}
+                    or not is_closed_boolean_dtype(predicate_type[0])
                 ):
                     continue
-                if kind != "load" or unique_access_guard_projection_axes(
-                    predicate_type[1], target_type[1]
+                boolean_result_count += 1
+                if unique_access_guard_projection_axes(
+                    predicate_type[1], target_shape
                 ) is not None:
                     compatible.add(label)
-            choices.append(frozenset(compatible))
+            choices.append(
+                _SemanticAccessPredicateChoices(
+                    compatible_labels=frozenset(compatible),
+                    boolean_result_count=boolean_result_count,
+                    incompatible_boolean_shape_count=(
+                        boolean_result_count - len(compatible)
+                    ),
+                )
+            )
         return tuple(choices)
 
     def _semantic_access_consumer_choices(
         self,
         body: Sequence[Any],
     ) -> tuple[frozenset[str], ...] | None:
-        """Return provider-local direct consumers for guarded load slots."""
+        """Return Source-compatible local refs for access owner slots.
+
+        A load's ``node_ref`` is a direct consumer of its tensor. An exact
+        Source-authorized store/update ``node_ref`` is instead the root owner
+        operation, identified here only by the Source-issued operation family;
+        the later owner admission checks its full typed DAG and occurrence.
+        """
 
         rows = semantic_operation_wire_rows({"body": list(body)})
         if rows is None:
@@ -1629,42 +3149,65 @@ class IntentIRLiftEnvironment:
                 choices.append(frozenset())
                 continue
             tensor = template.get("tensor")
-            if not isinstance(tensor, str) or template.get("kind") != "load":
-                return None
             compatible: set[str] = set()
-            for _path, operation in rows:
-                operation_id = operation.get("id")
-                operands = operation.get("operands")
-                result = operation.get("result")
-                if (
-                    isinstance(operation_id, str)
-                    and isinstance(operands, list)
-                    and isinstance(result, str)
-                    and operands.count(tensor) == 1
-                ):
-                    compatible.add(operation_id)
+            kind = template.get("kind")
+            if kind == "load":
+                if not isinstance(tensor, str):
+                    return None
+                for _path, operation in rows:
+                    operation_id = operation.get("id")
+                    operands = operation.get("operands")
+                    result = operation.get("result")
+                    if (
+                        isinstance(operation_id, str)
+                        and isinstance(operands, list)
+                        and isinstance(result, str)
+                        and operands.count(tensor) == 1
+                    ):
+                        compatible.add(operation_id)
+            elif kind in {"store", "update"}:
+                owner_family = slot.get("source_owner_operation_family")
+                if not isinstance(owner_family, str) or not owner_family:
+                    return None
+                for _path, operation in rows:
+                    operation_id = operation.get("id")
+                    if (
+                        isinstance(operation_id, str)
+                        and operation.get("op") == owner_family
+                    ):
+                        compatible.add(operation_id)
+            else:
+                return None
             choices.append(frozenset(compatible))
         return tuple(choices)
 
     def _semantic_graph_missing_access_predicate_type(
         self,
         body: Sequence[Any],
-    ) -> tuple[int, int] | None:
-        """Return the first masked access without a compatible graph value."""
+    ) -> tuple[int, int, int, int] | None:
+        """Return the first masked access without a compatible graph value.
+
+        The receipt separates "no typed boolean result exists" from "typed
+        booleans exist but none has the exact Source target projection". Both
+        remain rejecting conditions; the distinction identifies the failed
+        projection edge without exposing a rejected operation row or label.
+        """
 
         choices = self._semantic_access_predicate_choices(body)
-        if choices is None:
+        relations = self._semantic_access_predicate_relations()
+        if choices is None or relations is None:
             return None
-        for ordinal, (slot, labels) in enumerate(
-            zip(
-                self._semantic_construction_slots["accesses"],
-                choices,
-                strict=True,
-            )
-        ):
-            provider_owned = slot.get("provider_owned_fields", ())
-            if "predicate" in provider_owned and not labels:
-                return ordinal, 0
+        for relation, choice in zip(relations, choices, strict=True):
+            if relation.get("requires_predicate") and not choice.compatible_labels:
+                ordinal = relation.get("ordinal")
+                if not is_canonical_ordinal(ordinal):
+                    return None
+                return (
+                    ordinal,
+                    len(choice.compatible_labels),
+                    choice.boolean_result_count,
+                    choice.incompatible_boolean_shape_count,
+                )
         return None
 
     def _semantic_graph_missing_access_consumer_id(
@@ -1879,7 +3422,7 @@ class IntentIRLiftEnvironment:
             if "op" not in value:
                 return "operation_row_must_include_canonical_op_field"
             operation = value.get("op")
-            if operation not in catalog:
+            if not isinstance(operation, str) or operation not in catalog:
                 return "operation_op_must_be_canonical_j_name"
             if operation not in STRUCTURED_INTENT_OPS:
                 allowed = {"id", "op", "result", "operands", "attrs", "type"}
@@ -1962,6 +3505,29 @@ class IntentIRLiftEnvironment:
         rows = semantic_operation_wire_rows({"body": list(body)})
         if rows is None:
             return "operation_graph_lexical_wire_is_malformed"
+        # Give an incomplete Source obligation graph precedence over errors in
+        # one of its submitted rows. Otherwise a skeletal declaration can
+        # repeatedly repair a local detail (for example, operand arity) while
+        # omitting nearly the entire Source producer graph. This is diagnostic
+        # ordering only: a graph must still pass every row-level rule below.
+        operation_counts = self._semantic_graph_operation_family_counts(rows)
+        if any(
+            operation_counts.get(name, 0) < required
+            for name, required in self._semantic_entry_required_operation_families.items()
+        ):
+            return "operation_graph_must_cover_source_operation_families"
+        for operation, attribute, value, required in (
+            self._semantic_entry_required_operation_attributes
+        ):
+            actual = sum(
+                1
+                for _path, row in rows
+                if row.get("op") == operation
+                and isinstance(row.get("attrs"), Mapping)
+                and row["attrs"].get(attribute) == value
+            )
+            if actual < required:
+                return "operation_graph_must_cover_source_operation_attributes"
         visible = set(self._semantic_source_tensor_handles)
         value_types = dict(self._semantic_source_tensor_value_types)
 
@@ -1987,42 +3553,14 @@ class IntentIRLiftEnvironment:
                 return None
             return tuple(shape)
 
-        def result_shape_matches_known_operands(
-            operation: Mapping[str, Any],
-            operands: Sequence[Any],
-        ) -> bool:
-            """Reject only rank/shape loss with a unique local proof.
+        def provider_dimension_extent(value: Any) -> Any:
+            """Accept only literals or Source-issued aliases on provider wire."""
 
-            Full broadcasting semantics remain the canonical constructor's
-            responsibility. The graph ingress merely blocks a result shape
-            that contradicts one known operand exactly, or the sole maximal
-            non-scalar shape among otherwise scalar/equal operands. This
-            prevents a provider from shrinking a projected Source tensor to a
-            vector and reaching CandidateCheck as a missing typed-operation
-            bundle, without choosing an interpretation for general broadcast.
-            """
-
-            result = tensor_shape(operation)
-            known = [
-                value_types[operand][1]
-                for operand in operands
-                if isinstance(operand, str) and operand in value_types
-            ]
-            if result is None or not known:
-                return True
-            op = operation.get("op")
-            if op in {"cast", "map_unary"} and len(known) == 1:
-                return result == known[0]
-            if op != "map_binary" or len(known) != 2:
-                return True
-            maximum_rank = max(len(shape) for shape in known)
-            maximal = {shape for shape in known if len(shape) == maximum_rank}
-            if len(maximal) != 1:
-                return True
-            expected = next(iter(maximal))
-            if all(shape == expected or not shape for shape in known):
-                return result == expected
-            return True
+            if is_provider_dimension_extent(
+                value, self._semantic_provider_dimension_aliases.values()
+            ):
+                return value
+            return None
 
         for _path, operation in rows:
             operands = operation.get("operands", ())
@@ -2079,6 +3617,7 @@ class IntentIRLiftEnvironment:
                     )
                     structured_type = (
                         isinstance(operation_type, Mapping)
+                        and isinstance(operation_type.get("kind"), str)
                         and operation_type.get("kind") in {"record", "ragged"}
                     )
                     if not tensor_type and not structured_type:
@@ -2095,14 +3634,16 @@ class IntentIRLiftEnvironment:
                     ):
                         return "operation_type_shape_must_use_valid_provider_extent"
                     if tensor_type and any(
-                        isinstance(extent, str)
-                        and re.fullmatch(r"x[0-9]+", extent) is not None
+                        not is_provider_dimension_extent(
+                            extent,
+                            self._semantic_provider_dimension_aliases.values(),
+                        )
                         for extent in operation_type["shape"]
                     ):
-                        # ``x*`` is allocated only after this semantic write.
-                        # Reject it at the declaration which contains it so a
-                        # provider can correct the public ``dim*`` spelling
-                        # instead of consuming its one CandidateCheck attempt.
+                        # Only Source-issued dimN aliases can represent
+                        # symbolic extents on the provider wire. Reject an
+                        # arbitrary value/argument label at its defining row,
+                        # before it contaminates later operand-shape feedback.
                         return "operation_type_shape_must_use_provider_dimension_alias"
                     if tensor_type and operation.get("op") == "iota":
                         # Iota has no operands from which the generic
@@ -2113,8 +3654,14 @@ class IntentIRLiftEnvironment:
                         # schema-derived relation at graph declaration so a
                         # rank-two iota cannot spend the single finalization
                         # attempt only to fail Decoder type inference.
-                        iota_extent = attrs.get("n") if isinstance(attrs, Mapping) else None
+                        iota_extent = (
+                            provider_dimension_extent(attrs.get("n"))
+                            if isinstance(attrs, Mapping)
+                            else None
+                        )
                         iota_dtype = attrs.get("dtype") if isinstance(attrs, Mapping) else None
+                        if iota_extent is None:
+                            return "operation_type_shape_must_use_provider_dimension_alias"
                         if (
                             tensor_shape(operation) != (iota_extent,)
                             or (
@@ -2144,7 +3691,19 @@ class IntentIRLiftEnvironment:
                                 # id would make that relation unwriteable; do
                                 # not allocate or infer an id here.
                                 return "operation_nontrailing_broadcast_requires_local_id"
-                    if not result_shape_matches_known_operands(operation, operands):
+                    known_shapes = [
+                        value_types[operand][1]
+                        for operand in operands
+                        if isinstance(operand, str) and operand in value_types
+                    ]
+                    expected_shape = _expected_result_shape_for_known_operands(
+                        operation,
+                        known_shapes,
+                    )
+                    if (
+                        expected_shape is not None
+                        and tensor_shape(operation) != expected_shape
+                    ):
                         return "operation_result_type_shape_must_match_operands"
                 visible.add(value)
                 if tensor_type:
@@ -2152,34 +3711,21 @@ class IntentIRLiftEnvironment:
                     dtype = operation_type.get("dtype")
                     if shape is not None and isinstance(dtype, str):
                         value_types[value] = (dtype, shape)
+        # Whole-graph counts are checked before row details above; this stage
+        # now reports type/predicate/output relations only for covered graphs.
         if self._semantic_graph_missing_output_type(body) is not None:
             return "operation_graph_must_expose_each_source_output_type"
         if self._semantic_graph_missing_access_predicate_type(body) is not None:
             return "operation_graph_must_expose_compatible_access_predicate_type"
         if self._semantic_graph_missing_access_consumer_id(body) is not None:
             return "operation_graph_must_expose_access_consumer_id"
-        operation_counts: dict[str, int] = {}
-        for _path, operation in rows:
-            name = operation.get("op")
-            if isinstance(name, str):
-                operation_counts[name] = operation_counts.get(name, 0) + 1
-        if any(
-            operation_counts.get(name, 0) < required
-            for name, required in self._semantic_entry_required_operation_families.items()
-        ):
-            return "operation_graph_must_cover_source_operation_families"
-        for operation, attribute, value, required in (
-            self._semantic_entry_required_operation_attributes
-        ):
-            actual = sum(
-                1
-                for _path, row in rows
-                if row.get("op") == operation
-                and isinstance(row.get("attrs"), Mapping)
-                and row["attrs"].get(attribute) == value
-            )
-            if actual < required:
-                return "operation_graph_must_cover_source_operation_attributes"
+        # Report the logical-output assembly only after the graph has at least
+        # covered its Source operation families/attributes.  A one-row or
+        # otherwise skeletal graph must first receive the complete-graph
+        # contract; otherwise the assembly diagnostic hides the more basic
+        # missing producer chain and encourages a concat-only resubmission.
+        if self._semantic_graph_missing_output_assembly(body) is not None:
+            return "operation_graph_must_expose_source_output_assembly"
         return None
 
     def _semantic_graph_requires_transfer_reread(self) -> bool:
@@ -2339,6 +3885,10 @@ class IntentIRLiftEnvironment:
                 if (
                     view in _SEMANTIC_ENTRY_SUPPLEMENTAL_CONTEXT_VIEWS
                     and self._semantic_entry_supplemental_read is not None
+                    and not (
+                        view == "semantic_transfer"
+                        and self._semantic_transfer_expected_start > 1
+                    )
                 ):
                     raise MCPRequestError(
                         "semantic-entry authoring permits one total supplemental fact read"
@@ -2352,6 +3902,13 @@ class IntentIRLiftEnvironment:
                 }
             )
             resource_action["view"] = view
+            if (
+                view == "semantic_transfer"
+                and action.get("start", 1) != self._semantic_transfer_expected_start
+            ):
+                return self._structured_tool_error(
+                    "semantic transfer pages must be read in Source order"
+                )
             result = self._read_context_view(resource_action)
             if view == "source_brief" and result.get("returncode") == 0:
                 try:
@@ -2359,7 +3916,11 @@ class IntentIRLiftEnvironment:
                     entry = brief.get("semantic_authoring_entry")
                     spine = entry.get("source_semantic_spine") if isinstance(entry, Mapping) else None
                     missing = spine.get("missing_operation_contracts") if isinstance(spine, Mapping) else None
-                    operations = spine.get("operations") if isinstance(spine, Mapping) else None
+                    operation_requirements = (
+                        entry.get("source_operation_requirements")
+                        if isinstance(entry, Mapping)
+                        else None
+                    )
                     required_families = (
                         spine.get("required_operation_families")
                         if isinstance(spine, Mapping)
@@ -2369,6 +3930,73 @@ class IntentIRLiftEnvironment:
                         spine.get("required_operation_attributes")
                         if isinstance(spine, Mapping)
                         else None
+                    )
+                    dependency_edges = (
+                        entry.get("source_operation_dependencies")
+                        if isinstance(entry, Mapping)
+                        else None
+                    )
+                    operation_positions = {
+                        item.get("source_ref"): index
+                        for index, item in enumerate(
+                            operation_requirements
+                            if isinstance(operation_requirements, list)
+                            else []
+                        )
+                        if isinstance(item, Mapping)
+                    }
+                    result_positions = {
+                        item.get("result"): index
+                        for index, item in enumerate(
+                            operation_requirements
+                            if isinstance(operation_requirements, list)
+                            else []
+                        )
+                        if isinstance(item, Mapping)
+                        and isinstance(item.get("result"), str)
+                        and re.fullmatch(r"sx[0-9]+_[0-9]+", item["result"])
+                        is not None
+                    }
+                    expected_dependency_edges = {
+                        (index, result_positions[operand])
+                        for index, item in enumerate(
+                            operation_requirements
+                            if isinstance(operation_requirements, list)
+                            else []
+                        )
+                        if isinstance(item, Mapping)
+                        and isinstance(item.get("operands"), list)
+                        for operand in item["operands"]
+                        if isinstance(operand, str)
+                        and operand in result_positions
+                        and result_positions[operand] != index
+                    }
+                    actual_dependency_edges = (
+                        [tuple(edge) for edge in dependency_edges]
+                        if isinstance(dependency_edges, list)
+                        and all(
+                            isinstance(edge, list)
+                            and len(edge) == 2
+                            and all(
+                                isinstance(value, int)
+                                and not isinstance(value, bool)
+                                for value in edge
+                            )
+                            for edge in dependency_edges
+                        )
+                        else []
+                    )
+                    valid_operation_dependencies = (
+                        isinstance(operation_requirements, list)
+                        and isinstance(dependency_edges, list)
+                        and len(operation_positions) == len(operation_requirements)
+                        and len(actual_dependency_edges) == len(dependency_edges)
+                        and len(set(actual_dependency_edges)) == len(actual_dependency_edges)
+                        and all(
+                            0 <= producer < consumer < len(operation_requirements)
+                            for consumer, producer in actual_dependency_edges
+                        )
+                        and set(actual_dependency_edges) == expected_dependency_edges
                     )
                     if (
                         not isinstance(spine, Mapping)
@@ -2391,10 +4019,128 @@ class IntentIRLiftEnvironment:
                         )
                     if (
                         not isinstance(missing, list)
-                        or not isinstance(operations, list)
+                        or not isinstance(operation_requirements, list)
                         or not isinstance(required_families, Mapping)
                         or not isinstance(required_attributes, list)
-                        or any(not isinstance(item, Mapping) for item in operations)
+                        or not valid_operation_dependencies
+                        or any(
+                            not isinstance(item, Mapping)
+                            or set(item) not in (
+                                {
+                                    "source_ref",
+                                    "canonical_op",
+                                    "operator",
+                                    "operands",
+                                },
+                                {
+                                    "source_ref",
+                                    "canonical_op",
+                                    "operator",
+                                    "operands",
+                                    "result",
+                                },
+                                {
+                                    "source_ref",
+                                    "canonical_op",
+                                    "operator",
+                                    "operands",
+                                    "source_unit_count",
+                                },
+                                {
+                                    "source_ref",
+                                    "canonical_op",
+                                    "operator",
+                                    "operands",
+                                    "result",
+                                    "source_unit_count",
+                                },
+                                {
+                                    "source_ref",
+                                    "canonical_op",
+                                    "canonical_attrs",
+                                    "operands",
+                                },
+                                {
+                                    "source_ref",
+                                    "canonical_op",
+                                    "canonical_attrs",
+                                    "operands",
+                                    "result",
+                                },
+                                {
+                                    "source_ref",
+                                    "canonical_op",
+                                    "canonical_attrs",
+                                    "operands",
+                                    "source_unit_count",
+                                },
+                                {
+                                    "source_ref",
+                                    "canonical_op",
+                                    "canonical_attrs",
+                                    "operands",
+                                    "result",
+                                    "source_unit_count",
+                                },
+                            )
+                            or not isinstance(item.get("source_ref"), str)
+                            or re.fullmatch(r"s[0-9]+", item["source_ref"])
+                            is None
+                            or not isinstance(item.get("canonical_op"), str)
+                            or not item["canonical_op"]
+                            or not isinstance(item.get("operands"), list)
+                            or any(
+                                not isinstance(operand, str)
+                                for operand in item["operands"]
+                            )
+                            or (
+                                "result" in item
+                                and (
+                                    not isinstance(item["result"], str)
+                                    or not item["result"]
+                                    or len(item["result"]) > 128
+                                )
+                            )
+                            or (
+                                "canonical_attrs" in item
+                                and (
+                                    item["canonical_op"]
+                                    not in {"map_binary", "map_unary", "reduce"}
+                                    or not isinstance(item["canonical_attrs"], Mapping)
+                                    or set(item["canonical_attrs"]) != {"fn"}
+                                    or not isinstance(
+                                        item["canonical_attrs"].get("fn"), str
+                                    )
+                                    or not item["canonical_attrs"].get("fn")
+                                )
+                            )
+                            or (
+                                "operator" in item
+                                and (
+                                    "canonical_attrs" in item
+                                    or not isinstance(item["operator"], str)
+                                    or not item["operator"]
+                                )
+                            )
+                            or (
+                                "operator" not in item
+                                and "canonical_attrs" not in item
+                            )
+                            or (
+                                "operator" in item
+                                and item["canonical_op"]
+                                not in {"cast", "iota"}
+                            )
+                            or (
+                                "source_unit_count" in item
+                                and (
+                                    isinstance(item["source_unit_count"], bool)
+                                    or not isinstance(item["source_unit_count"], int)
+                                    or item["source_unit_count"] <= 1
+                                )
+                            )
+                            for item in operation_requirements
+                        )
                         or any(
                             not isinstance(name, str)
                             or not name
@@ -2424,12 +4170,28 @@ class IntentIRLiftEnvironment:
                         != self._semantic_construction_identity
                     ):
                         raise ValueError("source brief semantic identity or spine is malformed")
+                    dependencies_by_source_ref: dict[str, list[str]] = {
+                        row["source_ref"]: [] for row in operation_requirements
+                    }
+                    for consumer, producer in actual_dependency_edges:
+                        dependencies_by_source_ref[
+                            operation_requirements[consumer]["source_ref"]
+                        ].append(operation_requirements[producer]["source_ref"])
                     self._semantic_entry_missing_operation_leaves = frozenset(missing)
-                    self._semantic_entry_operation_fact_count = len(operations)
-                    self._semantic_entry_non_boundary_operation_fact_count = sum(
-                        1
-                        for item in operations
-                        if item.get("kind") != "boundary_transfer"
+                    self._semantic_entry_operation_fact_count = len(
+                        operation_requirements
+                    )
+                    self._semantic_entry_non_boundary_operation_fact_count = len(
+                        operation_requirements
+                    )
+                    self._semantic_entry_operation_requirements = tuple(
+                        {
+                            **copy.deepcopy(dict(item)),
+                            "source_dependencies": dependencies_by_source_ref[
+                                item["source_ref"]
+                            ],
+                        }
+                        for item in operation_requirements
                     )
                     self._semantic_entry_required_operation_families = {
                         str(name): int(count)
@@ -2457,6 +4219,63 @@ class IntentIRLiftEnvironment:
                 return self._structured_tool_error(
                     "source transfer ledger identity differs from current construction"
                 )
+            if view == "semantic_transfer" and result.get("returncode") == 0:
+                try:
+                    transfer_payload = json.loads(str(result.get("output", "")))
+                    access_page = transfer_payload.get("accesses")
+                    output_page = transfer_payload.get("outputs")
+                    if (
+                        not isinstance(access_page, Mapping)
+                        or not isinstance(output_page, Mapping)
+                        or access_page.get("start") != self._semantic_transfer_expected_start
+                        or output_page.get("start") != self._semantic_transfer_expected_start
+                    ):
+                        return self._structured_tool_error(
+                            "semantic transfer page is not contiguous"
+                        )
+                    for page, slot_name in (
+                        (access_page, "accesses"), (output_page, "outputs")
+                    ):
+                        rows = page.get("rows")
+                        total = page.get("total")
+                        start = self._semantic_transfer_expected_start
+                        if (
+                            not isinstance(rows, list)
+                            or type(total) is not int
+                            or total != len(self._semantic_construction_slots[slot_name])
+                            or len(rows) > max(0, total - start + 1)
+                            or page.get("count") != len(rows)
+                            or page.get("next_start")
+                            != (start + len(rows) if start + len(rows) <= total else None)
+                            or (start <= total and not rows)
+                        ):
+                            return self._structured_tool_error(
+                                "semantic transfer page cardinality is malformed"
+                            )
+                    next_starts = [
+                        value
+                        for value in (access_page.get("next_start"), output_page.get("next_start"))
+                        if value is not None
+                    ]
+                    if next_starts:
+                        next_start = max(next_starts)
+                        if transfer_payload.get("next_start") != next_start:
+                            return self._structured_tool_error(
+                                "semantic transfer next_start is inconsistent"
+                            )
+                        self._semantic_transfer_expected_start = next_start
+                    else:
+                        if transfer_payload.get("next_start") is not None:
+                            return self._structured_tool_error(
+                                "semantic transfer next_start is inconsistent"
+                            )
+                        self._semantic_transfer_expected_start = 1
+                        self._semantic_entry_transfer_ledger_read = True
+                        self._semantic_transfer_read_generation += 1
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    return self._structured_tool_error(
+                        "semantic transfer page is malformed"
+                    )
             if (
                 view in _SEMANTIC_ENTRY_SUPPLEMENTAL_CONTEXT_VIEWS
                 and result.get("returncode") == 0
@@ -2464,29 +4283,29 @@ class IntentIRLiftEnvironment:
             ):
                 self._semantic_entry_supplemental_read = str(view)
                 self._semantic_entry_source_read = view == "source"
-                self._semantic_entry_transfer_ledger_read = (
-                    view == "semantic_transfer"
-                )
-                if view == "semantic_transfer":
-                    self._semantic_transfer_read_generation += 1
+                if view != "semantic_transfer":
+                    self._semantic_entry_transfer_ledger_read = False
             if (
                 post_graph_transfer_reread
                 and result.get("returncode") == 0
             ):
-                self._semantic_transfer_read_generation += 1
-                self._semantic_access_transfer_generation = (
+                if (
                     self._semantic_transfer_read_generation
-                )
-                self._semantic_construction_audit.append(
-                    {
-                        "step": "read_transfer_ledger_after_operation_graph",
-                        "status": "pass",
-                        "transaction": self._semantic_transaction_identity,
-                        "transfer_read_generation": (
-                            self._semantic_transfer_read_generation
-                        ),
-                    }
-                )
+                    > (self._semantic_operation_graph_transfer_generation or 0)
+                ):
+                    self._semantic_access_transfer_generation = (
+                        self._semantic_transfer_read_generation
+                    )
+                    self._semantic_construction_audit.append(
+                        {
+                            "step": "read_transfer_ledger_after_operation_graph",
+                            "status": "pass",
+                            "transaction": self._semantic_transaction_identity,
+                            "transfer_read_generation": (
+                                self._semantic_transfer_read_generation
+                            ),
+                        }
+                    )
             return result
         if kind == "tool":
             name = action.get("name")
@@ -2626,6 +4445,7 @@ class IntentIRLiftEnvironment:
         phase_sha256: str,
         category: str,
         rule_text: str,
+        origin: str | None = None,
     ) -> None:
         """Fail closed on repeated errors at one candidate lifecycle edge.
 
@@ -2655,17 +4475,26 @@ class IntentIRLiftEnvironment:
             "rule_sha256": rule_sha256,
             "attempt": len(phase_rows) + 1,
             "same_rule_count": repeated_count,
+            "failure_class": "mcp_protocol_rejected",
+            "progress_changed": False,
         }
+        if isinstance(origin, str) and re.fullmatch(
+            r"[A-Za-z0-9_]+\.py:[A-Za-z_][A-Za-z0-9_]*:[0-9]{1,6}",
+            origin,
+        ):
+            row["origin"] = origin
         self._mcp_phase_application_failures.append(row)
         if repeated_count >= _MAX_REPEATED_MCP_PHASE_RULE_FAILURES:
             self._raise_lift_preparation_failure(
-                detail="mcp_phase_repeated_application_error",
+                detail="mcp_no_progress",
                 attempted_step=phase,
+                rule_code=category,
             )
         if len(phase_rows) + 1 >= _MAX_MCP_PHASE_APPLICATION_FAILURES:
             self._raise_lift_preparation_failure(
-                detail="mcp_phase_application_error_limit_exhausted",
+                detail="mcp_no_progress",
                 attempted_step=phase,
+                rule_code=category,
             )
 
     def _execute_mcp(self, action: Mapping[str, Any]) -> dict[str, Any]:
@@ -2676,6 +4505,7 @@ class IntentIRLiftEnvironment:
         params = action.get("params", {})
         phase, phase_sha256 = self._mcp_phase_failure_key()
         error_category: str | None = None
+        error_origin: str | None = None
         try:
             if method in {"initialize", "resources/list", "tools/list"}:
                 result = self._mcp_server.handle(method, params)
@@ -2738,6 +4568,19 @@ class IntentIRLiftEnvironment:
             }
         except Exception as exc:
             error_category = f"internal_{type(exc).__name__}"
+            # Retain only a code location from this project's Python tree.
+            # Exception text can contain rejected declarations and must not
+            # enter the safe phase receipt or any subsequent fresh owner.
+            project_python = Path(__file__).resolve().parents[2]
+            frame = exc.__traceback__
+            while frame is not None:
+                code = frame.tb_frame.f_code
+                location = Path(code.co_filename).resolve()
+                if location.is_relative_to(project_python):
+                    error_origin = (
+                        f"{location.name}:{code.co_name}:{frame.tb_lineno}"
+                    )
+                frame = frame.tb_next
             response = {
                 "mcp": "intentir-lift",
                 "method": method,
@@ -2757,6 +4600,20 @@ class IntentIRLiftEnvironment:
                 "returncode": 1,
                 "exception_info": "",
             }
+            # An exception raised by the host MCP implementation is not a
+            # provider-correctable declaration error.  Returning it as a
+            # normal tool error lets the model repeat the same lifecycle edge
+            # until the bounded repeated-application guard fires, which hides
+            # the real project defect behind
+            # ``mcp_phase_repeated_application_error``.  Stop this fresh
+            # transaction immediately.  The preparation receipt contains only
+            # the closed phase/step state; it never includes the exception
+            # text, provider arguments, Source facts, or candidate bytes.
+            self._raise_lift_preparation_failure(
+                detail="semantic_mcp_host_internal_error",
+                attempted_step=phase,
+                origin=error_origin,
+            )
         if response["isError"] and (
             error_category is not None
             or phase.startswith("resource:")
@@ -2767,6 +4624,7 @@ class IntentIRLiftEnvironment:
                 phase_sha256=phase_sha256,
                 category=error_category or "application_error",
                 rule_text=self._mcp_application_error_text(response),
+                origin=error_origin,
             )
         response["elapsed_ms"] = (time.monotonic() - started) * 1000.0
         self._mcp_requests.append(
@@ -2776,8 +4634,25 @@ class IntentIRLiftEnvironment:
                 "elapsed_ms": response["elapsed_ms"],
             }
         )
+        content = response.get("content")
+        content_text = (
+            content[0].get("text")
+            if isinstance(content, list)
+            and len(content) == 1
+            and isinstance(content[0], Mapping)
+            and isinstance(content[0].get("text"), str)
+            else None
+        )
         return {
-            "output": json.dumps(response, sort_keys=True) + "\n",
+            # The Responses observation template applies JSON escaping once.
+            # Re-serializing the MCP envelope here needlessly escapes the
+            # receipt a second time and can push a valid bounded Source brief
+            # or begin receipt past that template's truncation threshold.
+            "output": (
+                content_text
+                if content_text is not None
+                else json.dumps(response, sort_keys=True, ensure_ascii=False)
+            ),
             "returncode": response["returncode"],
             "exception_info": response["exception_info"],
         }
@@ -2827,6 +4702,7 @@ class IntentIRLiftEnvironment:
         self._semantic_entry_source_read = False
         self._semantic_entry_transfer_ledger_read = False
         self._semantic_transfer_read_generation = 0
+        self._semantic_transfer_expected_start = 1
         self._semantic_operation_graph_transfer_generation = None
         self._semantic_access_transfer_generation = None
         self._semantic_transaction_identity = None
@@ -2967,25 +4843,125 @@ class IntentIRLiftEnvironment:
             "output_ordinal",
             "access_ordinal",
             "function_visible_matching_value_count",
+            "function_visible_boolean_result_count",
             "function_visible_compatible_boolean_result_count",
+            "incompatible_boolean_shape_count",
             "direct_single_result_consumer_id_count",
             "required_operation_count",
             "actual_operation_count",
+            "missing_operation_count",
+            "minimum_operation_rows",
+            "same_rule_count",
+            "same_gap_count",
         ):
             value = last.get(key)
             if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                 receipt[key] = value
+        for key in ("expected_shape", "actual_shape", "predicate_target_shape"):
+            value = last.get(key)
+            if (
+                isinstance(value, list)
+                and len(value) <= 16
+                and all(
+                    isinstance(extent, (str, int))
+                    and not isinstance(extent, bool)
+                    for extent in value
+                )
+            ):
+                receipt[key] = list(value)
+        aliases = last.get("provider_dimension_aliases")
+        if (
+            isinstance(aliases, list)
+            and len(aliases) <= 32
+            and all(
+                isinstance(alias, str)
+                and re.fullmatch(r"dim[0-9]+", alias) is not None
+                for alias in aliases
+            )
+        ):
+            receipt["provider_dimension_aliases"] = list(aliases)
+        actual_extent = last.get("actual_extent")
+        if type(actual_extent) is int and actual_extent >= 0:
+            receipt["actual_extent"] = actual_extent
+        elif isinstance(actual_extent, str) and re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_.:-]{0,63}", actual_extent
+        ):
+            receipt["actual_extent"] = actual_extent
+        expected_dtype = last.get("expected_dtype")
+        if isinstance(expected_dtype, str) and expected_dtype:
+            receipt["expected_dtype"] = expected_dtype[:64]
         for key in (
             "json_container",
             "declaration_sha256",
+            "phase",
+            "phase_digest",
+            "failure_class",
             "operation",
+            "row_path",
             "field",
             "attribute",
             "required_attribute_value",
+            "graph_repair_rule",
+            "expected_op_source",
+            "label_rule",
+            "failure_layer",
+            "predicate_shape_rule",
+            "predicate_projection_status",
+            "output_type_visibility_rule",
+            "type_repair_rule",
+            "dimension_reference_rule",
         ):
             value = last.get(key)
             if isinstance(value, str) and value:
                 receipt[key] = value[:256]
+        if isinstance(last.get("complete_graph_required"), bool):
+            receipt["complete_graph_required"] = last["complete_graph_required"]
+        for key in ("missing_operation_families", "missing_operation_attributes"):
+            value = last.get(key)
+            if not isinstance(value, list) or len(value) > 16:
+                continue
+            expected_keys = (
+                {
+                    "operation",
+                    "required_operation_count",
+                    "actual_operation_count",
+                    "missing_operation_count",
+                }
+                if key == "missing_operation_families"
+                else {
+                    "operation",
+                    "attribute",
+                    "required_attribute_value",
+                    "required_operation_count",
+                    "actual_operation_count",
+                    "missing_operation_count",
+                }
+            )
+            if not all(
+                isinstance(item, Mapping)
+                and set(item) == expected_keys
+                and all(
+                    isinstance(item.get(field), int)
+                    and not isinstance(item.get(field), bool)
+                    and item.get(field) >= 0
+                    for field in (
+                        "required_operation_count",
+                        "actual_operation_count",
+                        "missing_operation_count",
+                    )
+                )
+                and all(
+                    isinstance(item.get(field), str) and item.get(field)
+                    for field in (
+                        ("operation",)
+                        if key == "missing_operation_families"
+                        else ("operation", "attribute", "required_attribute_value")
+                    )
+                )
+                for item in value
+            ):
+                continue
+            receipt[key] = [dict(item) for item in value]
         for key in ("allowed_fields", "required_fields"):
             value = last.get(key)
             if isinstance(value, list) and all(
@@ -3015,6 +4991,8 @@ class IntentIRLiftEnvironment:
         *,
         detail: str,
         attempted_step: str | None = None,
+        rule_code: str | None = None,
+        origin: str | None = None,
     ) -> None:
         """Terminate an unrecoverable pre-candidate construction transaction.
 
@@ -3026,13 +5004,35 @@ class IntentIRLiftEnvironment:
         Source content.
         """
 
+        if detail == "semantic_mcp_host_internal_error":
+            failure_class = "lift_mcp_host_internal_error"
+        elif detail == "mcp_no_progress":
+            failure_class = "lift_mcp_no_progress"
+        elif detail in {
+            "mcp_phase_repeated_application_error",
+            "mcp_phase_application_error_limit_exhausted",
+        }:
+            failure_class = "lift_mcp_application_error"
+        else:
+            failure_class = "lift_authoring_preparation"
         receipt: dict[str, Any] = {
-            "failure_class": "lift_agent_preparation",
+            "failure_class": failure_class,
             "diagnostic": detail,
             "completed_steps": sorted(self._semantic_construction_completed_steps),
         }
         if attempted_step is not None:
             receipt["attempted_step"] = attempted_step
+        if isinstance(rule_code, str) and rule_code:
+            receipt["rule_code"] = rule_code[:128]
+        if isinstance(origin, str) and re.fullmatch(
+            r"[A-Za-z0-9_.-]+:[A-Za-z_][A-Za-z0-9_]*:[0-9]{1,6}",
+            origin,
+        ):
+            receipt["origin"] = origin[:160]
+        if detail == "mcp_no_progress":
+            _phase, phase_digest = self._mcp_phase_failure_key()
+            receipt["state_digest"] = phase_digest
+            receipt["progress_changed"] = False
         if attempted_step == "declare_operation_graph":
             graph_failure = self._last_operation_graph_failure_receipt()
             if graph_failure is not None:
@@ -3438,12 +5438,26 @@ class IntentIRLiftEnvironment:
             # bytes is still safe to compare without writing those bytes to an
             # evidence file or provider receipt.
             normalized = (declaration_text or "").encode("utf-8", "replace")
-        result: dict[str, Any] = {
+        diagnostic_result: dict[str, Any] = {
             "json_container": container,
             "declaration_sha256": hashlib.sha256(normalized).hexdigest(),
         }
         if row_count is not None:
-            result["operation_rows"] = row_count
+            diagnostic_result["operation_rows"] = row_count
+        if detail == "operation_graph_must_be_nonempty_json_array":
+            # This is a complete wire-level failure, not an optional section.
+            # Expose the repair relation without synthesizing any Source
+            # operation, producer, owner, or result for the provider.
+            diagnostic_result.update(
+                {
+                    "minimum_operation_rows": 1,
+                    "complete_graph_required": True,
+                    "graph_repair_rule": (
+                        "resubmit one complete non-empty producer-order graph "
+                        "from the current Source facts; [] is not a placeholder"
+                    ),
+                }
+            )
 
         def declaration_rows(value: Any) -> list[tuple[str, Mapping[str, Any]]]:
             """Return structural row paths without accepting the graph."""
@@ -3512,6 +5526,15 @@ class IntentIRLiftEnvironment:
             "operation_nontrailing_broadcast_requires_local_id": "id",
         }
         target_field = field_details.get(str(detail))
+        if detail == "operation_op_must_be_canonical_j_name":
+            diagnostic_result["expected_op_source"] = "operation_namespace.operation_catalog"
+        elif detail in {
+            "operation_id_must_be_provider_local_label",
+            "operation_result_must_be_provider_local_label",
+        }:
+            diagnostic_result["label_rule"] = (
+                "fresh provider-local label; no host n*/v*/x*/p*/c*/a*/e* numeric id"
+            )
         if target_field is not None and structural_rows:
             selected_path: str | None = None
             selected_row: Mapping[str, Any] | None = None
@@ -3528,14 +5551,19 @@ class IntentIRLiftEnvironment:
                     detail == "operation_row_must_include_canonical_op_field"
                     and "op" not in row
                     or detail == "operation_op_must_be_canonical_j_name"
-                    and operation not in diagnostic_catalog
+                    and (
+                        not isinstance(operation, str)
+                        or operation not in diagnostic_catalog
+                    )
                     or detail == "operation_must_use_only_canonical_leaf_fields"
+                    and isinstance(operation, str)
                     and operation not in STRUCTURED_INTENT_OPS
                     and bool(
                         set(row)
                         - {"id", "op", "result", "operands", "attrs", "type"}
                     )
                     or detail == "operation_must_include_required_leaf_fields"
+                    and isinstance(operation, str)
                     and operation not in STRUCTURED_INTENT_OPS
                     and ("attrs" not in row or "type" not in row)
                     or detail == "operation_id_must_be_provider_local_label"
@@ -3569,11 +5597,37 @@ class IntentIRLiftEnvironment:
                     or detail == "operation_result_must_have_complete_value_type"
                     and "result" in row
                     and not isinstance(operation_type, Mapping)
-                    or detail.startswith("operation_type_shape_")
+                    or detail == "operation_type_shape_must_use_valid_provider_extent"
                     and isinstance(operation_type, Mapping)
+                    and isinstance(operation_type.get("shape"), list)
+                    and any(
+                        not (
+                            type(extent) is int and extent >= 0
+                            or isinstance(extent, str) and bool(extent)
+                        )
+                        for extent in operation_type["shape"]
+                    )
+                    or detail == "operation_type_shape_must_use_provider_dimension_alias"
+                    and isinstance(operation_type, Mapping)
+                    and isinstance(operation_type.get("shape"), list)
+                    and any(
+                        not is_provider_dimension_extent(
+                            extent,
+                            self._semantic_provider_dimension_aliases.values(),
+                        )
+                        for extent in operation_type["shape"]
+                    )
+                    or detail == "operation_type_shape_must_use_provider_dimension_alias"
+                    and operation == "iota"
+                    and isinstance(row.get("attrs"), Mapping)
+                    and not is_provider_dimension_extent(
+                        row["attrs"].get("n"),
+                        self._semantic_provider_dimension_aliases.values(),
+                    )
                     or detail == "operation_iota_result_type_must_match_attrs"
                     and operation == "iota"
                     or detail == "operation_nontrailing_broadcast_requires_local_id"
+                    and isinstance(operation, str)
                     and operation in {"map_binary", "select"}
                     and not isinstance(row.get("id"), str)
                 )
@@ -3589,11 +5643,46 @@ class IntentIRLiftEnvironment:
                 selected_path, selected_row = structural_rows[0]
             top_level = re.match(r"body\[([0-9]+)\]", selected_path or "")
             if top_level is not None:
-                result["row_index"] = int(top_level.group(1))
+                diagnostic_result["row_index"] = int(top_level.group(1))
             operation = selected_row.get("op")
             if isinstance(operation, str):
-                result["operation"] = operation[:128]
-            result["field"] = target_field
+                diagnostic_result["operation"] = operation[:128]
+            diagnostic_field = target_field
+            if (
+                detail == "operation_type_shape_must_use_provider_dimension_alias"
+                and operation == "iota"
+                and isinstance(selected_row.get("attrs"), Mapping)
+                and not is_provider_dimension_extent(
+                    selected_row["attrs"].get("n"),
+                    self._semantic_provider_dimension_aliases.values(),
+                )
+            ):
+                diagnostic_field = "attrs.n"
+                extent = selected_row["attrs"].get("n")
+                if type(extent) is int and extent >= 0:
+                    diagnostic_result["actual_extent"] = extent
+                elif isinstance(extent, str) and re.fullmatch(
+                    r"[A-Za-z_][A-Za-z0-9_.:-]{0,63}", extent
+                ):
+                    diagnostic_result["actual_extent"] = extent
+            diagnostic_result["field"] = diagnostic_field
+            if detail == "operation_type_shape_must_use_provider_dimension_alias":
+                diagnostic_result["provider_dimension_aliases"] = list(
+                    self._semantic_provider_dimension_aliases.values()
+                )
+                diagnostic_result["dimension_reference_rule"] = (
+                    PROVIDER_DIMENSION_EXTENT_RULE
+                )
+                selected_type = selected_row.get("type")
+                shape = (
+                    selected_type.get("shape")
+                    if isinstance(selected_type, Mapping)
+                    else None
+                )
+                if isinstance(shape, list):
+                    diagnostic_result["actual_shape"] = copy.deepcopy(shape[:16])
+                if selected_path is not None:
+                    diagnostic_result["row_path"] = selected_path
         if (
             detail
             in {
@@ -3603,8 +5692,8 @@ class IntentIRLiftEnvironment:
             }
             and isinstance(body, list)
         ):
-            for index, row in enumerate(body):
-                if not isinstance(row, Mapping) or not isinstance(row.get("op"), str):
+            for row_path, row in structural_rows:
+                if not isinstance(row.get("op"), str):
                     continue
                 try:
                     contract = operation_attr_contract(row["op"])
@@ -3647,13 +5736,20 @@ class IntentIRLiftEnvironment:
                     or detail == "operation_attr_value_must_match_canonical_leaf_contract"
                     and invalid_value_name is not None
                 ):
-                    result["row_index"] = index
-                    result["operation"] = row["op"]
-                    result["field"] = "attrs"
-                    result["allowed_fields"] = sorted(allowed)
-                    result["required_fields"] = sorted(required)
+                    diagnostic_result["row_path"] = row_path
+                    top_level = re.match(r"body\[([0-9]+)\]", row_path)
+                    if top_level is not None:
+                        diagnostic_result["row_index"] = int(top_level.group(1))
+                    diagnostic_result["operation"] = row["op"]
+                    diagnostic_result["field"] = (
+                        f"attrs.{invalid_value_name}"
+                        if invalid_value_name is not None
+                        else "attrs"
+                    )
+                    diagnostic_result["allowed_fields"] = sorted(allowed)
+                    diagnostic_result["required_fields"] = sorted(required)
                     if invalid_value_name is not None:
-                        result["attribute"] = invalid_value_name
+                        diagnostic_result["attribute"] = invalid_value_name
                         property_schema = properties.get(invalid_value_name)
                         if isinstance(property_schema, Mapping):
                             # ``operation_attr_contract`` is the same
@@ -3661,19 +5757,105 @@ class IntentIRLiftEnvironment:
                             # permitted schema lookup and consumed by
                             # TypeCheck.  It contains no Source-specific
                             # value, candidate fragment, or host handle.
-                            result["attribute_contract"] = copy.deepcopy(
+                            diagnostic_result["attribute_contract"] = copy.deepcopy(
                                 dict(property_schema)
                             )
                     break
+
+        # A graph may contain several invalid leaf attributes.  Returning only
+        # the first one causes a model to repair one row, resubmit the whole
+        # graph, and discover the next row in a new turn.  That is especially
+        # expensive for the bounded MCP lifecycle and does not provide new
+        # semantic evidence.  Report every offending operation/attribute in a
+        # compact schema-only list; never copy the rejected attribute value,
+        # operands, result labels, or any other candidate content.
+        if (
+            detail == "operation_attr_value_must_match_canonical_leaf_contract"
+            and isinstance(body, list)
+        ):
+            invalid_contracts: list[dict[str, Any]] = []
+            for row_path, row in structural_rows:
+                operation = row.get("op")
+                attrs = row.get("attrs")
+                if not isinstance(operation, str) or not isinstance(attrs, Mapping):
+                    continue
+                try:
+                    contract = operation_attr_contract(operation)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                properties = contract.get("properties")
+                if not isinstance(properties, Mapping):
+                    continue
+                for attribute, attribute_value in attrs.items():
+                    property_schema = properties.get(attribute)
+                    if not isinstance(attribute, str) or not isinstance(property_schema, Mapping):
+                        continue
+                    if _operation_attr_value_matches_schema(
+                        attribute_value, property_schema
+                    ):
+                        continue
+                    invalid_contracts.append(
+                        {
+                            "row_path": row_path,
+                            "operation": operation,
+                            "attribute": attribute,
+                            "attribute_contract": copy.deepcopy(dict(property_schema)),
+                        }
+                    )
+                    if len(invalid_contracts) >= 16:
+                        break
+                if len(invalid_contracts) >= 16:
+                    break
+            if invalid_contracts:
+                diagnostic_result["invalid_attribute_contracts"] = invalid_contracts
+        if (
+            detail
+            in {
+                "operation_id_must_be_provider_local_label",
+                "operation_result_must_be_provider_local_label",
+            }
+            and isinstance(body, list)
+        ):
+            invalid_label_locations: list[dict[str, Any]] = []
+            for row_path, row in structural_rows:
+                fields = ("id",) if detail == "operation_id_must_be_provider_local_label" else ("result",)
+                for field in fields:
+                    value = row.get(field)
+                    values = value if isinstance(value, list) else [value]
+                    if value is None:
+                        continue
+                    invalid = any(not provider_local_label(item) for item in values)
+                    if not invalid:
+                        continue
+                    invalid_label_locations.append(
+                        {
+                            "row_path": row_path,
+                            "field": field,
+                            "label_rule": (
+                                "provider-local identifier matching "
+                                "[A-Za-z_][A-Za-z0-9_.:-]* and not exactly "
+                                "[n|v|x|p|c|a|e][0-9]+"
+                            ),
+                        }
+                    )
+                    if len(invalid_label_locations) >= 32:
+                        break
+                if len(invalid_label_locations) >= 32:
+                    break
+            if invalid_label_locations:
+                diagnostic_result["invalid_provider_label_locations"] = (
+                    invalid_label_locations
+                )
         if (
             detail == "operation_result_type_shape_must_match_operands"
             and isinstance(body, list)
         ):
-            # This is the same deliberately narrow rank-preservation proof
-            # used by graph ingress.  Return only the public row index/op and
-            # ranks, never a provider label, operand value, Source fragment,
-            # or candidate row, so a provider can correct the one type that
-            # triggered the bounded declaration failure.
+            # This is the same deliberately narrow shape-preservation proof
+            # used by graph ingress.  In particular, ``()`` is a scalar and
+            # must be treated as a real operand shape: a vector-plus-scalar
+            # rejection still needs an exact expected shape in its receipt.
+            # Return only a safe row path/op and the shape relation, never a
+            # provider label, operand value, Source fragment, or candidate row.
             value_shapes = {
                 value: shape
                 for value, (_dtype, shape) in self._semantic_source_tensor_value_types.items()
@@ -3683,44 +5865,111 @@ class IntentIRLiftEnvironment:
                 for path, row in rows:
                     operands = row.get("operands")
                     operation_type = row.get("type")
-                    result = row.get("result")
+                    row_result = row.get("result")
                     shape = (
                         tuple(operation_type.get("shape"))
                         if isinstance(operation_type, Mapping)
                         and isinstance(operation_type.get("shape"), list)
                         else None
                     )
-                    if row.get("op") == "map_binary" and isinstance(operands, list):
+                    if isinstance(operands, list):
                         known = [
                             value_shapes[operand]
                             for operand in operands
                             if isinstance(operand, str) and operand in value_shapes
                         ]
-                        if shape is not None and len(known) == 2:
-                            maximum_rank = max(len(item) for item in known)
-                            maximal = {
-                                item for item in known if len(item) == maximum_rank
-                            }
-                            expected = next(iter(maximal)) if len(maximal) == 1 else None
-                            if (
-                                expected is not None
-                                and not all(item == expected or not item for item in known)
-                                and shape != expected
-                            ):
-                                match = re.fullmatch(r"body\\[([0-9]+)\\]", path)
-                                if match is not None:
-                                    result.update(
-                                        {
-                                            "row_index": int(match.group(1)),
-                                            "operation": row.get("op"),
-                                            "field": "type.shape",
-                                            "result_rank": len(shape),
-                                            "expected_rank": len(expected),
-                                        }
-                                    )
-                                break
-                    if isinstance(result, str) and shape is not None:
-                        value_shapes[result] = shape
+                        expected = _expected_result_shape_for_known_operands(
+                            row,
+                            known,
+                        )
+                        if (
+                            expected is not None
+                            and shape is not None
+                            and shape != expected
+                        ):
+                            diagnostic_result.update(
+                                {
+                                    "row_path": path,
+                                    "operation": row.get("op"),
+                                    "field": "type.shape",
+                                    "actual_shape": list(shape),
+                                    "expected_shape": list(expected),
+                                    "shape_repair_rule": (
+                                        "set this row's type.shape exactly to expected_shape; "
+                                        "preserve its op and operands and resubmit the complete graph"
+                                    ),
+                                    "result_rank": len(shape),
+                                    "expected_rank": len(expected),
+                                }
+                            )
+                            match = re.match(r"body\[([0-9]+)\]", path)
+                            if match is not None:
+                                diagnostic_result["row_index"] = int(match.group(1))
+                            break
+                    if isinstance(row_result, str) and shape is not None:
+                        value_shapes[row_result] = shape
+        if detail == "operation_iota_result_type_must_match_attrs" and isinstance(
+            body, list
+        ):
+            # Feed the same bounded type-relation shape used by other result
+            # type diagnostics.  The operation-specific check remains
+            # fail-closed, but its public repair surface is deliberately
+            # operation-neutral so future type relations do not require a new
+            # receipt field or a new Agent protocol branch.
+            for row_path, row in structural_rows:
+                if row.get("op") != "iota":
+                    continue
+                attrs = row.get("attrs")
+                if not isinstance(attrs, Mapping):
+                    continue
+                extent = attrs.get("n")
+                if not (
+                    isinstance(extent, str)
+                    and bool(extent)
+                    or isinstance(extent, int)
+                    and not isinstance(extent, bool)
+                    and extent >= 0
+                ):
+                    continue
+                diagnostic_result.update(
+                    {
+                        "row_path": row_path,
+                        "operation": row.get("op"),
+                        "field": "type",
+                        "expected_shape": [extent],
+                        "type_repair_rule": (
+                            "set this row's declared type to the returned "
+                            "operation type relation; preserve op, attrs, "
+                            "operands and result"
+                        ),
+                    }
+                )
+                dtype = attrs.get("dtype")
+                if isinstance(dtype, str) and dtype:
+                    diagnostic_result["expected_dtype"] = dtype
+                match = re.match(r"body\[([0-9]+)\]", row_path)
+                if match is not None:
+                    diagnostic_result["row_index"] = int(match.group(1))
+                break
+        if (
+            detail == "operation_graph_must_expose_source_output_assembly"
+            and isinstance(body, list)
+        ):
+            missing = self._semantic_graph_missing_output_assembly(body)
+            if missing is not None:
+                requirement = missing.get("requirement")
+                if isinstance(requirement, Mapping):
+                    diagnostic_result.update(
+                        {
+                            "output_ordinal": missing.get("output_ordinal"),
+                            "field": "assembly",
+                            "required_output_assembly": copy.deepcopy(dict(requirement)),
+                            "assembly_rule": (
+                                "one top-level canonical concat with the exact Source-proven "
+                                "axis, ordered slice count, slice type and logical output type"
+                            ),
+                        }
+                    )
         if (
             detail == "operation_graph_must_expose_each_source_output_type"
             and isinstance(body, list)
@@ -3728,7 +5977,8 @@ class IntentIRLiftEnvironment:
             missing = self._semantic_graph_missing_output_type(body)
             if missing is not None:
                 output_ordinal, (dtype, shape) = missing
-                result.update(
+                required_type = (dtype, shape)
+                diagnostic_result.update(
                     {
                         "output_ordinal": output_ordinal,
                         "field": "type",
@@ -3736,7 +5986,18 @@ class IntentIRLiftEnvironment:
                             "dtype": dtype,
                             "shape": list(shape),
                         },
-                        "function_visible_matching_value_count": 0,
+                        "function_visible_matching_value_count": (
+                            self._semantic_graph_matching_output_type_count(
+                                body,
+                                required_type,
+                            )
+                        ),
+                        # Output selection cannot create or type a producer.
+                        # Keep this as a schema-level visibility rule rather
+                        # than returning a label or a candidate fragment.
+                        "output_type_visibility_rule": (
+                            "function_visible_typed_result_or_source_input_with_exact_dtype_shape"
+                        ),
                     }
                 )
         if (
@@ -3745,11 +6006,25 @@ class IntentIRLiftEnvironment:
         ):
             rows = semantic_operation_wire_rows({"body": body})
             if rows is not None:
-                counts: dict[str, int] = {}
-                for _path, row in rows:
-                    operation = row.get("op")
-                    if isinstance(operation, str):
-                        counts[operation] = counts.get(operation, 0) + 1
+                counts = self._semantic_graph_operation_family_counts(rows)
+                missing_families = [
+                    {
+                        "operation": name,
+                        "required_operation_count": required,
+                        "actual_operation_count": counts.get(name, 0),
+                        "missing_operation_count": required - counts.get(name, 0),
+                    }
+                    for name, required in sorted(
+                        self._semantic_entry_required_operation_families.items()
+                    )
+                    if counts.get(name, 0) < required
+                ]
+                if missing_families:
+                    # Canonical Source-derived counters only; never expose
+                    # rejected rows, operands, or provider-local labels.
+                    diagnostic_result["missing_operation_families"] = (
+                        missing_families[:16]
+                    )
                 missing_family = next(
                     (
                         (name, required, counts.get(name, 0))
@@ -3762,12 +6037,13 @@ class IntentIRLiftEnvironment:
                 )
                 if missing_family is not None:
                     name, required, actual = missing_family
-                    result.update(
+                    diagnostic_result.update(
                         {
                             "operation": name,
                             "field": "op",
                             "required_operation_count": required,
                             "actual_operation_count": actual,
+                            "missing_operation_count": required - actual,
                         }
                     )
         if (
@@ -3788,7 +6064,7 @@ class IntentIRLiftEnvironment:
                     )
                     if actual >= required:
                         continue
-                    result.update(
+                    diagnostic_result.update(
                         {
                             "operation": operation,
                             "field": f"attrs.{attribute}",
@@ -3799,6 +6075,33 @@ class IntentIRLiftEnvironment:
                         }
                     )
                     break
+                if self._semantic_entry_required_operation_attributes:
+                    attribute_gaps: list[dict[str, Any]] = []
+                    for operation, attribute, value, required in (
+                        self._semantic_entry_required_operation_attributes
+                    ):
+                        actual = sum(
+                            1
+                            for _path, row in rows
+                            if row.get("op") == operation
+                            and isinstance(row.get("attrs"), Mapping)
+                            and row["attrs"].get(attribute) == value
+                        )
+                        if actual < required:
+                            attribute_gaps.append(
+                                {
+                                    "operation": operation,
+                                    "attribute": attribute,
+                                    "required_attribute_value": value,
+                                    "required_operation_count": required,
+                                    "actual_operation_count": actual,
+                                    "missing_operation_count": required - actual,
+                                }
+                            )
+                    if attribute_gaps:
+                        diagnostic_result["missing_operation_attributes"] = (
+                            attribute_gaps[:16]
+                        )
         if (
             detail
             == "operation_graph_must_expose_compatible_access_predicate_type"
@@ -3806,16 +6109,58 @@ class IntentIRLiftEnvironment:
         ):
             missing = self._semantic_graph_missing_access_predicate_type(body)
             if missing is not None:
-                access_ordinal, matching_count = missing
-                result.update(
+                (
+                    access_ordinal,
+                    matching_count,
+                    boolean_result_count,
+                    incompatible_shape_count,
+                ) = missing
+                diagnostic_result.update(
                     {
                         "access_ordinal": access_ordinal,
                         "field": "predicate",
+                        "function_visible_boolean_result_count": (
+                            boolean_result_count
+                        ),
                         "function_visible_compatible_boolean_result_count": (
                             matching_count
                         ),
+                        "incompatible_boolean_shape_count": incompatible_shape_count,
+                        "predicate_projection_status": (
+                            "no_boolean_result"
+                            if boolean_result_count == 0
+                            else "no_exact_shape_projection"
+                        ),
+                        # This is a Source-owned type relation, not a
+                        # provider-owned predicate. Counts distinguish a
+                        # missing boolean result from a shape mismatch without
+                        # exposing labels or rejected operation rows.
+                        "predicate_shape_rule": (
+                            "i1_with_one_unique_exact_rank_insertion"
+                        ),
                     }
                 )
+                try:
+                    relations = self._semantic_access_predicate_relations()
+                    relation = (
+                        relations[access_ordinal]
+                        if relations is not None
+                        and 0 <= access_ordinal < len(relations)
+                        else None
+                    )
+                    target_shape = (
+                        relation.get("target_shape")
+                        if isinstance(relation, Mapping)
+                        else None
+                    )
+                    if isinstance(target_shape, tuple):
+                        diagnostic_result["predicate_target_shape"] = list(
+                            target_shape
+                        )
+                except (IndexError, KeyError, TypeError):
+                    # The public rule remains sufficient if a malformed
+                    # mounted slot prevents this optional detail.
+                    pass
         if (
             detail == "operation_graph_must_expose_access_consumer_id"
             and isinstance(body, list)
@@ -3823,14 +6168,64 @@ class IntentIRLiftEnvironment:
             missing = self._semantic_graph_missing_access_consumer_id(body)
             if missing is not None:
                 access_ordinal, matching_count = missing
-                result.update(
+                diagnostic_result.update(
                     {
                         "access_ordinal": access_ordinal,
                         "field": "node_ref",
                         "direct_single_result_consumer_id_count": matching_count,
                     }
                 )
-        return result
+        return diagnostic_result
+
+    def _safe_operation_graph_receipt_diagnostic(
+        self,
+        declaration_text: str | None,
+        body: Any,
+        detail: str | None = None,
+    ) -> dict[str, Any]:
+        """Keep diagnostic construction from becoming a second host failure.
+
+        The detailed diagnostic is intentionally best effort.  If a malformed
+        provider declaration reaches an unexpected branch in that diagnostic,
+        return only a container kind and digest.  This preserves fail-closed
+        graph acceptance without exposing declaration bytes or an internal
+        traceback, and it keeps the original public rule in the surrounding
+        receipt.
+        """
+
+        try:
+            return self._operation_graph_receipt_diagnostic(
+                declaration_text,
+                body,
+                detail,
+            )
+        except Exception:
+            if isinstance(body, list):
+                container = "array"
+                try:
+                    normalized = json.dumps(
+                        body,
+                        sort_keys=True,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                except (TypeError, ValueError, UnicodeError):
+                    normalized = b"<unserializable-json-array>"
+            elif body is None:
+                container = "invalid"
+                normalized = (declaration_text or "").encode(
+                    "utf-8", "replace"
+                )
+            else:
+                container = _json_container_kind(body)
+                normalized = f"<{container}>".encode("ascii")
+            return {
+                "json_container": container,
+                "declaration_sha256": hashlib.sha256(normalized).hexdigest(),
+                "diagnostic": "operation_graph_diagnostic_unavailable",
+                "failure_layer": "host_diagnostic",
+            }
 
     def _record_operation_graph_failure(
         self,
@@ -3841,37 +6236,116 @@ class IntentIRLiftEnvironment:
     ) -> None:
         """Bound a failed graph phase without retaining provider bytes."""
 
-        diagnostic = self._operation_graph_receipt_diagnostic(
+        diagnostic = self._safe_operation_graph_receipt_diagnostic(
             declaration_text,
             body,
             detail,
         )
+        phase, phase_digest = self._mcp_phase_failure_key()
+        same_rule_count = sum(
+            row.get("detail") == detail
+            and row.get("phase_digest") == phase_digest
+            for row in self._semantic_operation_graph_failures
+        ) + 1
+        # A rule can remain the same while the Agent corrects one missing
+        # Source-proven family and exposes another.  No-progress must compare
+        # the bounded public gap, not merely the rule label; otherwise a
+        # changing graph is terminated as if it were an unchanged repair.
+        gap_fields = (
+            "operation",
+            "row_path",
+            "row_index",
+            "field",
+            "attribute",
+            "required_attribute_value",
+            "required_operation_count",
+            "actual_operation_count",
+            "missing_operation_count",
+            "missing_operation_families",
+            "missing_operation_attributes",
+            "expected_shape",
+            "actual_shape",
+            "actual_extent",
+            "expected_rank",
+            "result_rank",
+            "expected_dtype",
+            "type_repair_rule",
+            "required_output_type",
+            "function_visible_matching_value_count",
+            "function_visible_boolean_result_count",
+            "function_visible_compatible_boolean_result_count",
+            "incompatible_boolean_shape_count",
+            "predicate_target_shape",
+            "predicate_shape_rule",
+            "predicate_projection_status",
+            "output_type_visibility_rule",
+            "minimum_operation_rows",
+            "operation_rows",
+            "complete_graph_required",
+            "graph_repair_rule",
+        )
+        safe_gap = {
+            key: diagnostic[key]
+            for key in gap_fields
+            if key in diagnostic
+        }
+        gap_digest = hashlib.sha256(
+            json.dumps(
+                {
+                    "detail": detail,
+                    "phase_digest": phase_digest,
+                    "gap": safe_gap,
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        # An identical declaration is only a no-progress repeat when the
+        # lifecycle edge and the bounded public gap are also unchanged.  The
+        # same provider text can legitimately be observed after a fresh phase
+        # transition or after the host exposes a different safe diagnostic;
+        # declaration bytes alone are not a semantic progress predicate.
         repeated_unchanged = any(
             row.get("declaration_sha256") == diagnostic["declaration_sha256"]
+            and row.get("phase_digest") == phase_digest
+            and row.get("gap_digest") == gap_digest
             for row in self._semantic_operation_graph_failures
         )
+        same_gap_count = sum(
+            row.get("gap_digest") == gap_digest
+            for row in self._semantic_operation_graph_failures
+        ) + 1
         row = {
             "step": "declare_operation_graph",
             "status": "fail",
             "detail": detail,
             **diagnostic,
             "attempt": len(self._semantic_operation_graph_failures) + 1,
+            "phase": phase,
+            "phase_digest": phase_digest,
+            "failure_class": "mcp_graph_rejected",
+            "progress_changed": False,
+            "same_rule_count": same_rule_count,
+            "same_gap_count": same_gap_count,
+            "gap_digest": gap_digest,
         }
         if repeated_unchanged:
             row["repeated_unchanged"] = True
         self._semantic_operation_graph_failures.append(dict(row))
         self._semantic_construction_audit.append(row)
-        if repeated_unchanged:
+        if repeated_unchanged or same_gap_count >= _MAX_SEMANTIC_NO_PROGRESS_RULE_FAILURES:
             self._raise_lift_preparation_failure(
-                detail="semantic_operation_graph_repeated_unchanged_declaration",
+                detail="mcp_no_progress",
                 attempted_step="declare_operation_graph",
+                rule_code=detail,
             )
-        if len(self._semantic_operation_graph_failures) >= (
-            _MAX_OPERATION_GRAPH_DECLARATION_FAILURES
-        ):
+        if len(self._semantic_operation_graph_failures) >= _MAX_OPERATION_GRAPH_DECLARATION_FAILURES:
             self._raise_lift_preparation_failure(
-                detail="semantic_operation_graph_failure_limit_exhausted",
+                detail="mcp_no_progress",
                 attempted_step="declare_operation_graph",
+                rule_code="operation_graph_failure_window_exhausted",
             )
 
     def _record_semantic_access_failure(
@@ -3911,6 +6385,8 @@ class IntentIRLiftEnvironment:
                 "row_index",
                 "expected_row_count",
                 "actual_row_count",
+                "expected",
+                "category",
                 "required_fields",
                 "missing_fields",
                 "field",
@@ -3947,8 +6423,9 @@ class IntentIRLiftEnvironment:
         self._semantic_construction_audit.append(row)
         if repeated_unchanged:
             self._raise_lift_preparation_failure(
-                detail="semantic_access_declaration_repeated_unchanged",
+                detail="mcp_no_progress",
                 attempted_step="declare_accesses",
+                rule_code=detail,
             )
         if len(self._semantic_access_declaration_failures) >= (
             _MAX_ACCESS_DECLARATION_FAILURES
@@ -4016,8 +6493,9 @@ class IntentIRLiftEnvironment:
         self._semantic_construction_audit.append(row)
         if repeated_unchanged:
             self._raise_lift_preparation_failure(
-                detail="semantic_output_declaration_repeated_unchanged",
+                detail="mcp_no_progress",
                 attempted_step="declare_output_mappings",
+                rule_code=detail,
             )
         if len(self._semantic_output_declaration_failures) >= (
             _MAX_OUTPUT_DECLARATION_FAILURES
@@ -4201,8 +6679,9 @@ class IntentIRLiftEnvironment:
         self._semantic_construction_audit.append(row)
         if repeated_unchanged:
             self._raise_lift_preparation_failure(
-                detail="semantic_boundary_fields_repeated_unchanged",
+                detail="mcp_no_progress",
                 attempted_step="declare_boundary_fields",
+                rule_code=detail,
             )
         if len(self._semantic_boundary_field_failures) >= (
             _MAX_BOUNDARY_FIELDS_DECLARATION_FAILURES
@@ -4212,8 +6691,8 @@ class IntentIRLiftEnvironment:
                 attempted_step="declare_boundary_fields",
             )
 
-    @staticmethod
     def _semantic_write_receipt(
+        self,
         *,
         status: str,
         step: str,
@@ -4229,6 +6708,244 @@ class IntentIRLiftEnvironment:
             "step": step,
             "detail": detail,
         }
+        all_obligations = self._semantic_construction_slots.get(
+            "obligations", ()
+        )
+        safe_diagnostic = diagnostic if isinstance(diagnostic, Mapping) else {}
+
+        def step_obligations() -> list[dict[str, Any]]:
+            kinds = {
+                "declare_operation_graph": {"operation_graph"},
+                "declare_accesses": {"access_binding", "access_index"},
+                "declare_output_mappings": {"logical_output_binding"},
+                "declare_boundary_fields": {
+                    "source_owner_broadcast",
+                    "source_computed_guard",
+                },
+            }.get(step, set())
+            if not kinds:
+                return []
+            selected = [
+                row
+                for row in all_obligations
+                if isinstance(row, Mapping) and row.get("kind") in kinds
+            ]
+            if status == "fail":
+                ordinal = safe_diagnostic.get("row_index")
+                if step == "declare_accesses" and is_canonical_ordinal(ordinal):
+                    selected = [
+                        row
+                        for row in selected
+                        if row.get("source_locator", {}).get("ordinal") == ordinal
+                    ]
+                elif step == "declare_output_mappings" and is_canonical_ordinal(
+                    ordinal
+                ):
+                    selected = [
+                        row
+                        for row in selected
+                        if row.get("source_locator", {}).get("output_ordinal")
+                        == ordinal
+                    ]
+                elif step == "declare_boundary_fields":
+                    if "broadcast" in detail:
+                        selected = [
+                            row
+                            for row in selected
+                            if row.get("kind") == "source_owner_broadcast"
+                        ]
+                    elif "guard" in detail or "predicate" in detail:
+                        selected = [
+                            row
+                            for row in selected
+                            if row.get("kind") == "source_computed_guard"
+                        ]
+                    else:
+                        selected = []
+            result_status = "rejected" if status == "fail" else "preflight_passed"
+            return [
+                semantic_obligation_diagnostic(
+                    row,
+                    self._semantic_construction_identity["source_facts_digest"],
+                    status=result_status,
+                )
+                for row in selected
+            ]
+
+        obligation_results = step_obligations()
+        if obligation_results:
+            payload["obligation_results"] = obligation_results
+            payload["obligation_pass_scope"] = (
+                "declaration_preflight_only; final Source-owner admission remains pending"
+                if status == "pass"
+                else "the listed obligation was rejected by this declaration preflight"
+            )
+        if status == "fail":
+            phase, phase_digest = self._mcp_phase_failure_key()
+            failure_class = {
+                "declare_operation_graph": "mcp_graph_rejected",
+                "declare_accesses": "mcp_access_rejected",
+                "declare_output_mappings": "mcp_output_rejected",
+                "declare_boundary_fields": "mcp_boundary_rejected",
+                "finalize_candidate": "mcp_finalize_rejected",
+            }.get(step, "mcp_protocol_rejected")
+            row_index = safe_diagnostic.get("row_index")
+            row_path_value = safe_diagnostic.get("row_path")
+            ordinal = (
+                safe_diagnostic.get("access_ordinal")
+                if step == "declare_operation_graph"
+                else safe_diagnostic.get("output_ordinal")
+                if step == "declare_output_mappings"
+                else None
+            )
+            if isinstance(row_path_value, str) and re.fullmatch(
+                r"body(?:\[\d+\])(?:\.(?:body|positive|negative))*(?:\[\d+\])?",
+                row_path_value,
+            ):
+                rule_path = row_path_value
+            elif isinstance(row_index, int) and not isinstance(row_index, bool):
+                rule_path = (
+                    f"body[{row_index}]"
+                    if step == "declare_operation_graph"
+                    else f"{step}[{row_index}]"
+                )
+            elif is_canonical_ordinal(ordinal):
+                rule_path = (
+                    f"accesses[{ordinal}]"
+                    if step == "declare_operation_graph"
+                    else f"output_mappings[{ordinal}]"
+                )
+            else:
+                rule_path = step
+            field = safe_diagnostic.get("field")
+            if isinstance(field, str) and field:
+                rule_path += f".{field[:128]}"
+
+            expected: dict[str, Any] = {}
+            actual: dict[str, Any] = {}
+            expected_keys = (
+                "expected_op_source",
+                "label_rule",
+                "allowed_fields",
+                "required_fields",
+                "attribute",
+                "attribute_contract",
+                "invalid_attribute_contracts",
+                "invalid_provider_label_locations",
+                "required_output_type",
+                "required_output_assembly",
+                "assembly_rule",
+                "expected_shape",
+                "shape_repair_rule",
+                "provider_dimension_aliases",
+                "dimension_reference_rule",
+                "expected_dtype",
+                "type_repair_rule",
+                "required_attribute_value",
+                "expected_rank",
+                "required_operation_count",
+                "missing_operation_families",
+                "missing_operation_attributes",
+                "expected_row_count",
+                "minimum_operation_rows",
+                "complete_graph_required",
+                "graph_repair_rule",
+                "expected",
+                "category",
+            )
+            actual_keys = (
+                "operation",
+                "actual_operation_count",
+                "missing_operation_count",
+                "result_rank",
+                "field",
+                "missing_fields",
+                "function_visible_matching_value_count",
+                "function_visible_boolean_result_count",
+                "function_visible_compatible_boolean_result_count",
+                "incompatible_boolean_shape_count",
+                "predicate_projection_status",
+                "actual_row_count",
+                "direct_single_result_consumer_id_count",
+                "actual_shape",
+                "actual_extent",
+                "json_container",
+                "operation_rows",
+            )
+            for key in expected_keys:
+                value = safe_diagnostic.get(key)
+                if isinstance(value, (str, int, float, bool, list, dict)):
+                    expected[key] = copy.deepcopy(value)
+            for key in actual_keys:
+                value = safe_diagnostic.get(key)
+                if isinstance(value, (str, int, float, bool, list, dict)):
+                    actual[key] = copy.deepcopy(value)
+            # The rejection code and path identify the failed slot, but not
+            # every slot has a field-level binding rule in its rule name.
+            # Attach the common operand reference contract at the field
+            # boundary so each retry receives an actionable constraint
+            # without echoing the rejected operand or graph.
+            if (
+                step == "declare_operation_graph"
+                and safe_diagnostic.get("field") == "operands"
+            ):
+                expected["operand_reference_contract"] = (
+                    "Each operand is a Source tensor t* or a provider-local result "
+                    "declared by an earlier graph row; do not use host ABI/value "
+                    "handles or forward references."
+                )
+            if not expected:
+                expected = {"rule": detail[:128]}
+            if not actual:
+                actual = {"status": "rejected"}
+            if step == "declare_operation_graph":
+                repair_scope = (
+                    "whole_graph"
+                    if any(
+                        marker in detail
+                        for marker in (
+                            "must_be_nonempty",
+                            "must_cover",
+                            "must_expose",
+                            "lexical_wire",
+                        )
+                    )
+                    else "single_operation"
+                )
+            elif step == "declare_accesses":
+                repair_scope = (
+                    "single_access"
+                    if isinstance(row_index, int)
+                    else "whole_accesses"
+                )
+            elif step == "declare_output_mappings":
+                repair_scope = (
+                    "single_output"
+                    if isinstance(row_index, int)
+                    else "whole_outputs"
+                )
+            elif step == "declare_boundary_fields":
+                repair_scope = "single_boundary_field"
+            else:
+                repair_scope = "current_phase"
+            payload.update(
+                {
+                    "failure_class": failure_class,
+                    "rule_code": detail[:128],
+                    "rule_path": rule_path,
+                    "expected_relation": expected,
+                    "actual_relation": actual,
+                    "repair_scope": repair_scope,
+                    "state_digest": phase_digest,
+                    "next_legal_action": (
+                        next_legal_action
+                        if next_legal_action is not None
+                        else self._semantic_next_legal_action()
+                    ),
+                    "progress_changed": False,
+                    "phase": phase,
+                }
+            )
         if required_slots is not None:
             payload["required_slots"] = copy.deepcopy(dict(required_slots))
         if next_legal_action is not None:
@@ -4531,7 +7248,7 @@ class IntentIRLiftEnvironment:
             )
             if graph_diagnostic is not None:
                 detail = graph_diagnostic
-                graph_receipt_diagnostic = self._operation_graph_receipt_diagnostic(
+                graph_receipt_diagnostic = self._safe_operation_graph_receipt_diagnostic(
                     graph_declaration_text,
                     graph_body,
                     detail,
@@ -4555,6 +7272,8 @@ class IntentIRLiftEnvironment:
                     self._raise_lift_preparation_failure(
                         detail="semantic_access_declaration_host_validation_failure",
                         attempted_step="declare_accesses",
+                        rule_code=_safe_access_host_failure_rule(exc),
+                        origin=_safe_access_host_origin(exc),
                     )
                 self._record_semantic_access_failure(
                     detail=detail,
@@ -4575,6 +7294,8 @@ class IntentIRLiftEnvironment:
                             "row_index",
                             "expected_row_count",
                             "actual_row_count",
+                            "expected",
+                            "category",
                             "required_fields",
                             "missing_fields",
                             "field",
@@ -4648,9 +7369,11 @@ class IntentIRLiftEnvironment:
                 "access_declaration_must_not_use_id_alias",
                 "access_declaration_provider_predicate_must_be_local_label",
                 "access_declaration_provider_predicate_must_select_compatible_boolean_result",
+                "access_declaration_provider_index_expression_must_be_local_expression",
                 "access_declaration_provider_node_ref_must_be_local_label",
                 "access_declaration_provider_node_ref_must_select_direct_consumer",
                 "access_declaration_must_match_source_wire_template",
+                "access_declaration_must_match_source_index_requirement",
                 "output_declaration_must_cover_each_source_output",
                 "output_declaration_rows_must_be_json_objects",
                 "output_mappings_must_be_json_array",
@@ -4678,13 +7401,12 @@ class IntentIRLiftEnvironment:
             )
             access_slots = (
                 {
-                    "accesses": [
-                        dict(row)
-                        for row in self._semantic_construction_slots["accesses"]
-                    ],
+                    "row_count": len(self._semantic_construction_slots["accesses"]),
+                    "rows": self._semantic_access_failure_context(),
                     "rule": (
                         "resubmit one complete Source-ordinal access array; "
-                        "a prefix or partial prior declaration is not a base"
+                        "copy fixed wire fields exactly, fill only provider-owned "
+                        "local labels, and never use the rejected array as a base"
                     ),
                 }
                 if name == "declare_accesses"
@@ -4708,6 +7430,8 @@ class IntentIRLiftEnvironment:
                 self._semantic_transfer_read_generation
             )
             self._semantic_access_transfer_generation = None
+            self._semantic_entry_transfer_ledger_read = False
+            self._semantic_transfer_expected_start = 1
             audit_row["transfer_read_generation"] = (
                 self._semantic_operation_graph_transfer_generation
             )
@@ -4925,6 +7649,60 @@ class IntentIRLiftEnvironment:
                 "sha256": hashlib.sha256(raw).hexdigest(),
                 "bytes": len(raw),
             },
+        }
+
+    def lifecycle_progress_state(self) -> dict[str, Any]:
+        """Return bounded MCP phase progress without Source-owned content.
+
+        This is diagnostic state only.  It is intentionally limited to the
+        current lifecycle edge, completed semantic write names, counters, and
+        the next legal action.  It never exposes Source rows, J declarations,
+        candidate bytes, provider output, or trajectory messages.
+        """
+
+        phase, phase_digest = self._mcp_phase_failure_key()
+        completed = sorted(self._semantic_construction_completed_steps)
+        last_completed = None
+        if self._semantic_construction_audit:
+            last = self._semantic_construction_audit[-1]
+            if isinstance(last, Mapping) and isinstance(last.get("step"), str):
+                last_completed = last["step"]
+        last_failure: Mapping[str, Any] | None = None
+        for failures in (
+            self._semantic_boundary_field_failures,
+            self._semantic_output_declaration_failures,
+            self._semantic_access_declaration_failures,
+            self._semantic_operation_graph_failures,
+            self._mcp_phase_application_failures,
+        ):
+            if failures and isinstance(failures[-1], Mapping):
+                last_failure = failures[-1]
+                break
+        return {
+            "protocol": "intentir.lift-lifecycle-progress.v1",
+            "phase": phase,
+            "phase_digest": phase_digest,
+            "next_legal_action": self._semantic_next_legal_action(),
+            "last_completed_step": last_completed,
+            "completed_step_count": len(completed),
+            "transfer_read_generation": self._semantic_transfer_read_generation,
+            "graph_failure_count": len(self._semantic_operation_graph_failures),
+            "access_failure_count": len(self._semantic_access_declaration_failures),
+            "output_failure_count": len(self._semantic_output_declaration_failures),
+            "boundary_failure_count": len(self._semantic_boundary_field_failures),
+            "mcp_phase_failure_count": len(self._mcp_phase_application_failures),
+            "last_failure_class": (
+                last_failure.get("failure_class")
+                if last_failure is not None
+                else None
+            ),
+            "last_rule_code": (
+                last_failure.get("detail")
+                or last_failure.get("category")
+                if last_failure is not None
+                else None
+            ),
+            "progress_changed": last_failure is None,
         }
 
     def material_progress_state(self) -> dict[str, Any]:

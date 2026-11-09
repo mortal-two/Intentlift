@@ -4141,6 +4141,278 @@ def _source_c_schedule_roles(
     return result, tile_coordinates
 
 
+def _source_host_launch_contract(
+    source: str, *, function_name: str, view: SCRCCompilerView,
+    search_roots: tuple[Path, ...],
+) -> dict[str, Any]:
+    """Read-only, narrow proof of direct launcher ABI and tile relations.
+
+    Never import/execute a launcher or helper. Unsupported/ambiguous source
+    yields no relation; absence cannot be filled from Harness valuations.
+    Source names and helper paths do not leave this adapter.
+    """
+    module = ast.parse(source)
+    candidates = []
+
+    def host_nodes(host: ast.FunctionDef) -> Iterable[ast.AST]:
+        """Yield nodes in one launcher body without crossing nested scopes.
+
+        A Triton launch is often guarded by a host-side branch (for example,
+        selecting a single-block or multi-block kernel).  The old extractor
+        only inspected ``host.body`` and therefore missed a unique launch
+        nested in that branch.  Nested functions/classes are separate launch
+        scopes and must not be treated as part of the enclosing launcher.
+        """
+
+        pending = list(reversed(host.body))
+        while pending:
+            node = pending.pop()
+            yield node
+            for child in reversed(tuple(ast.iter_child_nodes(node))):
+                if isinstance(
+                    child,
+                    (
+                        ast.FunctionDef,
+                        ast.AsyncFunctionDef,
+                        ast.ClassDef,
+                        ast.Lambda,
+                    ),
+                ):
+                    continue
+                pending.append(child)
+
+    def top_level_statement(
+        host: ast.FunctionDef, target: ast.AST
+    ) -> ast.stmt | None:
+        """Return the top-level body statement containing ``target``."""
+
+        for statement in host.body:
+            if statement is target:
+                return statement
+            if any(node is target for node in ast.walk(statement)):
+                return statement
+        return None
+
+    for host in module.body:
+        if not isinstance(host, ast.FunctionDef):
+            continue
+        for node in host_nodes(host):
+            if not isinstance(node, ast.Call):
+                continue
+            if not (
+                isinstance(node.func, ast.Subscript)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == function_name
+            ):
+                continue
+            statement = top_level_statement(host, node)
+            if statement is not None:
+                candidates.append((host, statement, node))
+    if len(candidates) != 1:
+        return {}
+    host, statement, call = candidates[0]
+    if any(isinstance(node, (ast.Global, ast.Nonlocal)) for node in ast.walk(host)):
+        return {}
+    if len(call.args) > len(view.parameter_order) or any(isinstance(arg, ast.Starred) for arg in call.args):
+        return {}
+    actuals = dict(zip(view.parameter_order, call.args))
+    for kw in call.keywords:
+        if kw.arg in view.parameter_order:
+            if kw.arg in actuals:
+                return {}
+            actuals[kw.arg] = kw.value
+    # Triton autotune/meta parameters may be omitted from the launch call and
+    # selected by the compiler.  Their absence is not an ABI hole: the
+    # SourceFacts schedule ledger owns their closed values.  Runtime
+    # parameters, however, must all be bound by this exact call before a host
+    # launch receipt can be issued.  Requiring every parameter here previously
+    # misclassified kernels whose only omitted argument was a constexpr meta
+    # slot as ``host_launch_contract_unavailable``.
+    required_launch_parameters = set(view.parameter_order) - set(
+        view.constexpr_parameters
+    )
+    if not required_launch_parameters.issubset(actuals):
+        return {}
+    arguments = {item.name: item for item in view.arguments}
+    pointer_actuals: dict[str, list[str]] = {}
+    for name, argument in arguments.items():
+        actual = actuals.get(name)
+        if argument.kind == "tensor" and isinstance(actual, ast.Name):
+            pointer_actuals.setdefault(actual.id, []).append(name)
+    strides = []
+    def integer_literal(node: ast.AST) -> int | None:
+        if isinstance(node, ast.Constant) and type(node.value) is int:
+            return node.value
+        if (
+            isinstance(node, ast.UnaryOp)
+            and isinstance(node.op, ast.USub)
+            and isinstance(node.operand, ast.Constant)
+            and type(node.operand.value) is int
+        ):
+            return -node.operand.value
+        return None
+
+    for name, argument in arguments.items():
+        actual = actuals.get(name)
+        if argument.kind != "scalar" or not isinstance(actual, ast.Call):
+            continue
+        fn = actual.func
+        if not isinstance(fn, ast.Attribute) or fn.attr != "stride" or not isinstance(fn.value, ast.Name) or len(actual.args) != 1 or actual.keywords:
+            continue
+        axis = actual.args[0]
+        owners = pointer_actuals.get(fn.value.id, [])
+        axis_value = integer_literal(axis)
+        if len(owners) != 1 or axis_value is None:
+            continue
+        target = arguments.get(owners[0])
+        target_shape = target.shape if target is not None else None
+        if not isinstance(target_shape, tuple) or not target_shape:
+            continue
+        normalized_axis = axis_value
+        if normalized_axis < 0:
+            normalized_axis += len(target_shape)
+        # This is Python's exact negative-axis rule applied to the declared
+        # Source tensor rank.  Do not use the current runtime extent to make
+        # an otherwise invalid axis appear valid.
+        if not 0 <= normalized_axis < len(target_shape):
+            continue
+        row = {"carrier": name, "tensor": owners[0], "axis": normalized_axis}
+        if row not in strides:
+            strides.append(row)
+
+    preceding = host.body[:host.body.index(statement)]
+    # Reject reassignment, hidden branch definitions and alias guesses for
+    # the tile result and its dimension argument.
+    stores: dict[str, int] = {}
+    for node in ast.walk(host):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            stores[node.id] = stores.get(node.id, 0) + 1
+    def name_bindings(tree: ast.AST, name: str) -> list[ast.AST]:
+        # Conservatively include nested scopes: an unsupported shadowing
+        # pattern must not masquerade as the one imported primitive/helper.
+        bindings: list[ast.AST] = []
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Name) and node.id == name
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+            ) or (isinstance(node, ast.arg) and node.arg == name) or (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name
+            ) or (isinstance(node, ast.ExceptHandler) and node.name == name) or (
+                isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == name
+            ) or (isinstance(node, ast.MatchMapping) and node.rest == name):
+                bindings.append(node)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    bound = alias.asname or (alias.name.split(".")[0] if isinstance(node, ast.Import) else alias.name)
+                    if bound == name or alias.name == "*":
+                        bindings.append(alias)
+        return bindings
+
+    imported: dict[str, list[tuple[str, str, ast.alias]]] = {}
+    for item in module.body:
+        if isinstance(item, ast.ImportFrom) and item.level == 0 and item.module:
+            for alias in item.names:
+                imported.setdefault(alias.asname or alias.name, []).append((item.module, alias.name, alias))
+
+    def capacity_helper(helper_name: str) -> str | None:
+        imports = imported.get(helper_name, [])
+        if len(imports) != 1 or name_bindings(module, helper_name) != [imports[0][2]]:
+            return None
+        module_name, symbol, _alias = imports[0]
+        paths = {root.joinpath(*module_name.split(".")).with_suffix(".py").resolve() for root in search_roots}
+        paths = {path for path in paths if path.is_file()}
+        if len(paths) != 1:
+            return None
+        helper_source = next(iter(paths)).read_text(encoding="utf-8")
+        helper_module = ast.parse(helper_source)
+        definitions = [node for node in helper_module.body if isinstance(node, ast.FunctionDef) and node.name == symbol]
+        if len(definitions) != 1:
+            return None
+        helper = definitions[0]
+        if name_bindings(helper_module, symbol) != [helper]:
+            return None
+        if helper.decorator_list or helper.args.posonlyargs or len(helper.args.args) != 1 or helper.args.vararg or helper.args.kwarg or helper.args.kwonlyargs:
+            return None
+        returns = [node for node in ast.walk(helper) if isinstance(node, ast.Return)]
+        if len(returns) != 1 or not helper.body or helper.body[-1] is not returns[0] or not isinstance(returns[0].value, ast.Tuple) or not returns[0].value.elts or not isinstance(returns[0].value.elts[0], ast.Name):
+            return None
+        result_name = returns[0].value.elts[0].id
+        parameter = helper.args.args[0].arg
+        writes = [node.id for node in ast.walk(helper) if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))]
+        if writes.count(result_name) != 1 or len(name_bindings(helper, result_name)) != 1 or name_bindings(helper, parameter) != [helper.args.args[0]] or parameter in writes or any(isinstance(node, (ast.Global, ast.Nonlocal, ast.For, ast.While, ast.Try, ast.With, ast.Lambda)) for node in ast.walk(helper)):
+            return None
+        assignments = [node for node in helper.body if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == result_name]
+        if len(assignments) != 1:
+            return None
+        expr = assignments[0].value
+        if not isinstance(expr, ast.Call) or expr.keywords or len(expr.args) != 1 or not isinstance(expr.args[0], ast.Name) or expr.args[0].id != parameter or not isinstance(expr.func, ast.Attribute) or expr.func.attr != "next_power_of_2" or not isinstance(expr.func.value, ast.Name):
+            return None
+        triton_name = expr.func.value.id
+        triton_imports = [alias for node in helper_module.body if isinstance(node, ast.Import) for alias in node.names if alias.name == "triton" and (alias.asname or alias.name) == triton_name]
+        if len(triton_imports) != 1 or name_bindings(helper_module, triton_name) != triton_imports or any(
+            (isinstance(node, ast.Name) and node.id == triton_name and isinstance(node.ctx, (ast.Store, ast.Del)))
+            or (isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)) and any(isinstance(part, ast.Name) and part.id == triton_name for part in ast.walk(node)))
+            for node in ast.walk(helper_module)
+        ):
+            return None
+        # The return value is the untouched primitive result. Branches may
+        # reject a launch or compute unrelated options, not replace that value.
+        return hashlib.sha256(helper_source.encode("utf-8")).hexdigest()
+
+    tiles = []
+    for slot, coordinate in view.schedule_tile_coordinates.items():
+        actual = actuals.get(slot)
+        if not isinstance(actual, ast.Name) or stores.get(actual.id) != 1:
+            continue
+        definitions = [node for node in preceding if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Tuple) and node.targets[0].elts and isinstance(node.targets[0].elts[0], ast.Name) and node.targets[0].elts[0].id == actual.id]
+        if len(definitions) != 1:
+            continue
+        expr = definitions[0].value
+        if not isinstance(expr, ast.Call) or not isinstance(expr.func, ast.Name) or expr.keywords or len(expr.args) != 1 or not isinstance(expr.args[0], ast.Name):
+            continue
+        extent_name = expr.args[0].id
+        dimensions = [arg for arg in view.arguments if arg.shape_coordinate == coordinate and isinstance(actuals.get(arg.name), ast.Name) and actuals[arg.name].id == extent_name]
+        if len(dimensions) != 1:
+            continue
+        extent_bindings = name_bindings(host, extent_name)
+        extent_store_count = stores.get(extent_name, 0)
+        # A dimension may be the launcher's formal argument itself.  In that
+        # case there is no local assignment to count, but the unique ast.arg
+        # binding is still an exact source fact.  Any reassigned or ambiguous
+        # dimension remains unproved and is rejected below.
+        if extent_store_count not in (0, 1):
+            continue
+        if extent_store_count == 0 and not (
+            len(extent_bindings) == 1
+            and isinstance(extent_bindings[0], ast.arg)
+        ):
+            continue
+        if extent_store_count == 1 and len(extent_bindings) != 1:
+            continue
+        extent_bindings = name_bindings(host, extent_name)
+        tile_bindings = name_bindings(host, actual.id)
+        if len(extent_bindings) != 1 or len(tile_bindings) != 1:
+            continue
+        earlier = preceding[:preceding.index(definitions[0])]
+        if not any(
+            isinstance(node, ast.Assign)
+            and any(extent_bindings[0] is part for target in node.targets for part in ast.walk(target))
+            for node in earlier
+        ):
+            continue
+        digest = capacity_helper(expr.func.id)
+        if digest is not None:
+            tiles.append({"slot": slot, "coordinate": coordinate, "law": "next_power_of_two", "helper_digest": digest})
+    # A unique, fully bound launch is still a valid host-side proof when this
+    # source exposes no additional stride or tile law.  Returning ``{}`` here
+    # conflated that closed result with an ambiguous/missing launch and caused
+    # every downstream owner check to report
+    # ``source_host_launch_contract_unavailable``.  Keep the relation
+    # fail-closed: only the exact rows proven above are emitted; an empty
+    # collection does not authorize any stride or tile inference.
+    return {"source_digest": hashlib.sha256(source.encode("utf-8")).hexdigest(), "strides": strides, "tiles": tiles}
+
+
 def _prepare_triton_workload_source(
     adapter: TritonWorkloadAdapter,
     *,
@@ -4187,6 +4459,11 @@ def _prepare_triton_workload_source(
             schedule_roles={**dict(view.schedule_roles), **observed_roles},
             schedule_tile_coordinates=observed_tile_coordinates,
         )
+    launch_contract = _source_host_launch_contract(
+        source, function_name=entry.symbol, view=view, search_roots=search_roots,
+    )
+    if launch_contract:
+        view = replace(view, host_launch_contract=launch_contract)
     source_slice.validate_abi(
         parameter_order=view.parameter_order,
         constexpr_parameters=view.constexpr_parameters,
@@ -4247,6 +4524,15 @@ def _prepare_triton_workload_source(
     seen_import_roots: set[Path] = set()
     for root in search_roots:
         root_path = Path(root).expanduser().resolve()
+        # The resolved external Source file may live below a Python package
+        # root (for example ``src/liger_kernel``).  The compiler worker must
+        # receive that exact root so imports in the Source module resolve in
+        # the same host namespace as the selected file.  The nested support
+        # roots below are supplemental lookup locations, not substitutes for
+        # the package root.
+        if root_path.is_dir() and root_path not in seen_import_roots:
+            seen_import_roots.add(root_path)
+            import_roots.append(root_path)
         for relative in (
             Path("support"),
             Path("liger-kernel") / "support",
@@ -4573,27 +4859,27 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         ),
         buffers=(
             _buffer(
-                "Out", BufferRole.INPUT, "f16", (1, 2, 33, 16),
+                "Out", BufferRole.INPUT, "f16", (1, 33, 2, 16),
                 shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
-                "DO", BufferRole.INPUT, "f16", (1, 2, 33, 16),
+                "DO", BufferRole.INPUT, "f16", (1, 33, 2, 16),
                 shape_contract=("h0", "h1", "h2", "h3"),
             ),
             _buffer(
                 "Delta", BufferRole.OUTPUT, "f32", (1, 2, 64), "delta",
-                shape_contract=("h0", "h1", "h4"),
+                shape_contract=("h0", "h2", "h4"),
             ),
         ),
         scalars=(
             _scalar("stride_ob", "i64", 1056),
-            _scalar("stride_oh", "i64", 528),
-            _scalar("stride_om", "i64", 16),
+            _scalar("stride_oh", "i64", 16),
+            _scalar("stride_om", "i64", 32),
             _scalar("stride_dob", "i64", 1056),
-            _scalar("stride_doh", "i64", 528),
-            _scalar("stride_dom", "i64", 16),
-            _scalar("nheads", "i32", 2, shape_coordinate="h1"),
-            _scalar("seqlen_q", "i32", 33, shape_coordinate="h2"),
+            _scalar("stride_doh", "i64", 16),
+            _scalar("stride_dom", "i64", 32),
+            _scalar("nheads", "i32", 2, shape_coordinate="h2"),
+            _scalar("seqlen_q", "i32", 33, shape_coordinate="h1"),
             _scalar(
                 "seqlen_q_rounded", "i32", 64, shape_coordinate="h4"
             ),
@@ -4951,7 +5237,7 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
             _scalar("S_row_stride", "i64", 127),
             _scalar("X_row_stride", "i64", 127),
             _scalar("R_row_stride", "i64", 127),
-            _scalar("W_row_stride", "i64", 127),
+            _scalar("W_row_stride", "i64", 1),
             _scalar("RSTD_row_stride", "i64", 1),
             _scalar("n_cols", "i32", 127, shape_coordinate="h1"),
             _scalar("eps", "f32", 1.0e-6),
@@ -5587,8 +5873,8 @@ TRITON_WORKLOAD_ADAPTERS: dict[str, TritonWorkloadAdapter] = {
         scalars=(
             _scalar("Y_row_stride", "i64", 127),
             _scalar("X_row_stride", "i64", 127),
-            _scalar("W_row_stride", "i64", 127),
-            _scalar("B_row_stride", "i64", 127),
+            _scalar("W_row_stride", "i64", 1),
+            _scalar("B_row_stride", "i64", 1),
             _scalar("Mean_row_stride", "i64", 1),
             _scalar("RSTD_row_stride", "i64", 1),
             _scalar("n_cols", "i32", 127, shape_coordinate="h1"),

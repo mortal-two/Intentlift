@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from intentir.verify.triton_compat import normalize_deprecated_triton_dot
+
 
 TRITON_SOURCE_SLICE_PROTOCOL = "intentir.triton.fixed-c-source-slice.v3"
 _VARARG_ARRAY_ANNOTATION = "VAR_ARGS_ARRAY"
@@ -232,9 +234,6 @@ def _normalize_triton_compatibility_aliases(
             if alias.name == "libdevice_find":
                 resolver_names.add(alias.asname or alias.name)
                 resolver_imports.add(index)
-    if not resolver_names:
-        return original, ()
-
     normalized: list[ast.stmt] = []
     labels: list[str] = []
     for statement in original:
@@ -290,6 +289,50 @@ def _normalize_triton_compatibility_aliases(
             for index, statement in enumerate(normalized)
             if index not in resolver_imports
         ]
+    # The pinned frontend moved the libdevice namespace out of language.
+    # Keep the exact member name and call; this is an import relocation, not
+    # an arithmetic rewrite or an extern semantic authorization.
+    language_aliases = {
+        alias.asname for statement in normalized if isinstance(statement, ast.Import)
+        for alias in statement.names if alias.name == "triton.language" and alias.asname
+    }
+    for alias in sorted(language_aliases):
+        nodes = [node for statement in normalized for node in ast.walk(statement)]
+        bindings = [node for node in nodes if (
+            isinstance(node, ast.Name) and node.id == alias and isinstance(node.ctx, (ast.Store, ast.Del))
+            or isinstance(node, ast.arg) and node.arg == alias
+            or isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name == alias
+            or isinstance(node, ast.alias) and (node.asname or node.name.split(".")[0]) == alias
+        )]
+        if len(bindings) != 1 or not isinstance(bindings[0], ast.alias) or bindings[0].name != "triton.language":
+            continue
+        parents = {id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)}
+        references = [node for node in nodes if isinstance(node, ast.Attribute) and node.attr == "libdevice" and isinstance(node.value, ast.Name) and node.value.id == alias]
+        if not references or any(
+            not isinstance(node.ctx, ast.Load)
+            or not isinstance(parents.get(id(node)), ast.Attribute)
+            or not isinstance(parents[id(node)].ctx, ast.Load)
+            for node in references
+        ):
+            continue
+        occupied = {node.id for node in nodes if isinstance(node, ast.Name)} | {node.arg for node in nodes if isinstance(node, ast.arg)} | {node.name for node in nodes if isinstance(node, (ast.FunctionDef, ast.ClassDef))} | {node.asname or node.name.split(".")[0] for node in nodes if isinstance(node, ast.alias)}
+        imported = "_source_libdevice"
+        while imported in occupied:
+            imported += "_"
+        selected = {id(node) for node in references}
+
+        class Relocate(ast.NodeTransformer):
+            def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
+                if id(node) in selected:
+                    return ast.copy_location(ast.Name(id=imported, ctx=ast.Load()), node)
+                return self.generic_visit(node)
+
+        normalized = [Relocate().visit(statement) for statement in normalized]
+        declaration = ast.ImportFrom(module="triton.language.extra", names=[ast.alias(name="libdevice", asname=imported)], level=0)
+        # Keep future imports first.
+        insert_at = next((index for index, statement in enumerate(normalized) if not isinstance(statement, ast.ImportFrom) or statement.module != "__future__"), len(normalized))
+        normalized.insert(insert_at, declaration)
+        labels.append("compat:triton.language.libdevice->triton.language.extra.libdevice")
     return tuple(normalized), tuple(labels)
 
 
@@ -628,6 +671,12 @@ def build_triton_source_slice(
     projected = ast.Module(body=projected_body, type_ignores=[])
     ast.fix_missing_locations(projected)
     code = ast.unparse(projected) + "\n"
+    # Freeze the same compatibility projection before both lexical provenance
+    # and anonymous Gate Source are constructed. A later worker-only unparse
+    # would otherwise shift every debug coordinate away from SourceFacts.
+    code, dot_compat = normalize_deprecated_triton_dot(code)
+    if dot_compat["rewrite_count"]:
+        normalized_aliases = (*normalized_aliases, "compat:triton.dot:static_transpose")
     parameters = tuple(
         argument.arg
         for argument in (

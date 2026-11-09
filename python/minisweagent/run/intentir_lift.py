@@ -194,6 +194,11 @@ def _run_agent_stage(
         action_metrics = action_metrics()
     if not isinstance(action_metrics, Mapping):
         action_metrics = {"elapsed_ms": 0.0, "count": 0, "failures": 0}
+    lifecycle_progress = getattr(environment, "lifecycle_progress_state", None)
+    if callable(lifecycle_progress):
+        lifecycle_progress = lifecycle_progress()
+    if not isinstance(lifecycle_progress, Mapping):
+        lifecycle_progress = {}
     stage_metrics = {
         "agent_initialization": {
             "elapsed_ms": initialization_elapsed_ms,
@@ -201,9 +206,11 @@ def _run_agent_stage(
         "agent_loop": {
             "elapsed_ms": agent_elapsed_ms,
             "model_calls": agent.n_calls,
+            "status": exit_status or "unknown",
         },
         "provider_model_turn": _provider_model_turn_metrics(trajectory),
         "tool_action": dict(action_metrics),
+        "mcp_lifecycle": dict(lifecycle_progress),
         "candidate_read": {
             "elapsed_ms": candidate_read_elapsed_ms,
         },
@@ -212,6 +219,8 @@ def _run_agent_stage(
         },
         "lift_stage_total": {
             "elapsed_ms": (time.monotonic() - stage_started) * 1000.0,
+            "status": exit_status or "unknown",
+            "candidate_present": output_text is not None,
         },
     }
     return _IntentIRLiftStageResult(

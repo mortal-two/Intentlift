@@ -7,9 +7,14 @@ an exception message — only ``Authorization`` header bytes that urllib sends.
 
 from __future__ import annotations
 
+import errno
 import hashlib
+import http.client
 import json
 import math
+import re
+import socket
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -21,23 +26,226 @@ from .provider import ProviderConfig, get_provider
 
 # Source-aware Lift and source-blind Replay each own their logical retry
 # budget. The default Responses transport allows one additional physical
-# attempt only for a transient transport/5xx response; it never turns an empty
-# or structurally invalid completion into an implicit second logical Lift.
-# Explicit callers may still supply a bounded policy.
+# attempt only for a transient transport/5xx response; it never retries a
+# provider-declared overload, rate, usage, or no-more-retry outcome. Those
+# outcomes are lifecycle-terminal and must not consume another request.
+# Explicit callers may still supply a bounded policy for transport failures.
 DEFAULT_RESPONSES_MAX_RETRIES = 2
 DEFAULT_RESPONSES_TIMEOUT_SECONDS: float | None = None
 XHIGH_RESPONSES_MAX_RETRIES = 2
 XHIGH_RESPONSES_TIMEOUT_SECONDS: float | None = None
-_RETRYABLE_HTTP_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+_RETRYABLE_HTTP_STATUS = frozenset({408, 425, 500, 502, 503, 504})
 _OVERLOADED_RESPONSE_TEXTS = frozenset(
     {
         "we're currently experiencing high demand, which may cause temporary errors.",
         "we’re currently experiencing high demand, which may cause temporary errors.",
     }
 )
+
+_SENSITIVE_ERROR_KEY = re.compile(
+    r"(?i)(?:api[_ -]?key|access[_ -]?token|auth(?:orization)?|bearer|cookie|credential|password|secret|token)"
+)
+_MAX_SAFE_ERROR_TEXT = 8192
+
+
+def _redact_error_text(value: str) -> str:
+    """Retain provider diagnostics while masking credential-shaped text."""
+
+    value = re.sub(r"(?i)(bearer\s+)[^\s,;]+", r"\1<redacted>", value)
+    value = re.sub(
+        r"(?i)((?:authorization|api[_ -]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+",
+        r"\1<redacted>",
+        value,
+    )
+    value = re.sub(
+        r"(?i)(https?://[^\s?]+)\?[^\s]+",
+        r"\1?<redacted>",
+        value,
+    )
+    value = re.sub(r"(?i)https?://[^\s\"'<>]+", "<redacted-url>", value)
+    value = re.sub(
+        r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]{1,5})?(?![0-9])",
+        "<redacted-address>",
+        value,
+    )
+    value = re.sub(
+        r"(?<![A-Za-z0-9_])/(?:[^\s\"']+/){1,}[^\s\"']*",
+        "<redacted-path>",
+        value,
+    )
+    return value[:_MAX_SAFE_ERROR_TEXT]
+
+
+def _safe_error_value(value: Any, *, key: str | None = None) -> Any:
+    """Project an external error envelope without retaining response bodies."""
+
+    if key is not None and _SENSITIVE_ERROR_KEY.search(key):
+        return "<redacted>"
+    if isinstance(value, str):
+        return _redact_error_text(value)
+    if isinstance(value, Mapping):
+        return {
+            str(item_key): _safe_error_value(item, key=str(item_key))
+            for item_key, item in list(value.items())[:32]
+        }
+    if isinstance(value, (list, tuple)):
+        return [_safe_error_value(item) for item in value[:32]]
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return _redact_error_text(str(value))
+
+
+def _safe_sse_error_envelope(
+    payload: Mapping[str, Any] | None,
+    *,
+    last_event_type: str | None = None,
+    terminal_event_received: bool | None = None,
+) -> dict[str, Any]:
+    """Keep only bounded SSE error metadata, never a full Responses body."""
+
+    result: dict[str, Any] = {}
+    if isinstance(payload, Mapping):
+        event_type = payload.get("type")
+        if isinstance(event_type, str) and re.fullmatch(
+            r"[A-Za-z0-9_.:-]{1,96}", event_type
+        ):
+            result["event_type"] = event_type
+        for key in ("code", "message", "detail", "reason", "param", "request_id"):
+            if key in payload:
+                result[key] = _safe_error_value(payload[key], key=key)
+        error = payload.get("error")
+        if error is not None:
+            result["error"] = _safe_error_value(error)
+        response = payload.get("response")
+        if isinstance(response, Mapping):
+            response_error = response.get("error")
+            if response_error is not None:
+                result["response_error"] = _safe_error_value(response_error)
+            status = response.get("status")
+            if isinstance(status, str):
+                result["response_status"] = status[:96]
+    if isinstance(last_event_type, str) and re.fullmatch(
+        r"[A-Za-z0-9_.:-]{1,96}", last_event_type
+    ):
+        result["last_event_type"] = last_event_type
+    if terminal_event_received is not None:
+        result["terminal_event_received"] = bool(terminal_event_received)
+    return result
+
+
+def _safe_http_error_envelope(error: urllib.error.HTTPError) -> dict[str, Any]:
+    """Read only a bounded JSON error envelope from an HTTP error response."""
+
+    result: dict[str, Any] = {"http_status": int(error.code)}
+    try:
+        body = error.read(_MAX_SAFE_ERROR_TEXT)
+    except Exception:
+        body = b""
+    if not body:
+        return result
+    try:
+        payload = json.loads(body.decode("utf-8", errors="replace"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        result["message"] = _redact_error_text(
+            body.decode("utf-8", errors="replace")
+        )
+        return result
+    if isinstance(payload, Mapping):
+        result.update(_safe_sse_error_envelope(payload))
+    else:
+        result["message"] = _safe_error_value(payload)
+    return result
+
+
+def _provider_overload_text(value: Any) -> str | None:
+    """Classify only an exact relay-owned overload sentence."""
+
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split()).casefold()
+    if normalized in _OVERLOADED_RESPONSE_TEXTS:
+        return "provider_overloaded"
+    return None
 # A missing timeout is intentionally unbounded.  A positive explicit timeout
 # remains available to callers that own a local experiment or compiler budget.
 _DEFAULT_RESPONSES_TIMEOUT = object()
+
+_STREAM_TERMINAL_EVENTS = frozenset(
+    {
+        "error",
+        "response.completed",
+        "response.failed",
+        "response.incomplete",
+    }
+)
+_PROVIDER_ERROR_CODE_CLASSES = {
+    "authentication_error": "provider_authentication_error",
+    "billing_hard_limit_reached": "provider_usage_limit",
+    "high_demand": "provider_overloaded",
+    "insufficient_quota": "provider_usage_limit",
+    "invalid_api_key": "provider_authentication_error",
+    "overloaded": "provider_overloaded",
+    "rate_limit_exceeded": "provider_rate_limit",
+    "rate_limit_error": "provider_rate_limit",
+    "request_timeout": "provider_timeout",
+    "server_error": "provider_server_error",
+    "server_overloaded": "provider_overloaded",
+    "server_is_overloaded": "provider_overloaded",
+    "timeout": "provider_timeout",
+    "usage_limit_reached": "provider_usage_limit",
+}
+_PROVIDER_INCOMPLETE_REASON_CLASSES = {
+    "content_filter": "provider_content_filter",
+    "max_output_tokens": "provider_output_limit",
+}
+_PROVIDER_TLS_ERROR_MARKERS = (
+    "tls handshake",
+    "ssl handshake",
+    "utls:",
+    "unexpected eof while reading",
+    "certificate verify failed",
+    "wrong version number",
+    "tls record",
+)
+_RETRYABLE_PROVIDER_FAILURE_CLASSES = frozenset(
+    {
+        "provider_connection_aborted",
+        "provider_connection_broken_pipe",
+        "provider_connection_closed",
+        "provider_connection_refused",
+        "provider_connection_reset",
+        "provider_dns_error",
+        "provider_network_unreachable",
+        "provider_response_failed",
+        "provider_server_error",
+        "provider_sse_error_event",
+        "provider_stream_incomplete",
+        "provider_timeout",
+        "provider_transport_error",
+    }
+)
+
+
+class _ResponsesStreamFailure(ValueError):
+    """One closed SSE terminal/protocol classification without response text."""
+
+    def __init__(
+        self,
+        failure_class: str,
+        *,
+        failure_origin: str,
+        error_envelope: Mapping[str, Any] | None = None,
+    ) -> None:
+        if not isinstance(failure_class, str) or not failure_class.startswith(
+            "provider_"
+        ):
+            raise ValueError("Responses stream failure class must be closed")
+        super().__init__(failure_class)
+        self.failure_class = failure_class
+        self.failure_origin = failure_origin
+        self.safe_error_envelope = (
+            dict(error_envelope) if isinstance(error_envelope, Mapping) else {}
+        )
 
 
 class ProviderError(RuntimeError):
@@ -51,6 +259,8 @@ class ProviderError(RuntimeError):
         attempts: int,
         elapsed_ms: float,
         failure_class: str = "provider_transport_error",
+        failure_origin: str = "unknown",
+        safe_error_envelope: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.request_sha256 = request_sha256
@@ -59,6 +269,14 @@ class ProviderError(RuntimeError):
         if not isinstance(failure_class, str) or not failure_class:
             raise ValueError("provider failure_class must be non-empty")
         self.failure_class = failure_class
+        if not isinstance(failure_origin, str) or not failure_origin:
+            raise ValueError("provider failure_origin must be non-empty")
+        self.failure_origin = failure_origin
+        self.safe_error_envelope = (
+            dict(safe_error_envelope)
+            if isinstance(safe_error_envelope, Mapping)
+            else {}
+        )
 
 
 @dataclass
@@ -277,6 +495,123 @@ def responses_request_sha256(
     ).hexdigest()
 
 
+def _closed_stream_event_failure(payload: Mapping[str, Any]) -> str | None:
+    """Classify one terminal SSE event without retaining provider text."""
+
+    event_type = payload.get("type") or payload.get("event_type")
+    if event_type not in {"error", "response.failed", "response.incomplete"}:
+        return None
+
+    response = payload.get("response")
+    response_mapping = response if isinstance(response, Mapping) else {}
+    error_candidates = [
+        payload.get("error"),
+        payload.get("response_error"),
+        response_mapping.get("error"),
+    ]
+    for error in error_candidates:
+        failure_class = _provider_tls_error(
+            error.get("message")
+            if isinstance(error, Mapping)
+            else error
+        )
+        if failure_class is not None:
+            return failure_class
+        failure_class = _provider_overload_text(error)
+        if failure_class is not None:
+            return failure_class
+        if not isinstance(error, Mapping):
+            continue
+        for key in ("code", "type"):
+            value = error.get(key)
+            if isinstance(value, str):
+                failure_class = _PROVIDER_ERROR_CODE_CLASSES.get(
+                    value.strip().casefold()
+                )
+                if failure_class is not None:
+                    return failure_class
+        for key in ("message", "detail", "reason"):
+            failure_class = _provider_tls_error(error.get(key))
+            if failure_class is not None:
+                return failure_class
+            failure_class = _provider_overload_text(error.get(key))
+            if failure_class is not None:
+                return failure_class
+    top_level_code = payload.get("code")
+    if isinstance(top_level_code, str):
+        failure_class = _PROVIDER_ERROR_CODE_CLASSES.get(
+            top_level_code.strip().casefold()
+        )
+        if failure_class is not None:
+            return failure_class
+    for key in ("message", "detail", "reason"):
+        failure_class = _provider_tls_error(payload.get(key))
+        if failure_class is not None:
+            return failure_class
+        failure_class = _provider_overload_text(payload.get(key))
+        if failure_class is not None:
+            return failure_class
+
+    if event_type == "response.incomplete":
+        details = response_mapping.get("incomplete_details")
+        if isinstance(details, Mapping):
+            reason = details.get("reason")
+            if isinstance(reason, str):
+                failure_class = _PROVIDER_INCOMPLETE_REASON_CLASSES.get(
+                    reason.strip().casefold()
+                )
+                if failure_class is not None:
+                    return failure_class
+        return "provider_response_incomplete"
+    if event_type == "response.failed":
+        return "provider_response_failed"
+    return "provider_sse_error_event"
+
+
+def _stream_failure_origin(event_type: Any) -> str:
+    return {
+        "response.failed": "sse_response_failed",
+        "response.incomplete": "sse_response_incomplete",
+        "error": "sse_error_event",
+    }.get(event_type, "sse_terminal_event")
+
+
+def _provider_tls_error(value: Any) -> str | None:
+    """Recognize a relay-reported TLS failure without retaining its text."""
+
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split()).casefold()
+    if any(marker in normalized for marker in _PROVIDER_TLS_ERROR_MARKERS):
+        return "provider_tls_error"
+    return None
+
+
+def _provider_error_envelope_failure(
+    payload: Mapping[str, Any],
+) -> str | None:
+    """Classify known transport failures in a non-SSE HTTP error envelope."""
+
+    candidates: list[Any] = [
+        payload.get("message"),
+        payload.get("detail"),
+        payload.get("reason"),
+        payload.get("error"),
+        payload.get("response_error"),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, Mapping):
+            candidates.extend(
+                candidate.get(key)
+                for key in ("message", "detail", "reason")
+            )
+            continue
+        failure_class = _provider_tls_error(candidate)
+        if failure_class is not None:
+            return failure_class
+    return None
+
+
 def _normalize_stream_response(raw_response: bytes) -> tuple[dict[str, Any], str]:
     """Normalize a Responses SSE body into the existing reply envelope.
 
@@ -300,7 +635,10 @@ def _normalize_stream_response(raw_response: bytes) -> tuple[dict[str, Any], str
         try:
             payload = json.loads(raw_data)
         except json.JSONDecodeError as exc:
-            raise ValueError("Responses SSE contained invalid JSON") from exc
+            raise _ResponsesStreamFailure(
+                "provider_protocol_error",
+                failure_origin="sse_protocol",
+            ) from exc
         if isinstance(payload, Mapping):
             event_payloads.append(dict(payload))
 
@@ -314,7 +652,10 @@ def _normalize_stream_response(raw_response: bytes) -> tuple[dict[str, Any], str
     consume_pending()
 
     if not event_payloads:
-        raise ValueError("Responses SSE contained no data events")
+        raise _ResponsesStreamFailure(
+            "provider_protocol_error",
+            failure_origin="sse_protocol",
+        )
 
     final_response: dict[str, Any] | None = None
     function_items: dict[str, dict[str, Any]] = {}
@@ -322,10 +663,18 @@ def _normalize_stream_response(raw_response: bytes) -> tuple[dict[str, Any], str
     delta_chunks: list[str] = []
     completed_text: str | None = None
     saw_completed = False
+    last_event_type: str | None = None
     for payload in event_payloads:
         event_type = payload.get("type")
-        if event_type in {"error", "response.failed"}:
-            raise ValueError("Responses SSE emitted a failure event")
+        if isinstance(event_type, str):
+            last_event_type = event_type
+        stream_failure = _closed_stream_event_failure(payload)
+        if stream_failure is not None:
+            raise _ResponsesStreamFailure(
+                stream_failure,
+                failure_origin=_stream_failure_origin(event_type),
+                error_envelope=_safe_sse_error_envelope(payload),
+            )
         response = payload.get("response")
         if isinstance(response, Mapping):
             final_response = dict(response)
@@ -349,7 +698,15 @@ def _normalize_stream_response(raw_response: bytes) -> tuple[dict[str, Any], str
             saw_completed = True
 
     if not saw_completed:
-        raise ValueError("Responses SSE ended before response.completed")
+        raise _ResponsesStreamFailure(
+            "provider_stream_incomplete",
+            failure_origin="sse_completion_missing",
+            error_envelope=_safe_sse_error_envelope(
+                None,
+                last_event_type=last_event_type,
+                terminal_event_received=False,
+            ),
+        )
 
     if final_response is None:
         final_response = {}
@@ -433,8 +790,50 @@ def _read_completed_sse_response(response: Any) -> bytes:
             # Preserve malformed data for the established parser to classify;
             # it must not become a transport-side partial candidate.
             continue
-        if isinstance(event, Mapping) and event.get("type") == "response.completed":
+        if (
+            isinstance(event, Mapping)
+            and event.get("type") in _STREAM_TERMINAL_EVENTS
+        ):
             return b"".join(chunks)
+
+
+def _closed_transport_failure_class(exc: BaseException) -> str:
+    """Classify URL/socket failures without exporting endpoint or exception text."""
+
+    chain: list[BaseException] = [exc]
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, BaseException) and reason is not exc:
+        chain.append(reason)
+    for item in chain:
+        if isinstance(item, (TimeoutError, socket.timeout)):
+            return "provider_timeout"
+        if isinstance(item, socket.gaierror):
+            return "provider_dns_error"
+        if isinstance(item, ssl.SSLError):
+            return "provider_tls_error"
+        if isinstance(item, ConnectionRefusedError):
+            return "provider_connection_refused"
+        # RemoteDisconnected is a ConnectionResetError subclass in the stdlib;
+        # classify it first so a clean remote close remains distinct from an
+        # active connection reset.
+        if isinstance(item, http.client.RemoteDisconnected):
+            return "provider_connection_closed"
+        if isinstance(item, ConnectionResetError):
+            return "provider_connection_reset"
+        if isinstance(item, ConnectionAbortedError):
+            return "provider_connection_aborted"
+        if isinstance(item, BrokenPipeError):
+            return "provider_connection_broken_pipe"
+        if isinstance(item, http.client.IncompleteRead):
+            return "provider_stream_incomplete"
+        if isinstance(item, OSError) and item.errno in {
+            errno.ENETDOWN,
+            errno.ENETUNREACH,
+            errno.EHOSTDOWN,
+            errno.EHOSTUNREACH,
+        }:
+            return "provider_network_unreachable"
+    return "provider_transport_error"
 
 
 def _resolve_responses_request_policy(
@@ -522,11 +921,13 @@ def call_responses(
     }
     last = ""
     failure_class = "provider_transport_error"
+    failure_origin = "unknown"
     started = time.monotonic()
     attempts_made = 0
     for attempt in range(max_retries):
         attempts_made = attempt + 1
         retryable = False
+        safe_error_envelope: dict[str, Any] = {}
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -544,20 +945,24 @@ def call_responses(
                 if not isinstance(data, dict):
                     last = "Responses payload is not a JSON object"
                     failure_class = "provider_protocol_error"
+                    failure_origin = "responses_json"
                     break
                 text = _extract_output_text(data)
             if not isinstance(data, dict):
                 last = "Responses payload is not a JSON object"
                 failure_class = "provider_protocol_error"
+                failure_origin = "responses_json"
                 break
             text_failure = _provider_text_failure(text)
             if text_failure is not None:
                 last = "provider returned a service-overload completion"
                 failure_class = text_failure
+                failure_origin = "completed_text"
                 retryable = True
             elif not text.strip() and not allow_empty_output:
                 last = _empty_completion_diagnostic(data)
                 failure_class = "provider_no_candidate"
+                failure_origin = "completed_envelope"
             else:
                 return LLMReply(
                     text=text,
@@ -574,33 +979,25 @@ def call_responses(
         except json.JSONDecodeError:
             last = "Responses endpoint returned invalid JSON"
             failure_class = "provider_protocol_error"
+            failure_origin = "responses_json"
             break
-        except ValueError as e:
-            # Stream-level failures are provider preparation failures.  Do not
-            # let the parser exception escape as an unclassified local error,
-            # and do not turn a partial SSE response into a candidate.
-            message = str(e)
-            transient_stream_failure = (
-                "failure event" in message
-                or "response.completed" in message
-            )
-            last = (
-                "Responses SSE emitted a failure event"
-                if "failure event" in message
-                else "Responses SSE ended before response.completed"
-                if "response.completed" in message
-                else "Responses SSE protocol error"
-            )
-            failure_class = (
-                "provider_transport_error"
-                if transient_stream_failure
-                else "provider_protocol_error"
-            )
-            retryable = transient_stream_failure
+        except _ResponsesStreamFailure as e:
+            # The parser emits only a closed class. Never transport a provider
+            # error message, partial output, or response body into lifecycle
+            # diagnostics or a repair turn.
+            last = "Responses SSE terminated without a completed candidate"
+            failure_class = e.failure_class
+            failure_origin = e.failure_origin
+            safe_error_envelope = dict(e.safe_error_envelope)
+            retryable = failure_class in _RETRYABLE_PROVIDER_FAILURE_CLASSES
+        except ValueError:
+            last = "Responses SSE protocol error"
+            failure_class = "provider_protocol_error"
+            failure_origin = "sse_protocol"
+            retryable = False
         except urllib.error.HTTPError as e:
-            # Do not retain the provider body: relift diagnostics must remain
-            # secret-free and must never echo a relay's prompt/error payload.
             last = f"HTTP {e.code}"
+            safe_error_envelope = _safe_http_error_envelope(e)
             failure_class = (
                 "provider_authentication_error"
                 if e.code in (401, 403)
@@ -610,26 +1007,39 @@ def call_responses(
                 if e.code == 408
                 else "provider_http_error"
             )
-            retryable = e.code in _RETRYABLE_HTTP_STATUS
+            failure_origin = (
+                "http_server_error" if e.code >= 500 else "http_error"
+            )
+            body_failure_class = _closed_stream_event_failure(
+                safe_error_envelope
+            )
+            if body_failure_class is None:
+                body_failure_class = _provider_error_envelope_failure(
+                    safe_error_envelope
+                )
+            if body_failure_class is not None:
+                failure_class = body_failure_class
+                retryable = failure_class in _RETRYABLE_PROVIDER_FAILURE_CLASSES
+            else:
+                retryable = e.code in _RETRYABLE_HTTP_STATUS
             if not retryable:
                 break  # not retryable
-        except (urllib.error.URLError, TimeoutError) as e:
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.HTTPException,
+            ssl.SSLError,
+            OSError,
+        ) as e:
             # Keep endpoint details and relay-provided text out of the closed
-            # diagnostic.  The typed class below is sufficient for lifecycle
-            # handling and avoids leaking transport metadata into evidence.
+            # diagnostic. The closed socket/HTTP class below is sufficient for
+            # lifecycle handling and avoids leaking transport metadata into
+            # evidence while still distinguishing locally actionable causes.
             last = type(e).__name__
-            reason = getattr(e, "reason", None)
-            is_timeout = (
-                isinstance(e, TimeoutError)
-                or isinstance(reason, TimeoutError)
-                or "timeout" in type(reason).__name__.casefold()
-            )
-            failure_class = (
-                "provider_timeout"
-                if is_timeout
-                else "provider_transport_error"
-            )
-            retryable = True
+            failure_class = _closed_transport_failure_class(e)
+            failure_origin = "network_transport"
+            retryable = failure_class in _RETRYABLE_PROVIDER_FAILURE_CLASSES
         if retryable and attempt < max_retries - 1:
             time.sleep(2.0 * (attempt + 1))
         elif not retryable:
@@ -640,6 +1050,8 @@ def call_responses(
         attempts=attempts_made,
         elapsed_ms=(time.monotonic() - started) * 1000.0,
         failure_class=failure_class,
+        failure_origin=failure_origin,
+        safe_error_envelope=safe_error_envelope,
     )
 
 

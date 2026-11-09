@@ -20,7 +20,7 @@ from typing import AbstractSet, Any
 
 MAP_UNARY_FNS = frozenset(
     {
-        "identity", "exp", "log", "log2", "sqrt", "rsqrt", "neg", "recip",
+        "identity", "exp", "log", "log2", "sqrt", "rsqrt", "rsqrt_ftz", "neg", "recip",
         "abs", "tanh", "sigmoid", "cos", "sin", "tan", "exp2", "atan", "erf",
         "acos", "asin", "cbrt", "ceil", "floor", "round", "roundeven",
         "trunc", "sign", "log10", "log1p", "expm1", "erfc",
@@ -107,6 +107,40 @@ def is_closed_floating_dtype(value: object) -> bool:
         isinstance(value, str)
         and value in FLOATING_DTYPES
     )
+
+
+def is_consumer_reduction_identity(fn: object, dtype: object, value: object) -> bool:
+    """Return whether ``value`` is a closed identity for a padded consumer.
+
+    FunctionalBoundary and TypeCheck must agree on the outside-domain value
+    attached to a reduce/scan operand. Keep this predicate beside the canonical
+    dtype contract so those projections cannot drift into different acceptance
+    sets. Operand dtype equality and producer provenance remain separate.
+    """
+
+    if fn == "sum":
+        return value == "ZERO" or (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and float(value) == 0.0
+        )
+    if fn == "prod":
+        return value == "ONE" or (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and float(value) == 1.0
+        )
+    if fn == "any":
+        return value is False or value == "false"
+    if fn == "all":
+        return value is True or value == "true"
+    if not is_closed_floating_dtype(dtype):
+        return False
+    if fn == "max":
+        return isinstance(value, str) and value in {"NEG_INF", "-inf"}
+    if fn == "min":
+        return isinstance(value, str) and value in {"POS_INF", "+inf", "inf"}
+    return False
 
 
 def is_closed_boolean_dtype(value: object) -> bool:
@@ -205,6 +239,8 @@ def map_unary_result_dtype(fn: object, input_dtype: object) -> str | None:
         return "i1" if dtype in FLOATING_DTYPES else None
     if fn == "logical_not":
         return "i1" if dtype == "i1" else None
+    if fn == "rsqrt_ftz":
+        return "f32" if dtype == "f32" else None
     if fn in MAP_UNARY_NUMERIC_FNS:
         return dtype if is_closed_numeric_dtype(dtype) else None
     return dtype if dtype in FLOATING_DTYPES else None
@@ -1833,7 +1869,10 @@ def intent_op_json_schema() -> dict[str, Any]:
                 "enum": sorted(CANONICAL_J_OPS - STRUCTURED_INTENT_OPS),
             },
         },
-        ("id", "op"),
+        # The MCP graph boundary and all canonical consumers require an
+        # explicit operand array. Zero-input leaves (const/iota/rand) use an
+        # empty array; omitting the field is not the same wire shape.
+        ("id", "op", "operands"),
     )
     ragged_outer_result_type = _closed_schema(
         {
@@ -2275,6 +2314,7 @@ __all__ = [
     "is_closed_boolean_dtype",
     "is_closed_dtype",
     "is_closed_floating_dtype",
+    "is_consumer_reduction_identity",
     "is_closed_integer_dtype",
     "is_closed_numeric_dtype",
     "VALUE_IF_REQUIRED_FIELDS",

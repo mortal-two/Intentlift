@@ -25,17 +25,21 @@ from intentir.verify.gate1.model import (
     SemanticArchive,
 )
 from intentir.extraction.providers.client import ProviderError
-from intentir.extraction.lifters.miniswe import MiniSWELiftAdapter
-from intentir.extraction.lifters.codex_cli import CodexCLILiftAdapter
-from intentir.extraction.lifters.scrc import ResponsesSCRCLiftAdapter
+from intentir.extraction.lifters.miniswe import (
+    MiniSWELiftAdapter,
+    _safe_preparation_receipt,
+)
+from intentir.extraction.lifters.direct_agent import (
+    DIRECT_AGENT_LIFT_BACKEND,
+    DirectAgentLiftAdapter,
+)
 from intentir.extraction.lifters.compiler_observation import (
-    observe_source_ttir,
-    validate_source_semantic_authorizations,
+    SAFE_SOURCE_PREPARATION_REASONS,
+    source_preparation_failure_stage,
 )
 from intentir.extraction.providers.provider import ProviderConfig
 from intentir.verify.adapters import BoundGate1Adapter, TritonGate2ExecutionAdapter
 from intentir.verify.gate1.compiler import TritonCompiler
-from intentir.verify.gate1.ttir import fingerprint_ttir
 from intentir.verify.gate1.orchestrate import (
     Gate1Config,
     Gate1Runner,
@@ -72,8 +76,6 @@ from intentir.verify.gate2.triton import (
 )
 from intentir.verify.scrc_batch import BatchClassification
 from intentir.verify.scrc_runner import (
-    CallBudget,
-    CandidateAttemptReport,
     MainStatus,
     MAX_LIFT_CALLS,
     SCRCGateRunner,
@@ -91,9 +93,10 @@ from intentir.verify.workload_adapters import (
 )
 
 
-RecordedLiftAdapter = (
-    ResponsesSCRCLiftAdapter | MiniSWELiftAdapter | CodexCLILiftAdapter
-)
+# MCP remains the default formal SCRC Lift route.  The direct-Agent route is
+# available only through the explicit ``lift_backend="direct-agent"`` choice
+# for isolated validation; it does not alter the default lifecycle.
+RecordedLiftAdapter = MiniSWELiftAdapter
 PreparedWorkload = PreparedTritonWorkload
 LIFT_SEMANTIC_PROBE_PROTOCOL = "intentir.lift.public-semantic-probe.v1"
 LIFT_SEMANTIC_PROBE_SEED = 2026073001
@@ -731,7 +734,8 @@ def run_workload_lift_semantic_probe(
         return {
             "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
             "status": "unavailable",
-            "diagnostic": "candidate C values differ from the frozen Harness binding",
+            "rule_code": "semantic_probe_c_binding_mismatch",
+            "path": "<candidate-c>",
             "authority": "public diagnostic only; not CandidateCheck or certification",
         }
 
@@ -744,10 +748,8 @@ def run_workload_lift_semantic_probe(
         return {
             "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
             "status": "unavailable",
-            "diagnostic": (
-                "public Source-vs-J diagnostic skipped because model-level buffers "
-                "exceed the bounded Lift feedback budget"
-            ),
+            "rule_code": "semantic_probe_buffer_budget_exceeded",
+            "path": "<public-buffer-budget>",
             "buffer_bytes": public_buffer_bytes,
             "buffer_budget_bytes": LIFT_SEMANTIC_PROBE_MAX_BUFFER_BYTES,
             "formal_gate2_input_unchanged": True,
@@ -768,38 +770,116 @@ def run_workload_lift_semantic_probe(
             case_id="finite-public-lift-probe-1",
             test_mode="finite_public_before_gate1",
         )
+    except Exception as exc:
+        return {
+            "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
+            "status": "unavailable",
+            "rule_code": "semantic_probe_case_construction_failed",
+            "path": "<public-case-construction>",
+            "exception_type": type(exc).__name__,
+            "authority": (
+                "public diagnostic only; probe failure does not reject or certify "
+                "the candidate"
+            ),
+        }
 
-        def clone_values() -> dict[str, Any]:
-            return {
-                name: value.copy() if isinstance(value, np.ndarray) else value
-                for name, value in case.values.items()
-            }
+    def clone_values() -> dict[str, Any]:
+        return {
+            name: value.copy() if isinstance(value, np.ndarray) else value
+            for name, value in case.values.items()
+        }
 
+    try:
         source = TritonRunner().run(
             "source",
             prepared.request.source.gate_source,
             case.triton,
             clone_values(),
         )
+    except Exception as exc:
+        return {
+            "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
+            "status": "unavailable",
+            "rule_code": "semantic_probe_source_execution_exception",
+            "path": "<public-source-execution>",
+            "exception_type": type(exc).__name__,
+            "authority": (
+                "public diagnostic only; probe failure does not reject or certify "
+                "the candidate"
+            ),
+        }
+    if not source.ok:
+        failure_class = source.metadata.get("failure_class")
+        return {
+            "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
+            "status": "unavailable",
+            "rule_code": "semantic_probe_source_execution_failed",
+            "path": "<public-source-execution>",
+            "failed_leg": "source",
+            "unsupported": source.unsupported,
+            **(
+                {"failure_class": failure_class}
+                if isinstance(failure_class, str)
+                and re.fullmatch(r"[A-Za-z0-9_.:-]{1,96}", failure_class)
+                is not None
+                else {}
+            ),
+            "authority": (
+                "public diagnostic only; unsupported execution does not reject "
+                "or certify the candidate"
+            ),
+        }
+
+    try:
         reference = ScalarLoweringRunner().run(case.refeval, clone_values())
-        if not source.ok or not reference.ok:
-            failed = source if not source.ok else reference
-            result = {
-                "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
-                "status": "unavailable",
-                "failed_leg": failed.leg,
-                "unsupported": failed.unsupported,
-                "diagnostic": failed.error,
-                "authority": (
-                    "public diagnostic only; unsupported execution does not reject "
-                    "or certify the candidate"
-                ),
-            }
-            if failed is reference and failed.unsupported:
-                repairable = _repairable_dense_domain_lower_bound(failed.error)
-                if repairable is not None:
-                    result.update(repairable)
-            return result
+    except Exception as exc:
+        return {
+            "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
+            "status": "unavailable",
+            "rule_code": "semantic_probe_reference_execution_exception",
+            "path": "<public-j-reference-execution>",
+            "exception_type": type(exc).__name__,
+            "authority": (
+                "public diagnostic only; probe failure does not reject or certify "
+                "the candidate"
+            ),
+        }
+    if not reference.ok:
+        repairable = (
+            _repairable_dense_domain_lower_bound(reference.error)
+            if reference.unsupported else None
+        )
+        failure_class = reference.metadata.get("failure_class")
+        result = {
+            "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
+            "status": "unavailable",
+            "rule_code": (
+                "semantic_probe_reference_repairable_domain"
+                if repairable is not None
+                else "semantic_probe_reference_unsupported"
+                if reference.unsupported
+                else "semantic_probe_reference_execution_failed"
+            ),
+            "path": "<public-j-reference-execution>",
+            "failed_leg": "j",
+            "unsupported": reference.unsupported,
+            **(
+                {"failure_class": failure_class}
+                if isinstance(failure_class, str)
+                and re.fullmatch(r"[A-Za-z0-9_.:-]{1,96}", failure_class)
+                is not None
+                else {}
+            ),
+            "authority": (
+                "public diagnostic only; unsupported execution does not reject "
+                "or certify the candidate"
+            ),
+        }
+        if repairable is not None:
+            result.update(repairable)
+        return result
+
+    try:
         agreement = compare_outputs(
             "source",
             source.outputs,
@@ -826,9 +906,9 @@ def run_workload_lift_semantic_probe(
         return {
             "protocol": LIFT_SEMANTIC_PROBE_PROTOCOL,
             "status": "unavailable",
-            "failed_leg": "j",
-            "phase": "j_reference_construction",
-            "diagnostic": type(exc).__name__,
+            "rule_code": "semantic_probe_comparison_failed",
+            "path": "<public-source-j-comparison>",
+            "exception_type": type(exc).__name__,
             "authority": (
                 "public diagnostic only; probe failure does not reject or certify "
                 "the candidate"
@@ -1146,15 +1226,15 @@ def _build_workload_runtime(
             "shared SCRC runtime is Triton/TTIR-only; CUDA and TileLang must "
             "use their native Gate runners, and CuTe must use CuteGate1Runner"
         )
-    lift_class: type[RecordedLiftAdapter]
-    if lift_backend == "responses":
-        lift_class = ResponsesSCRCLiftAdapter
-    elif lift_backend == "miniswe":
-        lift_class = MiniSWELiftAdapter
-    elif lift_backend == "codex":
-        lift_class = CodexCLILiftAdapter
+    if lift_backend == "miniswe":
+        lift_class: type[Any] = MiniSWELiftAdapter
+    elif lift_backend == DIRECT_AGENT_LIFT_BACKEND:
+        lift_class = DirectAgentLiftAdapter
     else:
-        raise ValueError(f"unknown Lift backend: {lift_backend!r}")
+        raise ValueError(
+            "unsupported SCRC Lift backend; choose the default 'miniswe' "
+            "or explicitly opt into 'direct-agent'"
+        )
     # Lift and source-blind Replay have separate provider owners even when
     # both are configured to use the same endpoint/model.  ProviderConfig is
     # immutable, but distinct instances make the lifecycle boundary explicit
@@ -1177,13 +1257,8 @@ def _build_workload_runtime(
             prepared.request.source.lift_source_to_opaque
         ),
     }
-    if lift_backend in {"miniswe", "codex"}:
+    if lift_class is MiniSWELiftAdapter:
         lift_kwargs["workflow"] = lift_workflow
-    if lift_backend == "codex":
-        lift_kwargs["semantic_probe"] = lambda artifact: (
-            run_workload_lift_semantic_probe(prepared, artifact)
-        )
-        lift_kwargs["stop_requested"] = stop_requested
     lift = lift_class(
         **lift_kwargs,
     )
@@ -1218,62 +1293,6 @@ def _build_workload_runtime(
         # attach it to a later Lift attempt.
         writers.append((formal_round, writer_evidence))
 
-        def gate1_authorization_validator(
-            artifact: Gate1Artifact,
-            request: Any,
-            observation: Any,
-        ) -> tuple[Mapping[str, Any], ...]:
-            """Recheck Source-issued receipts immediately before Replay.
-
-            The Source compilation belongs to this Gate1 invocation.  The
-            callback reconstructs only the host-local ledger from its
-            diagnostic sidecars and rejects an artifact whose canonical
-            owner/guard claims no longer match that receipt.  It cannot
-            allocate handles, amend J, or affect Gate1 fingerprint equality.
-            """
-
-            construction = request.construction.with_observation(observation)
-            return validate_source_semantic_authorizations(
-                artifact.to_json(),
-                ledger=construction.transfer_ledger,
-                source_facts=request.source_facts,
-            )
-
-        def gate1_authorization_observer(request: Any) -> Any:
-            """Compile the exact host-only Source for this Gate1 call.
-
-            Gate1's normal Source compile remains the anonymous executable
-            realization used for replay comparison.  Receipt revalidation is a
-            separate, fresh compilation of the original private Source slice so
-            its debug coordinates have the same authority as the Lift ledger.
-            It returns only an in-memory diagnostic fingerprint.
-            """
-
-            source_program = request.source
-            source_function = source_program.lift_source_symbol
-            if not isinstance(source_function, str) or not source_function:
-                raise ValueError("Gate1 authorization Source entry is unavailable")
-            gate_source = source_program.gate_source
-            observation = observe_source_ttir(
-                source_program.text,
-                prepared.compiler_view.to_json(),
-                source_function=source_function,
-                import_roots=tuple(getattr(gate_source, "import_roots", ())),
-                source_facts=request.source_facts,
-            )
-            if observation.get("status") != "pass":
-                raise ValueError("Gate1 authorization Source observation is unavailable")
-            ttir = observation.get("ttir")
-            if not isinstance(ttir, str) or not ttir:
-                raise ValueError("Gate1 authorization Source TTIR is unavailable")
-            python_interface = observation.get("python_interface")
-            return fingerprint_ttir(
-                ttir,
-                python_interface=(
-                    python_interface if isinstance(python_interface, Mapping) else None
-                ),
-            )
-
         return BoundGate1Adapter(
             Gate1Runner(
                 compiler=compiler,
@@ -1284,8 +1303,6 @@ def _build_workload_runtime(
                 ),
                 config=Gate1Config(run_masked_j=run_masked_j),
             ),
-            authorization_validator=gate1_authorization_validator,
-            authorization_observer=gate1_authorization_observer,
         )
 
     gate2 = TritonGate2ExecutionAdapter(
@@ -1295,16 +1312,10 @@ def _build_workload_runtime(
         ),
     )
 
-    # Responses and MiniSWE return a checked artifact directly, so the shared
-    # runner performs the same public Source-vs-J probe before Replay/Gate1.
-    # Codex performs that probe inside its fresh Lift invocation; do not run it
-    # twice.
-    semantic_probe = (
-        (
-            lambda artifact: run_workload_lift_semantic_probe(prepared, artifact)
-        )
-        if lift_backend in {"responses", "miniswe"}
-        else None
+    # MCP Lift returns a checked artifact directly, so the shared runner keeps
+    # the public Source-vs-J probe before Replay/Gate1.
+    semantic_probe = lambda artifact: run_workload_lift_semantic_probe(
+        prepared, artifact
     )
     runner = SCRCGateRunner(
         SCRCRunDependencies(
@@ -1362,16 +1373,6 @@ def search_prepared_workload_gate1(
             request,
             max_pre_replay_rejections=max_pre_replay_rejections,
         )
-    elif lift_backend not in {"miniswe", "codex"}:
-        # Legacy one-shot writers do not expose a cumulative owner-time terminal
-        # signal, so bound their pre-Replay retries by the same logical Lift
-        # budget selected for this branch.  Keeping these bounds identical is
-        # important: a caller that selects the three-call Lift cap must not
-        # silently receive fewer responses before the branch is stopped.
-        request = replace(
-            request,
-            max_pre_replay_rejections=request.max_lift_calls,
-        )
     search_started = time.monotonic()
     try:
         report = runner.search_gate1(
@@ -1397,6 +1398,67 @@ def search_prepared_workload_gate1(
                 "attempts": exc.attempts,
                 "physical_provider_calls": exc.attempts,
                 "failure_class": exc.failure_class,
+                "provider_failure_origin": getattr(
+                    exc, "failure_origin", "unknown"
+                ),
+            }
+            provider_evidence: dict[str, Any] = {
+                "failure_class": "lift_provider_preparation",
+                "provider_failure_class": exc.failure_class,
+                "provider_failure_origin": getattr(
+                    exc, "failure_origin", "unknown"
+                ),
+                "candidate_present": False,
+            }
+            provider_error = getattr(exc, "safe_error_envelope", None)
+            if isinstance(provider_error, Mapping) and provider_error:
+                provider_evidence["provider_error"] = dict(provider_error)
+            existing_evidence = getattr(exc, "evidence", None)
+            exc.evidence = {
+                **(
+                    dict(existing_evidence)
+                    if isinstance(existing_evidence, Mapping)
+                    else {}
+                ),
+                **provider_evidence,
+            }
+        # A later provider failure must not erase the safe rule-level outcome
+        # of earlier fresh Lift calls. Never copy rejected candidate text or
+        # the backend's free-form diagnostic into infrastructure evidence.
+        prior_rejections: list[dict[str, Any]] = []
+        for record in getattr(lift, "records", ()):
+            backend = getattr(record, "backend_evidence", None)
+            if not isinstance(backend, Mapping):
+                continue
+            rules: list[dict[str, str]] = []
+            for source in ("candidate_check", "source_reconcile"):
+                check = backend.get(source)
+                diagnostics = check.get("diagnostics") if isinstance(check, Mapping) else None
+                if not isinstance(diagnostics, list):
+                    continue
+                for item in diagnostics:
+                    if not isinstance(item, Mapping):
+                        continue
+                    code, path = item.get("rule_code"), item.get("path")
+                    if not isinstance(code, str) or re.fullmatch(r"[a-z0-9_]{1,96}", code) is None:
+                        continue
+                    rule = {"rule_code": code}
+                    if isinstance(path, str) and re.fullmatch(r"(?:j|pi)\.[A-Za-z0-9_.\[\]]{1,120}|<(?:candidate|canonical-constructor)>", path):
+                        rule["path"] = path
+                    rules.append(rule)
+                    if len(rules) >= 12:
+                        break
+                if len(rules) >= 12:
+                    break
+            if rules:
+                prior_rejections.append({"lift_call": record.relift_round, "rules": rules})
+            if len(prior_rejections) >= 3:
+                break
+        if prior_rejections:
+            existing_evidence = getattr(exc, "evidence", None)
+            exc.evidence = {
+                **(dict(existing_evidence) if isinstance(existing_evidence, Mapping) else {}),
+                "prior_lift_rejections": prior_rejections,
             }
         raise WorkloadExecutionError(
             exc,
@@ -1457,264 +1519,6 @@ def complete_prepared_workload_gate2(
     )
 
 
-def gate2_exposes_logical_j_pass_implementation_failure(
-    gate2: Gate2SuiteResult | None,
-) -> bool:
-    """Recognize logical-J pass with an implementation-side Gate2 failure.
-
-    The failure may belong to Replay consumption or to an incomplete pi realization;
-    Source/J alone cannot distinguish them.  This predicate is host-side lifecycle
-    control only.  It never enters a Replay packet or prompt and cannot select
-    another J candidate.  Every failed case must have a successful Source/J
-    comparison and matching failures on both Replay legs.
-    """
-
-    if gate2 is None or gate2.passed:
-        return False
-    failed = tuple(case for case in gate2.cases if not case.passed)
-    if not failed:
-        return False
-    return all(
-        case.source.ok
-        and case.replay.ok
-        and case.reference.ok
-        and case.source_j is not None
-        and case.source_j.passed
-        and case.source_replay is not None
-        and not case.source_replay.passed
-        and case.replay_j is not None
-        and not case.replay_j.passed
-        for case in failed
-    )
-
-
-def _rebase_current_replay_retry_attempt(
-    attempt: CandidateAttemptReport,
-    *,
-    formal_round_offset: int,
-) -> CandidateAttemptReport:
-    formal_round = (
-        formal_round_offset + attempt.formal_round
-        if attempt.formal_round is not None
-        else None
-    )
-    feedback = attempt.feedback
-    if feedback is not None and feedback.formal_round is not None:
-        feedback = replace(
-            feedback,
-            formal_round=formal_round_offset + feedback.formal_round,
-        )
-    return replace(
-        attempt,
-        formal_round=formal_round,
-        feedback=feedback,
-        lift_metadata={
-            **dict(attempt.lift_metadata),
-            "current_artifact_fresh_replay": True,
-            "formal_round_offset": formal_round_offset,
-        },
-    )
-
-
-def retry_current_workload_gate1_replay(
-    prepared: PreparedWorkload,
-    current: WorkloadGate1Search,
-    *,
-    formal_round_offset: int,
-    progress_callback: SCRCProgressCallback | None = None,
-) -> WorkloadGate1Search:
-    """Retry Replay for the artifact closed by the current in-memory search.
-
-    No artifact path or persisted parent is accepted.  The owning runner
-    obtains the sole eligible artifact from ``current.report`` and performs no
-    Lift call.  Each invocation creates a fresh source-blind Replay writer in
-    the same Kernel lifecycle.
-    """
-
-    if not isinstance(formal_round_offset, int) or formal_round_offset < 1:
-        raise ValueError("formal_round_offset must be a positive integer")
-
-    def offset_progress(
-        stage: str,
-        attempt: int | None,
-        formal_round: int | None,
-        status: str,
-    ) -> None:
-        if progress_callback is None:
-            return
-        progress_callback(
-            stage,
-            attempt,
-            (
-                formal_round_offset + formal_round
-                if formal_round is not None
-                else None
-            ),
-            status,
-        )
-
-    previous_invocation_count = len(current._replay_writer_registry)
-    report = current.runner.retry_current_gate1_replay(
-        prepared.request,
-        current.report,
-        progress_callback=offset_progress,
-    )
-    rebased_attempts = tuple(
-        _rebase_current_replay_retry_attempt(
-            attempt,
-            formal_round_offset=formal_round_offset,
-        )
-        for attempt in report.attempts
-    )
-    rebased_report = replace(
-        report,
-        attempts=rebased_attempts,
-        accepted_attempt=(
-            formal_round_offset + report.accepted_attempt
-            if report.accepted_attempt is not None
-            else None
-        ),
-    )
-    return WorkloadGate1Search(
-        rebased_report,
-        current.runner,
-        current.lift,
-        current._replay_writer_registry,
-        _replay_round_evidence(
-            current._replay_writer_registry[previous_invocation_count:],
-            rebased_report.attempts,
-            formal_round_offset=formal_round_offset,
-        ),
-    )
-
-
-def _add_call_budgets(left: CallBudget, right: CallBudget) -> CallBudget:
-    return CallBudget(
-        lift_calls=left.lift_calls + right.lift_calls,
-        lift_physical_calls=left.lift_physical_calls + right.lift_physical_calls,
-        typecheck_calls=left.typecheck_calls + right.typecheck_calls,
-        formal_gate1_rounds=(
-            left.formal_gate1_rounds + right.formal_gate1_rounds
-        ),
-        replay_normal_calls=left.replay_normal_calls + right.replay_normal_calls,
-        replay_masked_calls=left.replay_masked_calls + right.replay_masked_calls,
-        replay_physical_calls=(
-            left.replay_physical_calls + right.replay_physical_calls
-        ),
-        gate2_cases=left.gate2_cases + right.gate2_cases,
-        source_executions=left.source_executions + right.source_executions,
-        replay_executions=left.replay_executions + right.replay_executions,
-        refeval_executions=left.refeval_executions + right.refeval_executions,
-    )
-
-
-def _merge_stage_metrics(
-    *groups: Mapping[str, Mapping[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Accumulate stage timings while retaining the latest stage status.
-
-    A Gate1 search owns the timings for its Lift/BindSource/TypeCheck/Replay
-    stages.  Wrapper-level no-closure and fixed-artifact retry paths must carry
-    those timings into the persisted ``SCRCRunReport`` instead of rebuilding a
-    report with the default empty mapping.  ``elapsed_ms`` and ``runs`` are
-    additive across independent searches; other fields describe the latest
-    observation for that stage.
-    """
-
-    merged: dict[str, dict[str, Any]] = {}
-    for group in groups:
-        for name, raw in group.items():
-            if not isinstance(raw, Mapping):
-                continue
-            current = merged.setdefault(str(name), {})
-            for key, value in raw.items():
-                if key in {"elapsed_ms", "runs"}:
-                    previous = current.get(key)
-                    if isinstance(previous, (int, float)) and isinstance(
-                        value, (int, float)
-                    ):
-                        current[key] = previous + value
-                    elif key not in current:
-                        current[key] = value
-                else:
-                    current[key] = value
-    return merged
-
-
-def _gate2_only_budget(gate2: Gate2SuiteResult) -> CallBudget:
-    case_count = len(gate2.cases)
-    return CallBudget(
-        lift_calls=0,
-        lift_physical_calls=0,
-        typecheck_calls=0,
-        formal_gate1_rounds=0,
-        replay_normal_calls=0,
-        replay_masked_calls=0,
-        replay_physical_calls=0,
-        gate2_cases=case_count,
-        source_executions=case_count,
-        replay_executions=case_count,
-        refeval_executions=case_count,
-    )
-
-
-def merge_current_replay_retry_execution(
-    base: WorkloadExecution,
-    retry_searches: tuple[WorkloadGate1Search, ...],
-    retry_executions: tuple[WorkloadExecution, ...],
-) -> WorkloadExecution:
-    """Merge current-lifecycle Replay retries without changing the candidate."""
-
-    attempts = list(base.report.attempts)
-    budget = base.report.call_budget
-    for search in retry_searches:
-        attempts.extend(search.report.attempts)
-        budget = _add_call_budgets(budget, search.report.call_budget)
-    gate2_attempts = list(base.gate2_attempts)
-    if not gate2_attempts and base.report.gate2 is not None:
-        gate2_attempts.append(base.report.gate2)
-    for execution in retry_executions:
-        if execution.report.gate2 is None:
-            raise ValueError("retry execution lacks Gate2 evidence")
-        gate2_attempts.append(execution.report.gate2)
-        budget = _add_call_budgets(
-            budget,
-            _gate2_only_budget(execution.report.gate2),
-        )
-    stage_metrics = _merge_stage_metrics(
-        base.report.stage_metrics,
-        *(search.report.stage_metrics for search in retry_searches),
-        *(
-            {
-                key: value
-                for key, value in execution.report.stage_metrics.items()
-                if key in {"gate2", "gate2_total"}
-            }
-            for execution in retry_executions
-        ),
-    )
-    final = retry_executions[-1] if retry_executions else base
-    report = SCRCRunReport(
-        main_status=final.report.main_status,
-        attempts=tuple(attempts),
-        accepted_attempt=final.report.accepted_attempt,
-        gate2=final.report.gate2,
-        j_necessity_status=final.report.j_necessity_status,
-        call_budget=budget,
-        stage_metrics=stage_metrics,
-    )
-    return WorkloadExecution(
-        report,
-        base.lift,
-        tuple(
-            round_evidence
-            for search in (base, *retry_searches)
-            for round_evidence in search.replay_writers
-        ),
-        tuple(gate2_attempts),
-    )
-
-
 def execute_prepared_workload(
     prepared: PreparedWorkload,
     *,
@@ -1726,6 +1530,7 @@ def execute_prepared_workload(
     lift_backend: str = "miniswe",
     lift_workflow: str = "single",
     replay_backend: str = "responses",
+    max_gate1_rounds: int | None = None,
     max_lift_calls: int | None = None,
     progress_callback: SCRCProgressCallback | None = None,
 ) -> WorkloadExecution:
@@ -1741,6 +1546,7 @@ def execute_prepared_workload(
         lift_backend=lift_backend,
         lift_workflow=lift_workflow,
         replay_backend=replay_backend,
+        max_gate1_rounds=max_gate1_rounds,
         max_lift_calls=max_lift_calls,
         progress_callback=progress_callback,
     )
@@ -1972,6 +1778,7 @@ def initialize_workload_evidence(
     lift_backend: str = "miniswe",
     lift_workflow: str = "single",
     replay_backend: str = "responses",
+    max_gate1_rounds: int | None = None,
     max_lift_calls: int | None = None,
     search_metadata: Mapping[str, Any] | None = None,
 ) -> None:
@@ -1979,6 +1786,11 @@ def initialize_workload_evidence(
         prepared.request.max_lift_calls
         if max_lift_calls is None
         else max_lift_calls
+    )
+    effective_max_gate1_rounds = (
+        prepared.request.max_gate1_rounds
+        if max_gate1_rounds is None
+        else max_gate1_rounds
     )
     if (
         not isinstance(effective_max_lift_calls, int)
@@ -1988,6 +1800,11 @@ def initialize_workload_evidence(
         raise ValueError(
             f"max_lift_calls must be in [1, {MAX_LIFT_CALLS}]"
         )
+    if (
+        not isinstance(effective_max_gate1_rounds, int)
+        or effective_max_gate1_rounds < 1
+    ):
+        raise ValueError("max_gate1_rounds must be positive")
     # Keep the evidence record aligned with the independent Replay owner used
     # by the runtime.  No response continuation or agent history is shared.
     effective_replay_provider = replace(replay_provider or provider)
@@ -2002,17 +1819,18 @@ def initialize_workload_evidence(
     )
     request_record = {
         "case_id": prepared.entry.case_id,
-        "provider": provider.name,
-        "model": provider.model,
+        "provider": "configured-provider",
+        "model": "configured-model",
         "reasoning_effort": effort or provider.reasoning_effort,
-        "replay_provider": effective_replay_provider.name,
-        "replay_model": effective_replay_provider.model,
+        "replay_provider": "configured-provider",
+        "replay_model": "configured-model",
         "replay_reasoning_effort": (
             effective_replay_effort or effective_replay_provider.reasoning_effort
         ),
         "lift_backend": lift_backend,
         "lift_workflow": lift_workflow,
         "max_lift_calls": effective_max_lift_calls,
+        "max_gate1_rounds": effective_max_gate1_rounds,
         "replay_backend": replay_backend,
         "frontend": prepared.entry.frontend,
         "observer_profile": prepared.entry.observer_profile,
@@ -2033,9 +1851,9 @@ def _replay_receipt(record: ReplayGeneration | ReplayAttempt) -> dict[str, Any]:
     result: dict[str, Any] = {
         "recorded": True,
         "backend_protocol": record.backend_protocol,
-        "model": record.model,
-        "response_model": record.response_model,
-        "response_id": record.response_id,
+        "model": "<redacted-model>",
+        "response_model": "<redacted-model>",
+        "response_id": "<redacted>",
         "usage": dict(record.usage),
         "attempts": record.attempts,
         "physical_provider_calls": record.physical_provider_calls,
@@ -2292,9 +2110,9 @@ def _save_attempt_evidence(
                 _write_json(
                     attempt_dir / "lift_receipt.json",
                     {
-                        "model": provenance.model,
-                        "response_model": provenance.response_model,
-                        "response_id": provenance.response_id,
+                        "model": "<redacted-model>",
+                        "response_model": "<redacted-model>",
+                        "response_id": "<redacted>",
                         "usage": dict(provenance.usage),
                         "attempts": provenance.attempts,
                         "elapsed_ms": provenance.elapsed_ms,
@@ -2581,10 +2399,77 @@ _SAFE_FAILURE_INGRESS_FIELDS = frozenset(
         "rule_code",
         "path",
         "provider_failure_class",
+        "provider_failure_origin",
+        "failure_class",
         "physical_provider_calls",
         "exception_type",
+        "failure_stage",
+        "returned_type",
+        "line",
     }
 )
+
+_SAFE_SOURCE_FAILURE_CLASSES = frozenset({
+    "source_preparation_transfer_ledger_unavailable",
+    "source_preparation_authorization_unavailable",
+})
+_SAFE_SOURCE_FAILURE_REASONS = SAFE_SOURCE_PREPARATION_REASONS
+
+_SAFE_HOST_PREPARATION_RULES = frozenset({
+    "source_host_launch_contract_malformed",
+    "source_host_launch_digest_mismatch",
+    "source_host_launch_digest_unavailable",
+    "source_host_shape_contract_mismatch",
+    "source_host_shape_scalar_mismatch",
+    "source_host_stride_binding_ambiguous",
+    "source_host_stride_contract_malformed",
+    "source_host_stride_instantiation_mismatch",
+    "source_host_stride_type_mismatch",
+    "source_host_tile_binding_mismatch",
+    "source_host_tile_contract_malformed",
+    "source_host_tile_helper_unbound",
+    "source_host_tile_instantiation_mismatch",
+})
+_SAFE_PROVIDER_FAILURE_CLASSES = frozenset({
+    "provider_authentication_error", "provider_connection_aborted",
+    "provider_connection_broken_pipe", "provider_connection_closed",
+    "provider_connection_refused", "provider_connection_reset",
+    "provider_content_filter", "provider_dns_error", "provider_http_error",
+    "provider_malformed_candidate", "provider_network_unreachable",
+    "provider_no_candidate", "provider_output_limit", "provider_overloaded",
+    "provider_protocol_error", "provider_rate_limit", "provider_response_failed",
+    "provider_response_incomplete", "provider_server_error",
+    "provider_sse_error_event", "provider_stream_incomplete", "provider_timeout",
+    "provider_tls_error", "provider_transport_error", "provider_usage_limit",
+})
+_SAFE_PROVIDER_FAILURE_ORIGINS = frozenset({
+    "completed_envelope", "completed_text", "http_error", "http_server_error",
+    "network_transport", "responses_json", "sse_completed_envelope_invalid",
+    "sse_completed_response_incomplete", "sse_completion_missing",
+    "sse_error_event", "sse_response_failed", "sse_response_incomplete",
+    "sse_protocol", "sse_terminal_event", "unknown",
+    "sse_read_error",
+})
+_SAFE_LIFT_FAILURE_CLASSES = frozenset({
+    "lift_agent_step_limit",
+    "lift_agent_cost_limit",
+    "lift_agent_time_limit",
+    "lift_agent_format_limit",
+    "lift_agent_stagnation",
+    "lift_agent_preparation",
+    "lift_agent_no_candidate",
+    "lift_authoring_preparation",
+    "lift_mcp_host_internal_error",
+    "lift_mcp_application_error",
+    "lift_mcp_no_progress",
+    "lift_provider_preparation",
+    "lift_source_harness_preparation",
+    "lift_agent_infrastructure",
+    "lift_adapter_contract_violation",
+})
+_SAFE_PROVIDER_SELECTION_FAILURE_CLASSES = frozenset({
+    "provider_configuration_unavailable",
+})
 
 _SAFE_STAGE_METRIC_STRING = re.compile(r"[A-Za-z0-9_.:-]{1,96}\Z")
 _SAFE_STAGE_METRIC_FIELDS = frozenset(
@@ -2597,13 +2482,117 @@ _SAFE_STAGE_METRIC_FIELDS = frozenset(
         "attempts",
         "physical_provider_calls",
         "failure_class",
+        "candidate_present",
+        "candidate_check_started",
+        "typecheck_started",
+        "replay_started",
+        "gate1_started",
+        "gate2_started",
+        "phase",
+        "phase_digest",
+        "next_legal_action",
+        "last_completed_step",
+        "completed_step_count",
+        "transfer_read_generation",
+        "graph_failure_count",
+        "access_failure_count",
+        "output_failure_count",
+        "boundary_failure_count",
+        "mcp_phase_failure_count",
+        "last_failure_class",
+        "last_rule_code",
+        "progress_changed",
     }
 )
+
+_SAFE_EXTERNAL_ERROR_KEYS = frozenset(
+    {
+        "event_type",
+        "event",
+        "error",
+        "response_error",
+        "response_status",
+        "http_status",
+        "exception_type",
+        "message",
+        "last_event_type",
+        "terminal_event_received",
+        "code",
+        "detail",
+        "reason",
+        "param",
+        "request_id",
+    }
+)
+_SENSITIVE_EXTERNAL_ERROR_KEY = re.compile(
+    r"(?i)(?:api[_ -]?key|access[_ -]?token|auth(?:orization)?|bearer|cookie|credential|password|secret|token)"
+)
+_MAX_EXTERNAL_ERROR_TEXT = 8192
+_MAX_EXTERNAL_ERROR_ITEMS = 32
+
+
+def _redact_external_error_text(value: str) -> str:
+    """Preserve bounded external error text while masking credentials."""
+
+    value = re.sub(r"(?i)(bearer\s+)[^\s,;]+", r"\1<redacted>", value)
+    value = re.sub(
+        r"(?i)((?:authorization|api[_ -]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+",
+        r"\1<redacted>",
+        value,
+    )
+    value = re.sub(
+        r"(?i)(https?://[^\s?]+)\?[^\s]+",
+        r"\1?<redacted>",
+        value,
+    )
+    value = re.sub(r"(?i)https?://[^\s\"'<>]+", "<redacted-url>", value)
+    value = re.sub(
+        r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]{1,5})?(?![0-9])",
+        "<redacted-address>",
+        value,
+    )
+    value = re.sub(
+        r"(?<![A-Za-z0-9_])/(?:[^\s\"']+/){1,}[^\s\"']*",
+        "<redacted-path>",
+        value,
+    )
+    return value[:_MAX_EXTERNAL_ERROR_TEXT]
+
+
+def _safe_external_error_value(value: Any, *, key: str | None = None) -> Any:
+    if key is not None and _SENSITIVE_EXTERNAL_ERROR_KEY.search(key):
+        return "<redacted>"
+    if isinstance(value, str):
+        return _redact_external_error_text(value)
+    if isinstance(value, Mapping):
+        return {
+            str(item_key): _safe_external_error_value(item_value, key=str(item_key))
+            for item_key, item_value in list(value.items())[:_MAX_EXTERNAL_ERROR_ITEMS]
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            _safe_external_error_value(item)
+            for item in value[:_MAX_EXTERNAL_ERROR_ITEMS]
+        ]
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return _redact_external_error_text(str(value))
+
+
+def _safe_external_error_envelope(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    projected = {
+        key: _safe_external_error_value(value[key], key=key)
+        for key in _SAFE_EXTERNAL_ERROR_KEYS
+        if key in value
+    }
+    return projected or None
 
 
 def _safe_stage_metrics(
     raw_metrics: Mapping[str, Any] | None,
-) -> dict[str, dict[str, int | float | str]]:
+) -> dict[str, dict[str, int | float | str | bool]]:
     """Project timings/counts and controlled status labels only.
 
     Stage metrics are included in infrastructure receipts, so they must not
@@ -2613,7 +2602,7 @@ def _safe_stage_metrics(
 
     if not isinstance(raw_metrics, Mapping):
         return {}
-    metrics: dict[str, dict[str, int | float | str]] = {}
+    metrics: dict[str, dict[str, int | float | str | bool]] = {}
     for name, raw in raw_metrics.items():
         if (
             not isinstance(name, str)
@@ -2621,17 +2610,161 @@ def _safe_stage_metrics(
             or not isinstance(raw, Mapping)
         ):
             continue
-        retained: dict[str, int | float | str] = {}
+        retained: dict[str, int | float | str | bool] = {}
         for field in _SAFE_STAGE_METRIC_FIELDS:
             value = raw.get(field)
             if isinstance(value, str):
                 if _SAFE_STAGE_METRIC_STRING.fullmatch(value) is not None:
                     retained[field] = value
+            elif isinstance(value, bool):
+                retained[field] = value
             elif isinstance(value, (int, float)) and not isinstance(value, bool):
                 retained[field] = value
         if retained:
             metrics[name] = retained
     return metrics
+
+
+def _safe_gate1_arm_failure(raw_arm: Any) -> dict[str, Any] | None:
+    """Project one normal or masked-J Replay arm without authored content."""
+
+    if not isinstance(raw_arm, Mapping):
+        return None
+    safe_arm: dict[str, Any] = {
+        "generation_present": raw_arm.get("generation") is not None,
+        "comparison_present": raw_arm.get("comparison") is not None,
+    }
+    physical_calls = raw_arm.get("physical_calls")
+    if (
+        isinstance(physical_calls, int)
+        and not isinstance(physical_calls, bool)
+        and physical_calls >= 0
+    ):
+        safe_arm["physical_calls"] = physical_calls
+    raw_diagnostics = raw_arm.get("ingress_diagnostics")
+    if isinstance(raw_diagnostics, list):
+        diagnostics = []
+        for raw in raw_diagnostics:
+            if not isinstance(raw, Mapping):
+                continue
+            projected = {
+                key: value
+                for key, value in raw.items()
+                if key in _SAFE_FAILURE_INGRESS_FIELDS
+                and (
+                    isinstance(value, str)
+                    or (isinstance(value, int) and not isinstance(value, bool))
+                )
+            }
+            if projected:
+                diagnostics.append(projected)
+        if diagnostics:
+            safe_arm["ingress_diagnostics"] = diagnostics
+    return safe_arm
+
+
+_SAFE_GATE1_CATEGORIES = frozenset(
+    {
+        "interface",
+        "op_multiset",
+        "dataflow",
+        "reduction",
+        "predicate_effect",
+        "schedule-only",
+    }
+)
+
+
+def safe_gate1_comparison_summary(report: SCRCRunReport) -> list[dict[str, Any]]:
+    """Return bounded Gate1 verdict classes, never fingerprint differences.
+
+    A normal lifecycle may finish with NO_CLOSURE, so infrastructure-failure
+    metadata alone cannot explain which exact-comparison obligation failed.
+    Keep only fixed comparator category names and booleans from formal rounds;
+    neither the Replay text nor fingerprint items cross this boundary.
+    """
+
+    rounds: list[dict[str, Any]] = []
+    for attempt in report.attempts:
+        if attempt.formal_round is None or attempt.gate1 is None:
+            continue
+        gate1 = attempt.gate1
+        entry: dict[str, Any] = {
+            "formal_round": attempt.formal_round,
+            "status": gate1.status.value,
+        }
+        for name in ("normal", "masked_j"):
+            arm = getattr(gate1, name)
+            if arm is None:
+                continue
+            comparison = arm.comparison
+            arm_summary: dict[str, Any] = {
+                "comparison_present": comparison is not None,
+            }
+            compile_result = arm.compile_result
+            if compile_result is not None and not compile_result.ok:
+                # These two values are closed worker classifications; do not
+                # serialize the compiler diagnostic because it can contain
+                # authored Replay text.
+                arm_summary["compile_failure_class"] = (
+                    compile_result.failure_class
+                    or "triton_frontend_compile_failed"
+                )
+                if compile_result.exception_type is not None:
+                    arm_summary["compile_exception_type"] = (
+                        compile_result.exception_type
+                    )
+            if comparison is not None:
+                arm_summary["hard_pass"] = comparison.hard_pass
+                arm_summary["failed_categories"] = sorted(
+                    category
+                    for category, passed in comparison.hard_passes.items()
+                    if category in _SAFE_GATE1_CATEGORIES and not passed
+                )
+            entry[name] = arm_summary
+        rounds.append(entry)
+    return rounds
+
+
+def safe_gate2_failure_summary(report: SCRCRunReport) -> list[dict[str, Any]]:
+    """Project Gate2 failures without exposing execution error text."""
+
+    gate2 = report.gate2
+    if gate2 is None:
+        return []
+    summaries: list[dict[str, Any]] = []
+    for case in gate2.cases:
+        if case.status is Gate2Status.PASS:
+            continue
+        entry: dict[str, Any] = {
+            "case_id": case.case_id,
+            "status": case.status.value,
+        }
+        for leg_name, result in (
+            ("source", case.source),
+            ("replay", case.replay),
+            ("reference", case.reference),
+        ):
+            metadata = result.metadata
+            failure_class = metadata.get("failure_class")
+            if not isinstance(failure_class, str) or re.fullmatch(
+                r"[A-Za-z0-9_.:-]{1,96}", failure_class
+            ) is None:
+                continue
+            leg: dict[str, Any] = {"failure_class": failure_class}
+            phase = metadata.get("phase")
+            exception_type = metadata.get("exception_type")
+            if isinstance(phase, str) and re.fullmatch(
+                r"[A-Za-z0-9_.:-]{1,96}", phase
+            ) is not None:
+                leg["phase"] = phase
+            if isinstance(exception_type, str) and re.fullmatch(
+                r"[A-Za-z0-9_.:-]{1,96}", exception_type
+            ) is not None:
+                leg["exception_type"] = exception_type
+            entry[leg_name] = leg
+        summaries.append(entry)
+    return summaries
 
 
 def safe_workload_failure_metadata(
@@ -2642,12 +2775,44 @@ def safe_workload_failure_metadata(
     Failure evidence can retain an artifact internally so a caller may recover
     its local lifecycle bookkeeping, but neither the CLI nor a persisted
     failure summary may expose an artifact, Source, TTIR, candidate text,
-    Replay text, provider body, trajectory, or unconstrained diagnostic.
+    Replay text, complete provider body, trajectory, or unconstrained
+    diagnostic. A provider SSE error envelope is the sole diagnostic
+    exception: it is copied recursively with credentials redacted and is
+    never used as repair input.
     """
 
     if not isinstance(evidence, Mapping):
         return {}
     safe: dict[str, Any] = {}
+    prior = evidence.get("prior_lift_rejections")
+    if isinstance(prior, list):
+        safe_prior: list[dict[str, Any]] = []
+        for item in prior[:3]:
+            if not isinstance(item, Mapping):
+                continue
+            call, rules = item.get("lift_call"), item.get("rules")
+            if (
+                not isinstance(call, int)
+                or isinstance(call, bool)
+                or not 1 <= call <= 3
+                or not isinstance(rules, list)
+            ):
+                continue
+            safe_rules: list[dict[str, str]] = []
+            for rule in rules[:12]:
+                if not isinstance(rule, Mapping):
+                    continue
+                code, path = rule.get("rule_code"), rule.get("path")
+                if not isinstance(code, str) or re.fullmatch(r"[a-z0-9_]{1,96}", code) is None:
+                    continue
+                row = {"rule_code": code}
+                if isinstance(path, str) and re.fullmatch(r"(?:j|pi)\.[A-Za-z0-9_.\[\]]{1,120}|<(?:candidate|canonical-constructor)>", path):
+                    row["path"] = path
+                safe_rules.append(row)
+            if safe_rules:
+                safe_prior.append({"lift_call": call, "rules": safe_rules})
+        if safe_prior:
+            safe["prior_lift_rejections"] = safe_prior
     for key in (
         "attempted_lift_call",
         "attempted_formal_round",
@@ -2655,6 +2820,9 @@ def safe_workload_failure_metadata(
         "replay_normal_calls",
         "replay_masked_calls",
         "replay_physical_calls",
+        "model_calls",
+        "physical_provider_calls",
+        "transport_retries",
     ):
         value = evidence.get(key)
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
@@ -2662,6 +2830,130 @@ def safe_workload_failure_metadata(
     candidate_present = evidence.get("candidate_present")
     if isinstance(candidate_present, bool):
         safe["candidate_present"] = candidate_present
+    lifecycle = evidence.get("lifecycle")
+    if isinstance(lifecycle, Mapping):
+        safe_lifecycle: dict[str, Any] = {}
+        for key in (
+            "phase",
+            "stop_reason",
+        ):
+            value = lifecycle.get(key)
+            if isinstance(value, str) and _SAFE_STAGE_METRIC_STRING.fullmatch(value):
+                safe_lifecycle[key] = value
+        for key in (
+            "attempt",
+            "model_calls",
+            "physical_provider_calls",
+            "transport_retries",
+        ):
+            value = lifecycle.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                safe_lifecycle[key] = value
+        for key in (
+            "candidate_present",
+            "candidate_check_started",
+            "typecheck_started",
+            "replay_started",
+            "gate1_started",
+            "gate2_started",
+        ):
+            value = lifecycle.get(key)
+            if isinstance(value, bool):
+                safe_lifecycle[key] = value
+        if safe_lifecycle:
+            safe["lifecycle"] = safe_lifecycle
+    failure_class = evidence.get("failure_class")
+    failure_stage = evidence.get("failure_stage")
+    if isinstance(failure_stage, str) and re.fullmatch(
+        r"[a-z][a-z0-9_]{0,63}", failure_stage
+    ):
+        safe["failure_stage"] = failure_stage
+    for key in ("exception_type", "origin_exception_type", "returned_type"):
+        value = evidence.get(key)
+        if isinstance(value, str) and re.fullmatch(
+            r"[A-Za-z][A-Za-z0-9_]{0,63}", value
+        ):
+            safe[key] = value
+    origin_frame = evidence.get("origin_frame")
+    if isinstance(origin_frame, Mapping):
+        safe_frame: dict[str, Any] = {}
+        for key in ("file", "function"):
+            value = origin_frame.get(key)
+            if isinstance(value, str) and re.fullmatch(
+                r"[A-Za-z0-9_.-]{1,96}", value
+            ):
+                safe_frame[key] = value
+        line = origin_frame.get("line")
+        if isinstance(line, int) and not isinstance(line, bool) and line > 0:
+            safe_frame["line"] = line
+        if safe_frame:
+            safe["origin_frame"] = safe_frame
+    if isinstance(failure_class, str) and (
+        failure_class in {"source_preparation", "lift_provider_preparation"}
+        or failure_class in _SAFE_LIFT_FAILURE_CLASSES
+        or failure_class in _SAFE_PROVIDER_SELECTION_FAILURE_CLASSES
+    ):
+        safe["failure_class"] = failure_class
+        # A pre-candidate MCP failure has no candidate or repair base, but its
+        # host-owned preparation receipt is still useful diagnostic metadata.
+        # Reuse the same bounded projection that feeds the next fresh owner;
+        # never copy the authoring declaration, Source, provider response, or
+        # trajectory into the durable failure summary.
+        if failure_class in _SAFE_LIFT_FAILURE_CLASSES:
+            raw_preparation = evidence.get("preparation_receipt")
+            if not isinstance(raw_preparation, Mapping):
+                authoring = evidence.get("authoring")
+                preparation_failures = (
+                    authoring.get("preparation_failures")
+                    if isinstance(authoring, Mapping)
+                    else None
+                )
+                if isinstance(preparation_failures, list) and preparation_failures:
+                    raw_preparation = preparation_failures[-1]
+            preparation = _safe_preparation_receipt(raw_preparation)
+            if preparation is not None:
+                safe["preparation_receipt"] = preparation
+        if failure_class == "source_preparation":
+            source_class = evidence.get("source_failure_class")
+            if isinstance(source_class, str) and source_class in _SAFE_SOURCE_FAILURE_CLASSES:
+                safe["source_failure_class"] = source_class
+            source_reason = evidence.get("source_failure_reason")
+            if (
+                isinstance(source_reason, str)
+                and source_reason in _SAFE_SOURCE_FAILURE_REASONS
+            ):
+                safe["source_failure_reason"] = source_reason
+                stage = source_preparation_failure_stage(source_reason)
+                if stage is not None:
+                    safe["source_failure_stage"] = stage
+        elif failure_class == "lift_provider_preparation":
+            provider_class = evidence.get("provider_failure_class")
+            if (
+                isinstance(provider_class, str)
+                and provider_class in _SAFE_PROVIDER_FAILURE_CLASSES
+            ):
+                safe["provider_failure_class"] = provider_class
+            exception_type = evidence.get("provider_exception_type")
+            if isinstance(exception_type, str) and re.fullmatch(
+                r"[A-Za-z][A-Za-z0-9_]{0,63}", exception_type
+            ):
+                safe["provider_exception_type"] = exception_type
+            provider_origin = evidence.get("provider_failure_origin")
+            if (
+                isinstance(provider_origin, str)
+                and provider_origin in _SAFE_PROVIDER_FAILURE_ORIGINS
+            ):
+                safe["provider_failure_origin"] = provider_origin
+            provider_error = _safe_external_error_envelope(
+                evidence.get("provider_error")
+            )
+            if provider_error is not None:
+                # This is the bounded external SSE error envelope after
+                # credential redaction. It is diagnostic-only and is never
+                # fed back into Lift, CandidateCheck, Replay, or repair.
+                safe["provider_error"] = provider_error
+        elif failure_class in _SAFE_PROVIDER_SELECTION_FAILURE_CLASSES:
+            safe["provider_failure_class"] = failure_class
     for failure_key in (
         "lift_generation_failures",
         "replay_generation_failures",
@@ -2707,42 +2999,10 @@ def safe_workload_failure_metadata(
             }
             if calls:
                 safe_gate1["llm_calls"] = calls
-        normal = gate1.get("normal")
-        if isinstance(normal, Mapping):
-            safe_normal: dict[str, Any] = {
-                "generation_present": normal.get("generation") is not None,
-                "comparison_present": normal.get("comparison") is not None,
-            }
-            physical_calls = normal.get("physical_calls")
-            if (
-                isinstance(physical_calls, int)
-                and not isinstance(physical_calls, bool)
-                and physical_calls >= 0
-            ):
-                safe_normal["physical_calls"] = physical_calls
-            raw_diagnostics = normal.get("ingress_diagnostics")
-            if isinstance(raw_diagnostics, list):
-                diagnostics = []
-                for raw in raw_diagnostics:
-                    if not isinstance(raw, Mapping):
-                        continue
-                    projected = {
-                        key: value
-                        for key, value in raw.items()
-                        if key in _SAFE_FAILURE_INGRESS_FIELDS
-                        and (
-                            isinstance(value, str)
-                            or (
-                                isinstance(value, int)
-                                and not isinstance(value, bool)
-                            )
-                        )
-                    }
-                    if projected:
-                        diagnostics.append(projected)
-                if diagnostics:
-                    safe_normal["ingress_diagnostics"] = diagnostics
-            safe_gate1["normal"] = safe_normal
+        for arm_name in ("normal", "masked_j"):
+            safe_arm = _safe_gate1_arm_failure(gate1.get(arm_name))
+            if safe_arm is not None:
+                safe_gate1[arm_name] = safe_arm
         if safe_gate1:
             safe["gate1"] = safe_gate1
     return safe
@@ -2752,8 +3012,35 @@ def safe_workload_failure_diagnostic(error: BaseException) -> dict[str, str]:
     """Return a public failure code without serializing exception text."""
 
     cause = error.cause if isinstance(error, WorkloadExecutionError) else error
+    raw_evidence = (
+        error.evidence
+        if isinstance(error, WorkloadExecutionError)
+        else getattr(cause, "evidence", None)
+    )
+    safe_evidence = safe_workload_failure_metadata(raw_evidence)
+    evidence_failure = safe_evidence.get("failure_class")
+    if isinstance(evidence_failure, str):
+        rule = evidence_failure
+    elif getattr(cause, "failure_class", None) in _SAFE_PROVIDER_SELECTION_FAILURE_CLASSES:
+        rule = str(getattr(cause, "failure_class"))
+    elif isinstance(cause, ProviderError):
+        provider_class = getattr(cause, "failure_class", None)
+        rule = (
+            provider_class
+            if isinstance(provider_class, str)
+            and provider_class in _SAFE_PROVIDER_FAILURE_CLASSES
+            else "provider_failure"
+        )
+    else:
+        message = str(cause)
+        rule = (
+            message
+            if isinstance(cause, ValueError)
+            and message in _SAFE_HOST_PREPARATION_RULES
+            else "workload_infrastructure_failure"
+        )
     return {
-        "rule_code": "workload_infrastructure_failure",
+        "rule_code": rule,
         "cause_class": type(cause).__name__,
     }
 
@@ -2777,11 +3064,13 @@ def save_workload_failure(
         runtime_metrics = _safe_stage_metrics(runtime.stage_metrics)
         if runtime_metrics:
             partial_evidence["stage_metrics"] = runtime_metrics
+    diagnostic = safe_workload_failure_diagnostic(cause)
     _write_json(
         run_dir / "failure.json",
         {
-            "failure_class": type(cause).__name__,
-            **safe_workload_failure_diagnostic(cause),
+            "failure_class": diagnostic["rule_code"],
+            "exception_class": type(cause).__name__,
+            **diagnostic,
             "partial_evidence": partial_evidence,
         },
     )
@@ -2798,11 +3087,9 @@ __all__ = [
     "classify_scrc_report",
     "complete_prepared_workload_gate2",
     "execute_prepared_workload",
-    "gate2_exposes_logical_j_pass_implementation_failure",
     "initialize_workload_evidence",
     "next_candidate_fanout_dir",
     "next_workload_run_dir",
-    "retry_current_workload_gate1_replay",
     "run_workload_lift_semantic_probe",
     "safe_workload_failure_diagnostic",
     "safe_workload_failure_metadata",
@@ -2810,7 +3097,6 @@ __all__ = [
     "save_workload_execution",
     "save_workload_failure",
     "save_workload_gate1_search",
-    "merge_current_replay_retry_execution",
     "scrc_gate1_search_diagnostic",
     "scrc_attempt_stage_counts",
     "scrc_report_diagnostic",

@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
+import tempfile
 import threading
 import time
 
@@ -15,6 +17,18 @@ ROOT = Path(__file__).resolve().parents[1]
 PYTHON_ROOT = ROOT / "python"
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
+
+
+def _display_run_path(path: Path, root: Path) -> str:
+    """Return a stable relative run reference without exposing host paths."""
+
+    try:
+        relative = path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return "run-root://external"
+    relative_text = relative.as_posix()
+    return "run-root://" + (relative_text or ".")
+
 
 def _parser() -> argparse.ArgumentParser:
     from intentir.verify.scrc_runner import MAX_LIFT_CALLS
@@ -37,9 +51,18 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--effort", default=None)
     parser.add_argument(
+        "--no-provider-fallback",
+        action="store_true",
+        help="stop after the configured provider failure instead of starting a fresh fallback lifecycle",
+    )
+    parser.add_argument(
         "--lift-backend",
-        choices=("responses", "miniswe", "codex"),
-        default="responses",
+        choices=("miniswe", "direct-agent"),
+        default="miniswe",
+        help=(
+            "Lift authoring backend; default is MCP/miniswe, while "
+            "direct-agent is an explicit isolated fallback"
+        ),
     )
     parser.add_argument(
         "--replay-backend",
@@ -58,6 +81,15 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "maximum logical Lift invocations for this branch "
             f"(1-{MAX_LIFT_CALLS})"
+        ),
+    )
+    parser.add_argument(
+        "--max-gate1-rounds",
+        type=int,
+        default=2,
+        help=(
+            "maximum formal Gate1 Replay rounds: one initial writer and at "
+            "most one independent fresh retry (1-2)"
         ),
     )
     parser.add_argument(
@@ -118,13 +150,29 @@ def _listed_cases() -> dict[str, object]:
     }
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
-    if args.list:
-        _emit(_listed_cases(), json_mode=args.json)
-        return 0
+def _provider_failure_from_evidence(evidence: dict[str, object]) -> bool:
+    """Switch only on a safe, explicit Lift or Replay provider stop."""
 
-    from intentir.extraction.providers.provider import get_provider
+    if (
+        evidence.get("failure_class") == "lift_provider_preparation"
+        and evidence.get("candidate_present") is False
+        and isinstance(evidence.get("provider_failure_class"), str)
+    ):
+        return True
+    failures = evidence.get("replay_generation_failures")
+    return isinstance(failures, list) and any(
+        isinstance(item, dict)
+        and item.get("rule_code") == "replay_provider_generation_failed"
+        and isinstance(item.get("provider_failure_class"), str)
+        for item in failures
+    )
+
+
+def _run_once(args: argparse.Namespace, *, environment_fallback: bool = False) -> tuple[int, bool]:
+    from intentir.extraction.providers.provider import (
+        get_environment_provider,
+        get_provider,
+    )
     from intentir.verify.scrc_runner import MAX_LIFT_CALLS, MainStatus
     from intentir.verify.scrc_workload_run import (
         WorkloadExecutionError,
@@ -132,6 +180,8 @@ def main(argv: list[str] | None = None) -> int:
         execute_prepared_workload,
         initialize_workload_evidence,
         next_workload_run_dir,
+        safe_gate1_comparison_summary,
+        safe_gate2_failure_summary,
         safe_workload_failure_diagnostic,
         safe_workload_failure_metadata,
         save_workload_failure,
@@ -145,8 +195,12 @@ def main(argv: list[str] | None = None) -> int:
             f"--max-lift-calls must be in [1, {MAX_LIFT_CALLS}]",
             file=sys.stderr,
         )
-        return 2
+        return 2, False
+    if not 1 <= args.max_gate1_rounds <= 2:
+        print("--max-gate1-rounds must be in [1, 2]", file=sys.stderr)
+        return 2, False
     run_dir: Path | None = None
+    active_provider_name: str | None = None
     frontend_started = time.monotonic()
     try:
         prepare_started = time.monotonic()
@@ -161,7 +215,17 @@ def main(argv: list[str] | None = None) -> int:
             )
         prepare_elapsed_ms = (time.monotonic() - prepare_started) * 1000.0
         provider_started = time.monotonic()
-        provider = get_provider(args.provider, args.provider_config)
+        if environment_fallback:
+            injected = get_environment_provider()
+            provider = replace(
+                injected,
+                name="openai",
+                model="gpt-5.6-terra",
+                reasoning_effort="medium",
+            )
+        else:
+            provider = get_provider(args.provider, args.provider_config)
+        active_provider_name = provider.name
         provider_elapsed_ms = (time.monotonic() - provider_started) * 1000.0
         frontend_setup_metrics = {
             "prepare_registered_workload": {
@@ -186,6 +250,7 @@ def main(argv: list[str] | None = None) -> int:
             lift_backend=args.lift_backend,
             replay_backend=args.replay_backend,
             max_lift_calls=args.max_lift_calls,
+            max_gate1_rounds=args.max_gate1_rounds,
         )
         stage_started: dict[tuple[str, int | None, int | None], float] = {}
         progress_lock = threading.Lock()
@@ -197,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
             attempt: int | None,
             formal_round: int | None,
             status: str,
+            details: dict[str, object] | None = None,
         ) -> None:
             nonlocal active_stage
             key = (stage, attempt, formal_round)
@@ -211,17 +277,20 @@ def main(argv: list[str] | None = None) -> int:
                         "started": now,
                     }
                 elapsed_ms = (now - stage_started.get(key, now)) * 1000.0
+                payload = {
+                    "event": "scrc_progress",
+                    "case_id": args.case,
+                    "stage": stage,
+                    "attempt": attempt,
+                    "formal_round": formal_round,
+                    "status": status,
+                    "stage_elapsed_ms": round(elapsed_ms, 3),
+                }
+                if details:
+                    payload["diagnostic"] = details
                 print(
                     json.dumps(
-                        {
-                            "event": "scrc_progress",
-                            "case_id": args.case,
-                            "stage": stage,
-                            "attempt": attempt,
-                            "formal_round": formal_round,
-                            "status": status,
-                            "stage_elapsed_ms": round(elapsed_ms, 3),
-                        },
+                        payload,
                         sort_keys=True,
                         ensure_ascii=False,
                         allow_nan=False,
@@ -277,6 +346,7 @@ def main(argv: list[str] | None = None) -> int:
                 lift_backend=args.lift_backend,
                 replay_backend=args.replay_backend,
                 max_lift_calls=args.max_lift_calls,
+                max_gate1_rounds=args.max_gate1_rounds,
                 progress_callback=progress,
             )
         finally:
@@ -287,10 +357,14 @@ def main(argv: list[str] | None = None) -> int:
         runtime_error = exc if isinstance(exc, WorkloadExecutionError) else None
         safe_diagnostic = safe_workload_failure_diagnostic(exc)
         payload = {
-            "failure_class": "workload_infrastructure",
+            "failure_class": safe_diagnostic["rule_code"],
+            "failure_kind": "workload_infrastructure",
             **safe_diagnostic,
             "max_lift_calls": args.max_lift_calls,
+            "max_gate1_rounds": args.max_gate1_rounds,
         }
+        if run_dir is None:
+            payload["failure_stage"] = "workload_preparation"
         if run_dir is not None:
             try:
                 save_workload_failure(
@@ -303,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             except Exception as save_error:  # pragma: no cover - defensive path
                 payload["failure_save_error_class"] = type(save_error).__name__
-            payload["evidence_path"] = str(run_dir)
+            payload["evidence_path"] = _display_run_path(run_dir, args.run_root)
             if isinstance(exc, WorkloadExecutionError):
                 payload["evidence"] = safe_workload_failure_metadata(
                     exc.evidence
@@ -331,7 +405,16 @@ def main(argv: list[str] | None = None) -> int:
                 + ")",
                 file=sys.stderr,
             )
-        return 2
+        safe_evidence = (
+            safe_workload_failure_metadata(runtime_error.evidence)
+            if runtime_error is not None
+            else {}
+        )
+        provider_failure = (
+            active_provider_name == "cislc"
+            and _provider_failure_from_evidence(safe_evidence)
+        )
+        return 2, provider_failure
 
     classification = classify_scrc_report(execution.report)
     payload = {
@@ -339,10 +422,13 @@ def main(argv: list[str] | None = None) -> int:
         "frontend": prepared.request.frontend,
         "classification": classification.value,
         "main_status": execution.report.main_status.value,
-        "evidence_path": str(run_dir),
+        "evidence_path": _display_run_path(run_dir, args.run_root),
         "lift_backend": args.lift_backend,
         "replay_backend": args.replay_backend,
         "max_lift_calls": args.max_lift_calls,
+        "max_gate1_rounds": args.max_gate1_rounds,
+        "gate1_comparison_summary": safe_gate1_comparison_summary(execution.report),
+        "gate2_failure_summary": safe_gate2_failure_summary(execution.report),
         "stage_metrics": {
             **frontend_setup_metrics,
             **dict(execution.report.stage_metrics),
@@ -358,7 +444,54 @@ def main(argv: list[str] | None = None) -> int:
         },
     }
     _emit(payload, json_mode=args.json)
-    return 0 if execution.report.main_status is MainStatus.SCRC_CERTIFIED else 1
+    return (0 if execution.report.main_status is MainStatus.SCRC_CERTIFIED else 1), False
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
+    if args.list:
+        _emit(_listed_cases(), json_mode=args.json)
+        return 0
+
+    exit_code, provider_failure = _run_once(args)
+    if not provider_failure or args.no_provider_fallback:
+        return exit_code
+
+    from intentir.extraction.providers.provider import get_environment_provider
+
+    try:
+        get_environment_provider()
+    except ValueError:
+        print(
+            "OpenAI environment transport unavailable; cislc failure is terminal",
+            file=sys.stderr,
+        )
+        return exit_code
+
+    # A failed cislc turn is terminal for its lifecycle.  The fallback starts
+    # a new owner in a separate external root, with no candidate or session
+    # inherited from the first run.  There is no third transport or retry.
+    fallback_root = Path(tempfile.mkdtemp(prefix="intentir-openai-fallback-"))
+    fallback_args = argparse.Namespace(**vars(args))
+    fallback_args.run_root = fallback_root
+    fallback_args.provider = "openai"
+    fallback_args.provider_config = None
+    fallback_args.effort = "medium"
+    print(
+        json.dumps(
+            {
+                "event": "provider_fallback_started",
+                "provider": "fallback",
+                "configuration": "process-injected",
+                "run_root": "run-root://fallback",
+            },
+            sort_keys=True,
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+    fallback_exit_code, _ = _run_once(fallback_args, environment_fallback=True)
+    return fallback_exit_code
 
 
 if __name__ == "__main__":
