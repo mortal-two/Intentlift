@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
 
 from .gate1.compiler import KernelSource
 from .gate1.cuda_compiler import CudaKernelSource
 from .gate1.model import Gate1Artifact
 from .gate1.orchestrate import Gate1ExecutionResult
+from .gate1.ttir import TTIRFingerprint
 from .gate1.tilelang_compiler import TileLangKernelSource
 from .gate2.model import Gate2SuiteResult
 from .gate2.orchestrate import Gate2Runner, Gate2Suite
@@ -20,6 +21,10 @@ class BoundGate1Adapter:
     """Bind one fresh low-level Gate1 runner to the request's actual c0 case."""
 
     runner: Any
+    authorization_validator: Callable[
+        [Gate1Artifact, SCRCRunRequest, TTIRFingerprint], Sequence[Mapping[str, Any]]
+    ] | None = None
+    authorization_observer: Callable[[SCRCRunRequest], TTIRFingerprint] | None = None
 
     def run(
         self,
@@ -30,6 +35,18 @@ class BoundGate1Adapter:
             artifact,
             source=request.source.gate_source,
             source_case=request.binding.gate1_case,
+            authorization_validator=(
+                (
+                    lambda accepted, observation: self.authorization_validator(
+                        accepted, request, observation
+                    )
+                )
+                if self.authorization_validator is not None else None
+            ),
+            authorization_observer=(
+                (lambda: self.authorization_observer(request))
+                if self.authorization_observer is not None else None
+            ),
         )
 
 
