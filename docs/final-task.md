@@ -20,7 +20,7 @@
 - 统一 28 Kernel 测试：`未启动`；最近一次仅对 `high_performance:liger_poly_norm` 做定向 fresh lifecycle 验证，因 MCP semantic-transfer 无进展已停止。
 - 当前闭包计数：`0/28`（本次未达到闭包条件）。
 - 当前总状态：`NO_CLOSURE`。
-- 当前没有运行中的 provider 请求。最近一次 fresh root 保留在 `/tmp/intentir-real-mcp-TbdpU9/liger_poly_norm/run-001`，未写入 `real-evidence`。
+- 当前没有运行中的 provider 请求。最近一次 fresh root 已在安全汇总完成后回收，未写入 `real-evidence`。
 
 ## 本轮离线验证
 
@@ -57,7 +57,7 @@
 - 新代理上的真实 Responses 调用已恢复：第 1 次 Lift 完成 9 次物理 provider call，`transport_retries=0`，没有 TLS、HTTP、SSE、认证、rate、usage、overload 或其他 provider failure。运行约 58.8 秒后由本地 MCP preparation fail-closed 停止。
 - 安全终态为 `lift_mcp_no_progress`：阶段停在 `resource:semantic_transfer`，`mcp_phase_failure_count=2`、`last_failure_class=mcp_protocol_rejected`、`completed_step_count=0`、`transfer_read_generation=0`；终态却给出 `next_legal_action=begin_candidate`。没有 candidate，CandidateCheck、TypeCheck、Replay、Gate1、Gate2 均未启动，未计闭包。
 - 代码审计确认动态 MCP resource schema 只绑定当前 URI 和 count 上限，没有把 host 当前唯一合法的 transfer `start` cursor 固定为 schema const；host dispatch 又严格拒绝不等于 `_semantic_transfer_expected_start` 的调用。同时 preconstruction `next_legal_action` 和 phase digest 均未投影该 cursor。这是分页状态在 provider schema、host admission 和安全诊断之间未同步的通性接口缺口；现有安全证据不足以断言具体被拒绝的页码。
-- 运行中的 Pydantic `ResponseAPIUsage` serializer warning 未升级为 provider failure，与本次 MCP 无进展分开处理。当前 `NO_CLOSURE`、闭包数 `0/28`；root 保留，未读取 provider response、trajectory、candidate 或拒绝内容，未新增 `real-evidence`。
+- 运行中的 Pydantic `ResponseAPIUsage` serializer warning 未升级为 provider failure，与本次 MCP 无进展分开处理。当前 `NO_CLOSURE`、闭包数 `0/28`；安全汇总完成后已回收 external root，未读取 provider response、trajectory、candidate 或拒绝内容，未新增 `real-evidence`。
 
 ## 当前未解决阻断
 
