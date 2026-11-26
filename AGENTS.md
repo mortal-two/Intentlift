@@ -1,30 +1,36 @@
-# Repository execution constraint
+# Intentlift 开发与执行规则
 
-- `python/tests` was removed from the tracked active tree; its historical contents
-  are retained only in the ignored workspace archive at
-  `local/archive/legacy-trees/scrc-legacy-docs-tests.tgz` when local archival
-  assets are present.
-- Do not add, regenerate, or restore test files or test directories in the active tree.
-- Do not replace real SCRC closure work with mocked unit, regression, smoke, or protocol tests.
-- Validate changes through the real Kernel closure workflow and its actual Gate/closure artifacts.
-- The archived test suite is historical material only; it is not part of the active workflow.
+## 固定目标
+- 唯一前端是 CUDA；未经用户明确指令不得新增其他前端。输出是 IntentDSL 源代码。
+- 本项目独立实现和运行编译器。CompilerInfra-lift 是独立基础设施参考，不建立代码依赖、导入或调用关系。
+- /home/wwq/compilerinfra 和 /home/wwq/Intent 永远只读。不得修改、链接或运行时导入其中代码。
+- 旧代码和文档已经按用户要求删除，不恢复，不建立备份或归档。
 
-# Final-task-only development
+## 成长性编译器
+- 先尝试正常编译。仅能力缺失或当前 Kernel 验证不通过才调用 API Agent。
+- Agent 负责分析缺失能力、规划结构扩充、源码影响分析、修改、通用性判断及编译验证迭代。
+- 以功能、类型、访存、控制流及适用条件划分组件，禁止按 Kernel 名称、路径、摘要或个例输出分支。
+- 修改不得破坏已有功能。默认只验证当前真实 Kernel；不自动重跑历史 Kernel，后续发现破坏再修复。
+- 验证通过后长期保留通用扩充。当前输出可用本身不能证明修改通用。
+- 固定机制位于 src/intentlift/core/；先构建完整，再允许运行中的 Agent 扩充。
+- 运行中的 Agent 只可修改 src/intentlift/extensions/。可通过固定注册机制新增内部表示、阶段、连接、分析和转换，不得修改框架、权限、知识库或管理接口。
+- 运行中的 Agent 永远不得修改 lift-bench 内任何代码或内容，也不得修改 CompilerInfra-lift。
+- 受保护先验知识位于 knowledge/；API Agent 必须读取。提示词约束和实际工具/进程写权限必须同时落实。
 
-- Do not create, bump, rename, synchronize, or discuss `vN`-style versions for
-  internal implementations, Agent backends, prompts, tools, protocols, observer
-  profiles, or intermediate specifications. Existing compatibility tags may stay
-  only where current parsers require them; ordinary changes must not introduce a
-  new tag or turn version bookkeeping into work.
-- Do not create a new Markdown design/status/changelog document after each code
-  change. Do not append per-commit or per-version implementation diaries to the
-  active task.
-- Maintain one active final task as the sole execution record. It should contain
-  only the current contract, unresolved blockers, next actions, and authoritative
-  real-Kernel closure evidence. Replace stale current-state text instead of
-  accumulating historical narratives; archive genuinely superseded material.
-- Measure progress only by real Gate1 closure, all three Gate2 comparisons,
-  closed-Kernel count, and the final task's deliverables. TypeCheck is only a
-  mechanical prerequisite/diagnostic and must never be reported as progress.
-  Likewise, a new protocol label, document, receipt format, mock check, tool
-  call, or implementation milestone is not progress.
+## 独立验证与停止
+- 每次编译完成都调用 lift-bench，对当前 CUDA 和输出 DSL 在相同多组合法条件下实际执行比较。Bench 管理输入、合法条件、比较标准和 DSL 执行实现。
+- 首批 float32 精确数值相等，不使用容差；NaN 位置一致，无穷符号一致，正负零按数值相等。性能不参与通过判定。
+- 验证不一致必须进入 Agent 修改、重新编译、重新验证。新 DSL 编译失败同样需要定位生成问题。
+- 工具链、设备、Bench、API 故障停止并报告；编译器 Agent 不修复这些基础设施。
+- 先尝试现有 DSL 能力的等价组合；有明确表达障碍才报告 DSL 障碍。执行器子集不支持不等于 DSL 无法表达。
+- 无固定迭代次数上限。成功、故障、越界、明确表达障碍时结束或停止。实质相同状态、相同失败且没有有依据的新下一步属于无进展；仅验证失败不构成无进展。
+
+## 保留的开发约束
+- 不新增、恢复 tests/ 或任何测试目录，不用 mock、synthetic、smoke、canary 替代真实 Kernel 验证。
+- 不运行无关全量验证。复核已有 Kernel 时必须使用修改后的编译器重新生成 DSL。
+- 不引入或维护内部 vN 式实现、协议、提示词、工具或文档版本编号。
+- 只维护 PROGRESS.md 一份进度和执行记录，持续更新当前状态、必要阶段结论、测试结果及未解决事项，不为每次修改新增进度文档。
+- 进度仅以真实 CUDA–DSL 多条件验证和最终交付衡量；静态检查、接口、文档、工具调用不算闭合。
+- Dataset 和凭据留在仓库外。编译、候选、数值、缓存和构建产物只在临时目录使用，完整运行结束后删除，不保留 lift-runs 或同类历史运行目录；DSL 成品仅在用户显式指定输出位置时保留，否则返回给调用者。
+- PROGRESS.md 只记录安全的条件、结果和结论，不复制原始 Source、生成程序、API 载荷或凭据，不链接已清理的临时文件。
+- 必要测试、构建和真实验证直接执行，无需再次询问用户；不把静态检查计作正确性通过。
