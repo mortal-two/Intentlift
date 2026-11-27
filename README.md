@@ -1,10 +1,10 @@
 # Intentlift
 
-成长性的 CUDA → IntentDSL 源码编译器。正常编译不调用模型；缺少能力或实际结果不一致时，具备固定先验知识的 API Agent 修改功能组件、重新编译并调用独立 Bench。通过后的通用能力长期保留。
+成长性的 CUDA → IntentDSL 源码编译器。正常编译不调用模型；缺少能力或实际结果不一致时，具备固定先验知识的 Agent 修改功能组件、重新编译并调用独立 Bench。默认使用 API，也可显式选择 CLI、MiniSWE 或 MCP。通过后的通用能力长期保留。
 
 ## 项目关系
 
-- Intentlift 独立实现并运行编译器。src/intentlift/core 是固定管理和权限机制，src/intentlift/extensions 是允许扩充的组件，knowledge 是受保护的 Agent 先验知识。
+- Intentlift 独立实现并运行编译器。src/intentlift/core 是固定编译机制，src/intentlift/extensions 是允许扩充的组件，src/intentlift/agents 集中全部 Agent 调用与权限宿主，knowledge 是受保护的先验知识。
 - CompilerInfra-lift 是独立的规则和结构参考项目，无代码依赖或运行调用。
 - lift-bench 独立编译、执行原始 CUDA 与输出 DSL，管理合法输入条件和精确比较。编译器 Agent 永远不能修改其内容。
 - /home/wwq/compilerinfra、/home/wwq/Intent 只读，不参与新系统的构建或运行。
@@ -27,7 +27,7 @@ export LIFT_PYTHON=/home/wwq/.venvs/lift-bench/bin/python
   --tilelang-root /home/wwq/.venvs/tilelang018/lib/python3.10/site-packages/tilelang
 ```
 
-API Agent 从 OPENAI_API_KEY、OPENAI_BASE_URL 读取连接配置；使用 --model 或 OPENAI_MODEL 显式选择服务支持的模型。没有固定模型回退，也不使用 CLI Agent 回退。凭据只进入 API 客户端，不进入编译 worker 或 Bench。
+默认 API Agent 从 OPENAI_API_KEY、OPENAI_BASE_URL 读取连接配置；用 --model 或 OPENAI_MODEL 选择模型。通过 --agent-backend 显式选择其他入口，不因失败自动切换接口、模型或调用方式。凭据不进入编译 worker 或 Bench。
 
 ```bash
 "$LIFT_PYTHON" -m intentlift.cli run \
@@ -40,6 +40,63 @@ API Agent 从 OPENAI_API_KEY、OPENAI_BASE_URL 读取连接配置；使用 --mod
 --no-agent 可在没有 API 配置时报告能力缺失，不能绕过 Bench。--bench、--bench-python、--clang、--cuda-path、--nvcc 均可显式指定。--run-root 只选择临时工作目录的父目录，运行结束仍会清理。
 
 默认在系统临时目录完成编译、候选和 Bench 验证，成功或失败结束后删除中间文件。验证通过的 DSL 直接放在返回 JSON 的 dsl 字段；需要持久成品时用 --output 显式指定仓库外的输出位置。不保留历史运行目录。
+
+## Agent 调用入口
+
+全部实现集中在 src/intentlift/agents/，host.py 是唯一修改和验证宿主，protocol.py 管理统一模型轮次，broker.py 和 mcp_bridge.py 提供受控工具连接。core 中不保留重复 Agent 实现。
+
+| --agent-backend | 实现文件 | 模型与认证 |
+| --- | --- | --- |
+| api / responses（默认） | responses.py | OPENAI_MODEL、OPENAI_API_KEY、可选 OPENAI_BASE_URL |
+| chat-completions | chat_completions.py | 同上，显式使用 Chat Completions 接口 |
+| codex | codex.py | --model 或 OPENAI_MODEL；OpenAI API 配置或已有 Codex 认证 |
+| miniswe | miniswe.py | 同 OpenAI 配置；使用实际 MiniSWE 控制器和受限工具环境 |
+| mcp | mcp.py、mcp_bridge.py | 模型由外部 Agent 管理，服务自身不需要模型密钥 |
+| claude | claude.py | --model / ANTHROPIC_MODEL；ANTHROPIC_API_KEY、ANTHROPIC_AUTH_TOKEN、CLAUDE_CODE_OAUTH_TOKEN 或已有 OAuth 认证 |
+| gemini | gemini.py | --model / GEMINI_MODEL；GEMINI_API_KEY、Google/Vertex 配置或已有 Gemini OAuth 认证 |
+
+Claude Code 可使用 ANTHROPIC_BASE_URL 配置其兼容网关；Gemini 支持 GEMINI_API_KEY（也接受 GOOGLE_API_KEY），或 GOOGLE_GENAI_USE_VERTEXAI=true 配合 Google Cloud 项目、区域和 ADC 配置。已有 Gemini OAuth 认证也可复用。ADC 与 OAuth 的必要认证文件只复制到私人临时 HOME，结束后清理。两者不会继承 OpenAI 的模型名和密钥；未显式指定模型时使用各自 CLI 的默认设置。接入不绑定开发者个人账号。
+
+```bash
+python -m pip install -e '.[all-agents]'
+intentlift agents
+intentlift run --dataset /path/to/Dataset/TianchenIR-MultiFrontend \
+  --case vector_sub --tilelang-root /path/to/site-packages/tilelang \
+  --agent-backend codex
+```
+
+api、chat-completions、miniswe、claude、gemini 均可替换上例的后端名。选择后端不意味着强制调用；只有编译失败或结果不一致才介入。
+
+Codex CLI 通过其官方发行方式安装。Claude Code 和 Gemini CLI 可独立安装，也可使用以下可发现目录：
+
+```bash
+npm install --prefix "$HOME/.local/share/intentlift/agent-clis" \
+  @anthropic-ai/claude-code @google/gemini-cli
+```
+
+LIFT_CODEX_BIN、LIFT_CLAUDE_BIN、LIFT_GEMINI_BIN 可以覆盖对应可执行文件位置。intentlift agents 报告依赖和认证是否配置，不显示密钥，也不将配置存在视为真实模型验证通过。
+
+CLI 使用独立临时 HOME 和只读文件系统，原项目、Bench 和参考项目不可写。只允许通过 intentlift MCP 工具提交修改；Claude 关闭内置工具，Gemini 使用只允许本 MCP 的策略，Codex 关闭 shell 和多 Agent 工具。所有调用使用同一份知识、权限、无进展判断及真实验证。验证终态后宿主结束 CLI，不需要额外模型请求来确认通过；CLI 的底层 API 次数不作推测。
+
+## 外部 Agent 的 MCP 接口
+
+独立入口 intentlift-agent-mcp 使用标准 MCP stdio，可以由支持 MCP 的客户端启动：
+
+```json
+{
+  "mcpServers": {
+    "intentlift": {
+      "command": "/path/to/venv/bin/intentlift-agent-mcp",
+      "args": ["--dataset", "/path/to/Dataset/TianchenIR-MultiFrontend",
+               "--case", "vector_sub", "--tilelang-root", "/path/to/site-packages/tilelang"]
+    }
+  }
+}
+```
+
+提供 task_context、inspect、read_file、propose_changes、compile、validate、stop 七个工具。客户端先读取 task_context 获取同一先验知识与实际输入。正常可编译任务不允许额外修改，验证不一致或能力缺失后才进入修复；任何修改最终仍由独立 Bench 判断。
+
+同一 CLI 也支持 run --agent-backend mcp：需要修复时切换为 stdio 工具服务，最终摘要写 stderr，stdout 只传 MCP 消息。独立 MCP 入口更适合客户端的固定配置。连接结束后临时会话清理，不留下认证副本、轨迹或运行目录。
 
 ## 扩充与边界
 

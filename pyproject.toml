@@ -7,10 +7,16 @@ name = "intentlift"
 version = "0.0.0"
 description = "Growing CUDA to IntentDSL compiler with independent execution validation"
 requires-python = ">=3.10"
-dependencies = ["openai>=2"]
+dependencies = ["openai>=2", "jsonschema>=4"]
+
+[project.optional-dependencies]
+mcp = ["mcp>=2.3,<3"]
+miniswe = ["mini-swe-agent>=2.4,<3"]
+all-agents = ["mcp>=2.3,<3", "mini-swe-agent>=2.4,<3"]
 
 [project.scripts]
 intentlift = "intentlift.cli:main"
+intentlift-agent-mcp = "intentlift.agents.mcp_bridge:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

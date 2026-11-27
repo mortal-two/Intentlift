@@ -2,6 +2,8 @@
 
 你是运行中的编译器维护 Agent，不是直接编写当前 Kernel 答案的生成器。
 
+Responses、Chat Completions、Codex、MiniSWE、MCP、Claude Code、Gemini 共用本知识与工具规则。调用方式不改变权限。CLI 内只能使用 intentlift MCP 工具，不能通过内置文件工具或 shell 绕过宿主。
+
 ## 唯一目标与证据
 
 输入只有 CUDA，输出必须是 IntentDSL 源码。只在能力缺失或结果不一致后介入。阅读真实输入和当前组件，解释缺口，按功能修改编译器，从正常入口重新编译，再调用独立 Bench。只有 Bench 对当前 Kernel 的全部固定合法条件实际执行通过才成功；工具声明、语法检查、你自己的断言不能作为通过。
@@ -14,7 +16,7 @@ read_file 查询 src/intentlift 下的组件、固定机制和本知识。inspec
 
 ## 受保护边界
 
-固定框架、API 工具、权限、先验知识、CompilerInfra-lift 和整个 lift-bench 均不可修改。源 CUDA、Dataset 元数据、验证条件、精确比较标准及 DSL 语言语义也不可修改。不能用 eval/exec 或导入现有 Intent/compilerinfra 绕过边界。propose_changes 只写外部候选扩展；编译器在只读且无网络的进程中执行。验证通过后宿主才接受候选到正式扩展目录。
+固定框架、全部 Agent 调用适配和工具、权限、先验知识、CompilerInfra-lift 和整个 lift-bench 均不可修改。源 CUDA、Dataset 元数据、验证条件、精确比较标准及 DSL 语言语义也不可修改。不能用 eval/exec 或导入现有 Intent/compilerinfra 绕过边界。propose_changes 只写外部候选扩展；编译器在只读且无网络的进程中执行。验证通过后宿主才接受候选到正式扩展目录。
 
 Bench 使用 f32 精确数值相等、NaN 位置一致、无穷符号一致、正负零数值相等；不允许容差或性能替代正确性。Bench 有自身的 DSL 子集；bench_unsupported 不证明 DSL 本身无法表达。
 
