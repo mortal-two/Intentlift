@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
-from .agents.host import AgentHost, REPAIR_KINDS, fingerprint
+from .agents.host import AgentHost, REPAIR_KINDS
 from .agents.config import BACKENDS, catalog
 from .agents.context import prepare_request
 from .core.bench import Bench
@@ -51,6 +51,7 @@ def main():
             bench = Bench(args.bench, args.bench_python, args.dataset, args.case, args.tilelang_root, args.nvcc)
             request = {**prepare_request(bench, args.clang, args.cuda_path), 'extension_root': str(EXTENSIONS)}
             result = compiler_worker(request)
+            compiled_from = result['compiler_sha256']
             if result.get('ok'):
                 dsl = work / 'generated.intent.py'
                 dsl.write_text(result['dsl'])
@@ -71,7 +72,7 @@ def main():
                     result['output'] = str(destination)
                 else:
                     result['dsl'] = validated.read_text()
-            result = {**result, 'compiler_sha256': fingerprint(EXTENSIONS),
+            result = {**result, 'compiler_sha256': result.get('compiler_sha256', compiled_from),
                       'agent_invoked': agent_invoked}
     except LiftError as exc:
         result = exc.record()

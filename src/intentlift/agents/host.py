@@ -4,23 +4,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import threading
 from ..core.errors import LiftError, require
+from ..core.extension_tree import fingerprint, publish_extensions, snapshot_extensions
 from ..core.sandbox import ROOT, EXTENSIONS, compiler_worker
 
 
 STOP_KINDS = {'no_progress', 'boundary_required', 'dsl_expression_obstacle'}
 REPAIR_KINDS = {'capability_missing', 'extension_invalid', 'generated_program_invalid', 'result_mismatch'}
-
-
-def fingerprint(root):
-    digest = hashlib.sha256()
-    for path in sorted(Path(root).rglob('*')):
-        if path.is_file() and '__pycache__' not in path.parts and '.git' not in path.parts:
-            digest.update(str(path.relative_to(root)).encode())
-            digest.update(path.read_bytes())
-    return digest.hexdigest()
 
 
 def semantic_state(root):
@@ -89,8 +80,7 @@ class AgentHost:
         self.failed_states = set()
         self.warned_states = set()
         self.candidate = self.work / 'candidate'
-        shutil.copytree(self.extensions, self.candidate, ignore=shutil.ignore_patterns('__pycache__'))
-        self.original = fingerprint(self.extensions)
+        self.original = snapshot_extensions(self.extensions, self.candidate)
         self.protected = {path: fingerprint(path) for path in (
             ROOT / 'src/intentlift/core', ROOT / 'src/intentlift/agents', ROOT / 'knowledge', bench.root)}
         self.attempt = 0
@@ -103,7 +93,7 @@ class AgentHost:
         self.attempt += 1
         result = compiler_worker({**self.request, 'extension_root': str(self.candidate)})
         record = {k: v for k, v in result.items() if k != 'dsl'}
-        record.update({'compiler_sha256': fingerprint(self.candidate), 'action': 'compile'})
+        record.update({'action': 'compile'})
         self.observations.append(record)
         if result.get('ok'):
             path = self.work / f'generated_{self.attempt}.intent.py'
@@ -117,19 +107,17 @@ class AgentHost:
         if not result.get('ok'):
             return result
         dsl_path = result['dsl_path']
+        validated = result['compiler_sha256']
         result = self.bench.validate(dsl_path, self.work / f'validation_{self.attempt}')
         if not result.get('ok') and result.get('kind') in REPAIR_KINDS:
             self.needs_repair = True
         self.check_protected()
-        self.observations.append({'action': 'validate', 'compiler_sha256': fingerprint(self.candidate),
+        self.observations.append({'action': 'validate', 'compiler_sha256': validated,
                                   'kind': result['kind'], 'ok': result['ok']})
         if result.get('ok'):
             require(self.changes or not self.needs_repair, 'Agent must explain a general compiler change before acceptance', 'boundary_required')
-            require(fingerprint(self.extensions) == self.original, 'official compiler changed during candidate iteration', 'boundary_required')
-            for path in self.candidate.iterdir():
-                if path.is_file() and path.suffix in {'.py', '.json'}:
-                    (self.extensions / path.name).write_bytes(path.read_bytes())
-            self.accepted = {**result, 'compiler_sha256': fingerprint(self.extensions),
+            published = publish_extensions(self.extensions, self.candidate, self.original, validated)
+            self.accepted = {**result, 'compiler_sha256': published,
                              'dsl_path': dsl_path,
                              'accepted_components': sorted({f for change in self.changes for f in change['files']})}
         return result

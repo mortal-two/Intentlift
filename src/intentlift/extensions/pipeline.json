@@ -1,1 +1,1 @@
-["cuda.parse", "cuda.attention", "cuda.pointwise", "intentdsl.emit"]
+["cuda.parse", "cuda.attention", "cuda.convolution", "cuda.pointwise", "intentdsl.emit"]

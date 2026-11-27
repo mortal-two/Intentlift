@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 from .errors import LiftError
+from .extension_tree import extension_lock, fingerprint
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -33,10 +34,14 @@ def compiler_worker(request):
     for name, value in env.items():
         command += ["--setenv", name, value]
     command += [sys.executable, "-m", "intentlift.core.worker"]
-    completed = subprocess.run(command, input=json.dumps(request), text=True, capture_output=True)
+    extension_root = Path(request['extension_root']).resolve(strict=True)
+    with extension_lock(extension_root):
+        compiled_from = fingerprint(extension_root)
+        completed = subprocess.run(command, input=json.dumps(request), text=True, capture_output=True)
     if completed.returncode:
         raise LiftError("infrastructure_failure", "compiler sandbox failed", diagnostic=completed.stderr[-2000:])
     try:
-        return json.loads(completed.stdout)
+        result = json.loads(completed.stdout)
+        return {**result, 'compiler_sha256': compiled_from}
     except ValueError as exc:
         raise LiftError("extension_invalid", "compiler worker did not return valid JSON") from exc

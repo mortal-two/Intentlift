@@ -55,6 +55,9 @@ def emit(program, context, registry):
     if expression["op"] == "staged_attention":
         require(rank == 4, "staged attention requires rank four")
         indices = ("batch", "head", "row", "col")
+    elif expression["op"] == "staged_convolution":
+        require(rank == 4, "staged convolution requires rank four")
+        indices = ("batch", "row", "col", "feature")
     elif expression["op"] == "segmented_scan":
         require(1 <= rank <= 4, "scan emitter requires views of rank at most four")
         indices = tuple(f"i{axis}" for axis in range(rank))
@@ -98,6 +101,26 @@ def emit(program, context, registry):
         source = f"arg{expression['source']}"
         scan = scan_statements(out, member, source, indices, expression["axis"], expression["segment"])
         lines.extend(indent + text for text in scan)
+    elif expression["op"] == "staged_convolution":
+        data, filt = (f"arg{expression[k]}" for k in ("data", "filter"))
+        pad_h, pad_w = expression["padding"]
+        load = f"I.cast({data}[batch, iy, ix, channel], I.f32)"
+        for check in (f"ix < {data}.dim(2)", "ix >= 0", f"iy < {data}.dim(1)", "iy >= 0"):
+            load = f"({load} if {check} else I.f32(0.0))"
+        lines.extend(indent + body for body in [
+            "acc = I.f32(0.0)",
+            f"for term in I.ordered({expression['terms']}):",
+            f"    filter_row = term // ({filt}.dim(1) * {data}.dim(3))",
+            f"    filter_col = (term // {data}.dim(3)) % {filt}.dim(1)",
+            f"    channel = term % {data}.dim(3)",
+            f"    iy = row + filter_row - {pad_h}",
+            f"    ix = col + filter_col - {pad_w}",
+            f"    lhs = {load}",
+            f"    rhs = I.cast({filt}[filter_row, filter_col, channel, feature], I.f32) "
+            f"if filter_row < {filt}.dim(0) else I.f32(0.0)",
+            "    acc = acc + (lhs * rhs)",
+            f"{out}[{member}] = I.cast(acc, I.f16)",
+        ])
     elif expression["op"] == "staged_attention":
         q, k, v = (f"arg{expression[role]}" for role in ("q", "k", "v"))
         score = [

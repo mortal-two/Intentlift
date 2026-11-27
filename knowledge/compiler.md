@@ -40,6 +40,8 @@ IntentDSL 使用 import intentdsl as I、@I.kernel(fast_math=False, denormal_fp_
 
 逐元素 f32 数学调用保留已识别的 CUDA 运算和输入求值顺序。Bench 的标量 CUDA 路径提供 exp、exp2、log 和 maximum-number 计算。
 
+逐元素函数的类型与参数个数登记在 _cuda_math.py，辅助模块可相对导入 _cuda_ast.py。I.rsqrt 是 IntentDSL 的已存在语义，Bench 标量 CUDA 路径可独立验证 f32 倒平方根及特殊值。避免把它替换为两次各自舍入的 sqrt 和除法。卷积的条件暂存及读取来源分析位于 convolution.py，从编译管线单独注册。
+
 ## 迭代与停止
 
 compile 重新运行当前候选的正常编译入口。validate 始终先重新编译，再让 Bench 验证同一份生成的 DSL；禁止复用旧结果。

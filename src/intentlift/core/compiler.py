@@ -1,21 +1,28 @@
 """Discover extension components and execute their checked compilation pipeline."""
-import importlib.util
+import importlib
 import json
 from pathlib import Path
+import sys
+from types import ModuleType
+from uuid import uuid4
 from .errors import require
 from .registry import Registry
 
 
 def load_registry(extension_root):
     root = Path(extension_root).resolve()
+    # A candidate imports its own helper modules, never the official copies.
+    namespace = "_intentlift_components_" + uuid4().hex
+    package = ModuleType(namespace)
+    package.__path__ = [str(root)]
+    sys.modules[namespace] = package
     registry = Registry()
+    for path in sorted(root.glob("*.py")):
+        require(path.resolve().parent == root and not path.is_symlink(), "extension symlink forbidden", "extension_invalid")
     for path in sorted(root.glob("*.py")):
         if path.name.startswith("_"):
             continue
-        require(path.resolve().parent == root and not path.is_symlink(), "extension symlink forbidden", "extension_invalid")
-        spec = importlib.util.spec_from_file_location("lift_component_" + path.stem, path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = importlib.import_module("." + path.stem, namespace)
         registry.owner = path.name
         module.register(registry)
     registry.owner = None
