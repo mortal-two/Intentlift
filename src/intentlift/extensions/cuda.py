@@ -1,5 +1,6 @@
 """Clang-based CUDA capture and checked pointwise member computation."""
 import hashlib
+import itertools
 import json
 import math
 import operator
@@ -71,7 +72,7 @@ def qual_type(node):
     return node.get("type", {}).get("qualType")
 
 
-def index_values(node, lanes, local=None):
+def index_values(node, lanes, local=None, block=None):
     """Evaluate only defined 32-bit integer operations over the concrete launch."""
     kind, dtype = node["kind"], qual_type(node)
     require(dtype in {"int", "unsigned int"}, "unsupported CUDA index type", dtype=dtype)
@@ -80,9 +81,14 @@ def index_values(node, lanes, local=None):
         refs = {(p.get("referencedDecl", {}).get("name"), qual_type(p))
                 for p in nodes if p["kind"] == "DeclRefExpr"}
         members = {p.get("name") for p in nodes if p["kind"] == "MemberExpr"}
-        require(refs == {("threadIdx", "const __cuda_builtin_threadIdx_t")}
-                and members == {"__fetch_builtin_x"}, "expected CUDA threadIdx.x")
-        return tuple(range(lanes))
+        if refs == {("threadIdx", "const __cuda_builtin_threadIdx_t")} and members == {"__fetch_builtin_x"}:
+            return tuple(range(lanes))
+        require(block is not None and refs == {("blockIdx", "const __cuda_builtin_blockIdx_t")}
+                and len(members) == 1, "expected a checked CUDA launch index")
+        axis = next(iter(members))
+        require(axis in {"__fetch_builtin_x", "__fetch_builtin_y", "__fetch_builtin_z"},
+                "unknown CUDA block axis")
+        return (block["xyz".index(axis[-1])],) * lanes
     if kind == "IntegerLiteral":
         return (int(node["value"]),) * lanes
     if kind == "DeclRefExpr":
@@ -92,7 +98,7 @@ def index_values(node, lanes, local=None):
     if kind in {"ImplicitCastExpr", "CStyleCastExpr", "ParenExpr"}:
         require(kind == "ParenExpr" or node["castKind"] in {"NoOp", "IntegralCast", "LValueToRValue"},
                 "unsupported CUDA index conversion")
-        values = index_values(children(node)[0], lanes, local)
+        values = index_values(children(node)[0], lanes, local, block)
         if dtype == "unsigned int":
             return tuple(value % (1 << 32) for value in values)
         require(all(-(1 << 31) <= value < (1 << 31) for value in values),
@@ -102,7 +108,7 @@ def index_values(node, lanes, local=None):
     require(kind == "BinaryOperator" and opcode in INDEX_OPERATORS,
             "unsupported CUDA index expression", node_kind=kind, cuda_opcode=opcode)
     left, right = children(node)
-    lhs, rhs = index_values(left, lanes, local), index_values(right, lanes, local)
+    lhs, rhs = index_values(left, lanes, local, block), index_values(right, lanes, local, block)
     if opcode in {"<<", ">>"}:
         require(all(0 <= value < 32 for value in rhs) and all(value >= 0 for value in lhs),
                 "unsupported CUDA shift operands")
@@ -331,7 +337,14 @@ def callee(node):
     return reference, args
 
 
-def guard(node, lanes):
+def source_spelling(node, original):
+    begin, end = (node["range"][key] for key in ("begin", "end"))
+    require("offset" in begin and "offset" in end and "tokLen" in end,
+            "CUDA template must have an explicit source spelling")
+    return b"".join(original[begin["offset"]:end["offset"] + end["tokLen"]].split())
+
+
+def guard(node, lanes, block=None):
     if node["kind"] != "IfStmt":
         return tuple(range(lanes)), [node]
     require(len(children(node)) == 2, "output guard must have no else or side effect")
@@ -340,16 +353,87 @@ def guard(node, lanes):
     op = condition.get("opcode")
     require(condition["kind"] == "BinaryOperator" and op in INDEX_COMPARE
             and body["kind"] == "CompoundStmt", "unsupported CUDA output guard")
-    lhs, rhs = (index_values(arg, lanes) for arg in children(condition))
+    lhs, rhs = (index_values(arg, lanes, block=block) for arg in children(condition))
     active = tuple(i for i, (a, b) in enumerate(zip(lhs, rhs)) if INDEX_COMPARE[op](a, b))
     return active, children(body)
 
 
-def parameter_access(node, bindings, lanes, local=None):
+def parameter_access(node, bindings, lanes, local=None, block=None):
     base, index = subscript(node)
     require(base["kind"] == "DeclRefExpr" and base["referencedDecl"]["id"] in bindings,
             "expected direct CUDA parameter access")
-    return bindings[base["referencedDecl"]["id"]], index_values(index, lanes, local)
+    return bindings[base["referencedDecl"]["id"]], index_values(index, lanes, local, block)
+
+
+def capture_segmented_scan(statements, bindings, contract):
+    """Lift disjoint scan fibres after checking staging and every launch owner."""
+    require(len(statements) == 6 and len(bindings) == 2,
+            "expected one input and one output with shared staging around an inclusive CUDA scan")
+    declaration_stmt, load, before, call, after, store = statements
+    shared = declaration(declaration_stmt, {"float[]"})
+    require(shared.get("storageClass") == "extern" and any(
+        child["kind"] == "CUDASharedAttr" for child in children(shared)), "scan requires external shared storage")
+    for barrier in (before, after):
+        fn, args = callee(barrier)
+        require(fn["referencedDecl"]["name"] == "__syncthreads" and not args,
+                "shared scan must synchronize both staging and output")
+    fn, args = callee(call)
+    lanes = contract["block"][0]
+    segment = 32
+    require(contract["block"][1:] == [1, 1] and lanes in {32, 64, 128, 256, 512, 1024}
+            and 0 < math.prod(contract["grid"]) <= 1024, "unsupported scan launch geometry")
+    spelling = source_spelling(fn, Path(contract["source"]).read_bytes())
+    require(fn["referencedDecl"]["kind"] == "CXXMethodDecl"
+            and spelling == f"tl::CumSum2D<{lanes},1,false>::run".encode()
+            and len(args) == 4 and literal_integer(args[2]) == 1, "unsupported scan operator or logical row count")
+    for operand in args[:2]:
+        operand = unwrap(operand)
+        require(operand["kind"] == "UnaryOperator" and operand.get("opcode") == "&"
+                and private_at(children(operand)[0], shared["id"]), "scan must use the same shared span in place")
+    width = literal_integer(args[3])
+    require(0 < width <= lanes and width % segment == 0 and 4 * width <= contract["shared_mem"],
+            "scan requires complete warp segments and a sufficient launch allocation")
+
+    fibres = []
+    for block in itertools.product(*(range(n) for n in contract["grid"])):
+        load_lanes, loads = guard(load, lanes, block)
+        store_lanes, stores = guard(store, lanes, block)
+        require(load_lanes == store_lanes and len(load_lanes) == width
+                and len(loads) == len(stores) == 1, "scan staging must own exactly one full fibre per block")
+        staged, source = assignment(loads[0])
+        target, result = assignment(stores[0])
+
+        def shared_offsets(expression):
+            base, index = subscript(expression)
+            require(ref_is(base, shared["id"]), "scan stages use different allocations")
+            return index_values(index, lanes, block=block)
+
+        written, read_back = shared_offsets(staged), shared_offsets(result)
+        require([written[i] for i in load_lanes] == [read_back[i] for i in store_lanes] == list(range(width)),
+                "staging changes the shared scan coordinate")
+        src, in_offsets = parameter_access(source, bindings, lanes, block=block)
+        dest, out_offsets = parameter_access(target, bindings, lanes, block=block)
+        require(src["mode"] == "input" and dest["mode"] == "output"
+                and src["dtype"] == dest["dtype"] == "f32" and src["shape"] == dest["shape"],
+                "scan requires corresponding read-only and output f32 views")
+        in_order = tuple(in_offsets[i] for i in load_lanes)
+        out_order = tuple(out_offsets[i] for i in store_lanes)
+        require(in_order == out_order, "scan output does not correspond to the input fibre")
+        fibres.append(out_order)
+    shape = dest["shape"]
+    extent = math.prod(shape)
+    require(extent == len(fibres) * width and sorted(itertools.chain.from_iterable(fibres)) == list(range(extent)),
+            "scan ownership must cover every member without overlap")
+    for axis, dimension in enumerate(shape):
+        if dimension != width:
+            continue
+        stride = math.prod(shape[axis + 1:])
+        if all(row[0] // stride % width == 0
+                and all(address == row[0] + i * stride for i, address in enumerate(row)) for row in fibres):
+            return {"parameters": contract["parameters"], "shape": shape, "store": dest["slot"],
+                    "expression": {"op": "segmented_scan", "source": src["slot"], "axis": axis,
+                                   "segment": segment}}
+    raise LiftError("capability_missing", "scan fibres do not map to a full logical axis")
 
 
 def row_update(stmt, acc):
@@ -411,7 +495,14 @@ def capture_row(stmt, bindings, contract):
         return info["slot"]
 
     if not shared_mode:
-        factors = [{"slot": factor(contribution, "f32", True), "matrix": True}]
+        if combine == "sum" and contribution["kind"] == "BinaryOperator" and contribution.get("opcode") == "*":
+            factors = []
+            for operand in children(contribution):
+                info, _ = parameter_access(operand, bindings, lanes, (iv, 0))
+                matrix = len(info["shape"]) == 2
+                factors.append({"slot": factor(operand, "f32", matrix), "matrix": matrix})
+        else:
+            factors = [{"slot": factor(contribution, "f32", True), "matrix": True}]
     else:
         require(combine == "sum" and contribution["kind"] == "BinaryOperator"
                 and contribution.get("opcode") == "*", "expected a widened shared-memory dot product")
@@ -470,7 +561,7 @@ def capture_row(stmt, bindings, contract):
                 require(all(address in staged for address in addresses)
                         and all(staged.get(addresses[lane]) == (slot, (row * limit if matrix else 0) + k, k)
                             for lane, row in zip(active, row_by_lane)), "shared read does not match the staged factor")
-            factors.append({"slot": slot, "matrix": matrix})
+            factors.append({"slot": slot, "matrix": matrix, "widen": True})
         require(sum(f["matrix"] for f in factors) == 1, "expected one vector and one matrix factor")
 
     return {"parameters": contract["parameters"], "shape": output["shape"], "store": output["slot"],
@@ -700,13 +791,19 @@ def capture(parsed, context, registry):
     parameters = [p for p in children(fn) if p["kind"] == "ParmVarDecl"]
     abi = contract["parameters"]
     require(len(parameters) == len(abi), "CUDA ABI does not match declared parameters", "input_invalid")
+    body = next(p for p in children(fn) if p["kind"] == "CompoundStmt")
+    statements = children(body)
+    scan = False
+    if len(statements) == 6 and statements[0]["kind"] == "DeclStmt":
+        local = children(statements[0])
+        scan = len(local) == 1 and qual_type(local[0]) == "float[]" and statements[3]["kind"] == "CallExpr"
     bindings = {}
     for i, (p, info) in enumerate(zip(parameters, abi)):
         ty = qual_type(p).replace("__restrict", "").strip()
         pointer_types = {"float *": "f32", "half_t *": "f16", "cutlass::half_t *": "f16", "int *": "i32"}
         require(pointer_types.get(ty.removeprefix("const ")) == info["dtype"],
                 "CUDA pointer type differs from supported storage type", dtype=info["dtype"])
-        require(len(info["shape"]) in {1, 2}
+        require(len(info["shape"]) in ({1, 2, 3, 4} if scan else {1, 2})
                 and all(type(dim) is int and dim > 0 for dim in info["shape"]),
                 "capture requires positive static rank-one or rank-two views")
         require(info["name"] == p["name"], "CUDA parameter order/name mismatch", "input_invalid")
@@ -715,8 +812,8 @@ def capture(parsed, context, registry):
         require(info["dtype"] != "f16" or info["mode"] == "input", "binary16 support requires read-only views")
         bindings[p["id"]] = {**info, "slot": i}
     outputs = [i for i, p in enumerate(abi) if p["mode"] != "input"]
-    body = next(p for p in children(fn) if p["kind"] == "CompoundStmt")
-    statements = children(body)
+    if scan:
+        return capture_segmented_scan(statements, bindings, contract)
     if len(outputs) == 2:
         return capture_indexed_selection(statements, bindings, contract)
     require(len(outputs) == 1, "pointwise capture requires one observable view")
@@ -795,6 +892,16 @@ def capture(parsed, context, registry):
             return operand if node["opcode"] == "+" else {"op": "neg", "args": [operand]}
         if kind == "ConditionalOperator":
             return select(*children(node))
+        if kind == "CallExpr":
+            function, operands = callee(node)
+            library = {"exp2f": ("exp2", 1), "expf": ("exp", 1), "logf": ("log", 1),
+                       "max": ("maximum_num", 2), "min": ("minimum_num", 2)}
+            name = function["referencedDecl"]["name"]
+            require(name in library, "missing f32 CUDA math capability", cuda_function=name)
+            intent, arity = library[name]
+            require(len(operands) == arity and all(qual_type(arg) == "float" for arg in operands),
+                    "CUDA math requires f32 operands", cuda_function=name)
+            return {"op": "math", "name": intent, "args": [expression(arg) for arg in operands]}
         require(kind == "BinaryOperator", "unhandled CUDA expression", node_kind=kind)
         opcode = node["opcode"]
         require(opcode in registry.binary, "missing binary arithmetic capability", cuda_opcode=opcode,
