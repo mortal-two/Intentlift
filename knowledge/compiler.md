@@ -18,15 +18,19 @@ read_file 查询 src/intentlift 下的组件、固定机制和本知识。inspec
 
 固定框架、全部 Agent 调用适配和工具、权限、先验知识、CompilerInfra-lift 和整个 lift-bench 均不可修改。源 CUDA、Dataset 元数据、验证条件、精确比较标准及 DSL 语言语义也不可修改。不能用 eval/exec 或导入现有 Intent/compilerinfra 绕过边界。propose_changes 只写外部候选扩展；编译器在只读且无网络的进程中执行。验证通过后宿主才接受候选到正式扩展目录。
 
-Bench 使用 f32 精确数值相等、NaN 位置一致、无穷符号一致、正负零数值相等；不允许容差或性能替代正确性。Bench 有自身的 DSL 子集；bench_unsupported 不证明 DSL 本身无法表达。
+Bench 按 ABI 分配数据并精确比较输出。NaN 位置一致、无穷符号一致、正负零按数值相等，不允许容差或性能替代正确性。Bench 对含 f16 输入的合同另有有限次正规数条件。Bench 有自身的 DSL 子集；bench_unsupported 不证明 DSL 本身无法表达。
 
 ## 当前表示与语义
 
 CUDA 由 Clang 真实 AST 解析，不能以文本模式或 Dataset 标签猜测运算。外部固定接口提供参数、shape、launch 和编译条件，不提供计算语义。cuda_ast 保存选择的函数定义；pointwise 保存参数、成员范围、目标与表达式；intentdsl_source 是合法作者语言源码。新表示必须注册检查器，新阶段声明输入输出表示，所有阶段从正常 pipeline 运行。
 
-IntentDSL 使用 import intentdsl as I、@I.kernel、I.In/I.Out/I.InOut[I.f32, shape]；I.parallel(view.dim(0)) 声明完整逻辑成员域。成员读取产生 f32 值，算术保持 Source 的运算及求值结构，成员存储写入对应逻辑位置。禁止因数学上可化简而改变浮点结合顺序、融合 FMA、开启 fast math 或冲掉次正规数。相同输入值必须保留 IEEE 特殊值行为。
+IntentDSL 使用 import intentdsl as I、@I.kernel(fast_math=False, denormal_fp_math="ieee")、I.In/I.Out/I.InOut[I.f32, shape]。为输出的每个轴嵌套一层 I.parallel(view.dim(axis))，声明完整逻辑成员域。成员读取产生 f32 值，I.f32 表达显式常量，条件表达式按 f32 比较选择成员值。保持源码的运算和求值顺序，不融合乘加、不开启 fast math、不冲掉次正规数。
 
-当前 threadIdx.x → 逻辑成员的映射只在固定 launch 为一个 block、完整覆盖同一一维 extent 时成立。其他 grid、偏移、guard、别名、类型和控制流需要独立分析和能力扩充；不得删除适用条件使未知输入被静默接受。
+当前逐元素捕获检查固定单 block 的全部 threadIdx.x：输出索引必须逐元素覆盖静态一维或二维视图且没有重复。读索引必须相对于输出是同坐标访问，或是二维只读视图的转置访问。条件选择只支持纯逐元素比较与取值，两分支都需给出有效值。其他 grid、偏移、guard、别名、类型和控制流需要独立分析和能力扩充。
+
+混合精度矩阵乘法使用 I.In[I.f16, shape]、I.cast(value, I.f32) 和 I.ordered(bound)，保留原始循环范围、每次浮点乘加的独立舍入点及累加顺序。编译时对所有输出坐标和归约位置证明实际读取符合矩阵行列关系。跨线程归约、其他低精度算术和输出类型需独立扩展。
+
+有符号整数路径把直接 f32 读取上的 CUDA FloatingToIntegral 转换生成 I.cast(member, I.i32)，并使用 I.Out[I.i32, shape]。转换在定义域内向零截断。Bench 根据 ABI 使用有限且截断后可表示的输入，整数结果按类型逐元素比较。
 
 ## 迭代与停止
 
