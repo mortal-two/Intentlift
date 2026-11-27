@@ -32,6 +32,10 @@ IntentDSL 使用 import intentdsl as I、@I.kernel(fast_math=False, denormal_fp_
 
 有符号整数路径把直接 f32 读取上的 CUDA FloatingToIntegral 转换生成 I.cast(member, I.i32)，并使用 I.Out[I.i32, shape]。转换在定义域内向零截断。Bench 根据 ABI 使用有限且截断后可表示的输入，整数结果按类型逐元素比较。
 
+行归约和 GEMV 保留 I.ordered 范围和累加顺序。消除 GEMV 的共享暂存前，必须证明复制来源、共享地址范围、同步边界和每个读取的对应关系。行内配对选择要求已知的 shuffle 分组、并列索引和候选屏蔽语义，f32 值与 i32 索引均须写入和验证。
+
+单块单 tile 注意力阶段检查静态四维二进制半精度视图、三段向量化暂存、异步组等待及完整的算术与输出顺序。保留 f32 分数、最大值、exp2、有序累加、权重的 f16 舍入及 f16 输出。不能仅因公式看起来等价就替换除法、调整累加顺序或移除可能影响非有限输入的 rescale。
+
 ## 迭代与停止
 
 compile 重新运行当前候选的正常编译入口。validate 始终先重新编译，再让 Bench 验证同一份生成的 DSL；禁止复用旧结果。

@@ -17,6 +17,8 @@ def parse(request, context, registry):
                "-Wno-unknown-cuda-version", "-Wno-deprecated-literal-operator", "-std=c++17"]
     for directory in request["include_dirs"]:
         command += ["-I", directory]
+    for header in request.get("force_includes", []):
+        command += ["-include", header]
     command += ["-fsyntax-only", "-Xclang", "-ast-dump=json", "-Xclang",
                 "-ast-dump-filter=" + request["entry"], str(path)]
     result = subprocess.run(command, capture_output=True, text=True)
@@ -56,11 +58,13 @@ def unwrap(node):
 
 
 INDEX_OPERATORS = {
-    "+": operator.add, "-": operator.sub, "*": operator.mul,
+    "+": operator.add, "-": operator.sub, "*": operator.mul, "%": operator.mod,
     "&": operator.and_, "|": operator.or_, "^": operator.xor,
     "<<": operator.lshift, ">>": operator.rshift,
 }
 COMPARISONS = {"<", "<=", ">", ">=", "==", "!="}
+INDEX_COMPARE = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge,
+                 "==": operator.eq, "!=": operator.ne}
 
 
 def qual_type(node):
@@ -102,6 +106,9 @@ def index_values(node, lanes, local=None):
     if opcode in {"<<", ">>"}:
         require(all(0 <= value < 32 for value in rhs) and all(value >= 0 for value in lhs),
                 "unsupported CUDA shift operands")
+    if opcode == "%":
+        require(all(value > 0 for value in rhs) and all(value >= 0 for value in lhs),
+                "unsupported CUDA remainder operands")
     values = tuple(INDEX_OPERATORS[opcode](a, b) for a, b in zip(lhs, rhs))
     if dtype == "unsigned int":
         return tuple(value % (1 << 32) for value in values)
@@ -135,8 +142,13 @@ def literal_integer(node):
     return int(node["value"])
 
 
-def ordered_loop(loop):
+def ordered_body(loop):
     """Check zero-based int induction, exclusive literal bound and unit increment."""
+    if loop["kind"] == "AttributedStmt":
+        require(len(children(loop)) == 2 and children(loop)[0]["kind"] == "LoopHintAttr",
+                "unsupported CUDA loop attributes")
+        loop = children(loop)[1]
+    require(loop["kind"] == "ForStmt", "expected an ordered CUDA loop")
     parts = children(loop)
     require(len(parts) == 5 and parts[1] == {}, "unsupported CUDA for-loop structure")
     init, _, condition, step, body = parts
@@ -157,9 +169,14 @@ def ordered_loop(loop):
             and is_index(children(step)[0]), "expected an increasing exclusive loop")
     limit = literal_integer(children(condition)[1])
     require(0 < limit <= 1024, "ordered CUDA loop bound is outside the checked static range")
-    require(body["kind"] == "CompoundStmt" and len(children(body)) == 1,
-            "ordered CUDA body must update one accumulator")
-    return index["id"], limit, children(body)[0]
+    require(body["kind"] == "CompoundStmt", "expected a compound CUDA loop body")
+    return index["id"], limit, children(body)
+
+
+def ordered_loop(loop):
+    index, limit, body = ordered_body(loop)
+    require(len(body) == 1, "ordered CUDA body must update one accumulator")
+    return index, limit, body[0]
 
 
 def half_to_float_operand(node):
@@ -264,6 +281,386 @@ def capture_matrix_product(statements, shape, target_indices, access):
             "factors": [{"slot": factor[0], "axis": axis} for factor, axis in zip(factors, axes)]}
 
 
+def scalar_literal(node, dtype):
+    node = unwrap(node)
+    sign = 1
+    if node["kind"] == "UnaryOperator" and node.get("opcode") == "-":
+        sign, node = -1, unwrap(children(node)[0])
+    require(node["kind"] == "FloatingLiteral" and qual_type(node) == dtype,
+            "expected a typed CUDA floating literal")
+    value = sign * float(node["value"])
+    require(math.isfinite(value), "expected a finite CUDA initializer")
+    return value
+
+
+def declaration(stmt, valid_types):
+    require(stmt["kind"] == "DeclStmt" and len(children(stmt)) == 1, "expected one CUDA declaration")
+    decl = children(stmt)[0]
+    require(decl["kind"] == "VarDecl" and qual_type(decl) in valid_types,
+            "unexpected CUDA local type", dtype=qual_type(decl))
+    return decl
+
+
+def ref_is(node, decl_id):
+    return node["kind"] == "DeclRefExpr" and node.get("referencedDecl", {}).get("id") == decl_id
+
+
+def subscript(node):
+    node = unwrap(node)
+    require(node["kind"] == "ArraySubscriptExpr", "expected an array access")
+    base, index = children(node)
+    return unwrap(base), index
+
+
+def private_at(node, decl_id, index_id=None):
+    base, index = subscript(node)
+    index = unwrap(index)
+    return ref_is(base, decl_id) and (
+        ref_is(index, index_id) if index_id is not None
+        else index["kind"] == "IntegerLiteral" and int(index["value"]) == 0
+    )
+
+
+def callee(node):
+    require(node["kind"] == "CallExpr" and children(node), "expected a CUDA intrinsic call")
+    function, *args = children(node)
+    require(function["kind"] == "ImplicitCastExpr" and len(children(function)) == 1,
+            "expected a direct CUDA function call")
+    reference = children(function)[0]
+    require(reference["kind"] == "DeclRefExpr", "expected a direct CUDA callee")
+    return reference, args
+
+
+def guard(node, lanes):
+    if node["kind"] != "IfStmt":
+        return tuple(range(lanes)), [node]
+    require(len(children(node)) == 2, "output guard must have no else or side effect")
+    condition, body = children(node)
+    condition = unwrap(condition)
+    op = condition.get("opcode")
+    require(condition["kind"] == "BinaryOperator" and op in INDEX_COMPARE
+            and body["kind"] == "CompoundStmt", "unsupported CUDA output guard")
+    lhs, rhs = (index_values(arg, lanes) for arg in children(condition))
+    active = tuple(i for i, (a, b) in enumerate(zip(lhs, rhs)) if INDEX_COMPARE[op](a, b))
+    return active, children(body)
+
+
+def parameter_access(node, bindings, lanes, local=None):
+    base, index = subscript(node)
+    require(base["kind"] == "DeclRefExpr" and base["referencedDecl"]["id"] in bindings,
+            "expected direct CUDA parameter access")
+    return bindings[base["referencedDecl"]["id"]], index_values(index, lanes, local)
+
+
+def row_update(stmt, acc):
+    dest, update = assignment(stmt)
+    require(private_at(dest, acc), "expected an ordered update of the accumulator cell")
+    return unwrap(update)
+
+
+def capture_row(stmt, bindings, contract):
+    shared_mode = len(stmt) == 7
+    if shared_mode:
+        shared_decl, acc_decl, init, copy, barrier, compute, store = stmt
+        require(contract["shared_mem"] > 0, "GEMV staging needs trusted shared-memory allocation")
+    else:
+        acc_decl, init, compute, store = stmt
+        require(contract["shared_mem"] == 0, "direct reduction does not use shared memory")
+    acc = declaration(acc_decl, {"float[1]"})
+    require(not children(acc) and not acc.get("storageClass"), "expected an automatic private accumulator")
+    acc = acc["id"]
+    dest, value = assignment(init)
+    require(private_at(dest, acc), "expected initialization of the private accumulator")
+    initial = scalar_literal(value, "float")
+    lanes = contract["block"][0]
+    require(contract["grid"] == [1, 1, 1] and contract["block"][1:] == [1, 1] and 0 < lanes <= 1024,
+            "row owner capture requires one one-dimensional block")
+    active, stores = guard(store, lanes)
+    require(len(stores) == 1, "row owner needs exactly one output store")
+    dest, value = assignment(stores[0])
+    require(private_at(value, acc), "row output must store the computed accumulator")
+    output, output_indices = parameter_access(dest, bindings, lanes)
+    rows = output["shape"][0]
+    row_by_lane = tuple(output_indices[lane] for lane in active)
+    require(output["mode"] == "output" and output["dtype"] == "f32" and len(output["shape"]) == 1
+            and sorted(row_by_lane) == list(range(rows)), "row stores must cover the output exactly once")
+
+    iv, limit, update = ordered_loop(compute)
+    update = row_update(update, acc)
+    if update["kind"] == "BinaryOperator" and update.get("opcode") == "+":
+        operands, combine = children(update), "sum"
+    else:
+        function, operands = callee(update)
+        require(function["referencedDecl"]["name"] == "max" and qual_type(update) == "float",
+                "expected f32 maximum-number reduction")
+        combine = "maximum"
+    require(len(operands) == 2 and private_at(operands[0], acc) and qual_type(update) == "float",
+            "expected f32 accumulator as the first operand")
+    contribution = unwrap(operands[1])
+
+    def factor(node, parameter_dtype, matrix):
+        info, _ = parameter_access(node, bindings, lanes, (iv, 0))
+        expected_shape = [rows, limit] if matrix else [limit]
+        require(info["mode"] == "input" and info["dtype"] == parameter_dtype and info["shape"] == expected_shape,
+                "ordered row factor ABI differs from its index mapping")
+        for k in range(limit):
+            _, indices = parameter_access(node, bindings, lanes, (iv, k))
+            require(all(0 <= item < math.prod(expected_shape) for item in indices)
+                    and all(indices[lane] == (row * limit if matrix else 0) + k
+                        for lane, row in zip(active, row_by_lane)), "row factor has a noncanonical index")
+        return info["slot"]
+
+    if not shared_mode:
+        factors = [{"slot": factor(contribution, "f32", True), "matrix": True}]
+    else:
+        require(combine == "sum" and contribution["kind"] == "BinaryOperator"
+                and contribution.get("opcode") == "*", "expected a widened shared-memory dot product")
+        shared = declaration(shared_decl, {"unsigned char[]"})
+        require(shared.get("storageClass") == "extern" and any(
+            child["kind"] == "CUDASharedAttr" for child in children(shared)), "expected external shared storage")
+        barrier_function, args = callee(barrier)
+        require(barrier_function["referencedDecl"]["name"] == "__syncthreads" and not args,
+                "shared copy must be followed by a block barrier")
+
+        def shared_indices(node, local):
+            base, index = subscript(node)
+            require(base["kind"] == "CStyleCastExpr" and base.get("castKind") == "BitCast"
+                    and qual_type(base) in {"half_t *", "cutlass::half_t *"}
+                    and ref_is(unwrap(children(base)[0]), shared["id"]), "expected aligned shared f16 access")
+            result = index_values(index, lanes, local)
+            require(all(0 <= item and 2 * (item + 1) <= contract["shared_mem"] for item in result),
+                    "shared f16 index exceeds launch allocation")
+            return result
+
+        copy_iv, copy_extent, copies = ordered_body(copy)
+        require(copy_extent == limit and len(copies) == 2, "expected two complete operand copies")
+        staged = {}
+        for copy_stmt in copies:
+            require(copy_stmt["kind"] == "CXXOperatorCallExpr" and len(children(copy_stmt)) == 3,
+                    "expected one shared half assignment")
+            func, dest, source = children(copy_stmt)
+            require(func["kind"] == "ImplicitCastExpr"
+                    and children(func)[0].get("referencedDecl", {}).get("name") == "operator="
+                    and source["type"].get("desugaredQualType", qual_type(source)) == "const cutlass::half_t",
+                    "expected a CUTLASS half copy")
+            for k in range(copy_extent):
+                local = (copy_iv, k)
+                addresses = shared_indices(dest, local)
+                info, src_indices = parameter_access(source, bindings, lanes, local)
+                require(info["mode"] == "input" and info["dtype"] == "f16"
+                        and all(0 <= index < math.prod(info["shape"]) for index in src_indices),
+                        "invalid shared copy source")
+                for addr, src in zip(addresses, src_indices):
+                    identity = (info["slot"], src, k)
+                    if addr in staged:
+                        require(lanes <= 32 and staged[addr] == identity, "ambiguous shared-memory write")
+                    staged[addr] = identity
+        abi = contract["parameters"]
+        factors = []
+        for term in children(contribution):
+            read = half_to_float_operand(term)
+            addresses = shared_indices(read, (iv, 0))
+            require(addresses[active[0]] in staged, "shared operand is uninitialized")
+            slot = staged[addresses[active[0]]][0]
+            shape = abi[slot]["shape"]
+            matrix = shape == [rows, limit]
+            require(matrix or shape == [limit], "shared row factor shape mismatch")
+            for k in range(limit):
+                addresses = shared_indices(read, (iv, k))
+                require(all(address in staged for address in addresses)
+                        and all(staged.get(addresses[lane]) == (slot, (row * limit if matrix else 0) + k, k)
+                            for lane, row in zip(active, row_by_lane)), "shared read does not match the staged factor")
+            factors.append({"slot": slot, "matrix": matrix})
+        require(sum(f["matrix"] for f in factors) == 1, "expected one vector and one matrix factor")
+
+    return {"parameters": contract["parameters"], "shape": output["shape"], "store": output["slot"],
+            "expression": {"op": "ordered_row", "initial": initial, "combine": combine, "factors": factors}}
+
+
+
+def unwrapped_call(node):
+    while node["kind"] in {"ExprWithCleanups", "MaterializeTemporaryExpr"}:
+        require(len(children(node)) == 1, "unexpected C++ temporary")
+        node = children(node)[0]
+    return unwrap(node)
+
+
+def overloaded_assignment(node):
+    node = unwrapped_call(node)
+    require(node["kind"] == "CXXOperatorCallExpr" and len(children(node)) == 3,
+            "expected vector assignment")
+    func, dest, value = children(node)
+    require(func["kind"] == "ImplicitCastExpr"
+            and children(func)[0].get("referencedDecl", {}).get("name") == "operator=",
+            "unexpected CUDA vector operation")
+    return dest, value
+
+
+def vector_pointer(node, dtype):
+    node = unwrap(node)
+    require(node["kind"] == "UnaryOperator" and node.get("opcode") == "*" and qual_type(node) in {dtype, "const " + dtype},
+            "expected an aligned CUDA vector access")
+    cast = unwrap(children(node)[0])
+    require(cast["kind"] == "CStyleCastExpr" and cast.get("castKind") == "BitCast"
+            and qual_type(cast) == dtype + " *", "expected a CUDA vector pointer cast")
+    offset = unwrap(children(cast)[0])
+    require(offset["kind"] == "BinaryOperator" and offset.get("opcode") == "+",
+            "expected an explicit vector pointer offset")
+    base, index = children(offset)
+    return unwrap(base), index
+
+
+def integral_literal(node):
+    node = unwrap(node) if node["kind"] != "ImplicitCastExpr" or node.get("castKind") != "IntegralCast" else children(node)[0]
+    if node["kind"] == "UnaryOperator" and node.get("opcode") == "-":
+        return -integral_literal(children(node)[0])
+    require(node["kind"] == "IntegerLiteral", "expected an integral CUDA constant")
+    return int(node["value"])
+
+
+def negative_infinity(node):
+    node = unwrap(node)
+    require(node["kind"] == "UnaryOperator" and node.get("opcode") == "-", "expected negative infinity")
+    function, args = callee(unwrap(children(node)[0]))
+    require(function["referencedDecl"]["name"] == "__int_as_float" and len(args) == 1
+            and integral_literal(args[0]) == 0x7f800000, "expected CUDA negative-infinity initializer")
+
+
+def selection_phase(loop, peak, scores, destination, dtype, size):
+    iv, limit, body = ordered_body(loop)
+    require(limit == size and len(body) == 3 and body[1]["kind"] == "IfStmt"
+            and len(children(body[1])) == 3, "expected per-candidate selection")
+    local = declaration(body[0], {dtype})
+    require(not children(local) and not local.get("storageClass"), "unexpected selection temporary")
+    condition, yes, no = children(body[1])
+    condition = unwrap(condition)
+    require(condition["kind"] == "BinaryOperator" and condition.get("opcode") == "=="
+            and private_at(children(condition)[0], peak) and private_at(children(condition)[1], scores, iv),
+            "selection predicate must compare score against its row maximum")
+    values = []
+    for branch in (yes, no):
+        require(branch["kind"] == "CompoundStmt" and len(children(branch)) == 1,
+                "selection branch must assign one value")
+        target, value = assignment(children(branch)[0])
+        require(ref_is(unwrap(target), local["id"]), "selection must assign its local")
+        values.append(value)
+    target, value = assignment(body[2])
+    require(private_at(values[1], destination, iv) and private_at(target, destination, iv)
+            and ref_is(unwrap(value), local["id"]), "selection must preserve an unselected candidate")
+    return iv, values[0]
+
+
+def capture_indexed_selection(statements, bindings, contract):
+    params = contract["parameters"]
+    modes = sorted((p["dtype"], p["mode"]) for p in params)
+    require(modes == [("f32", "input"), ("f32", "output"), ("i32", "output")],
+            "unsupported paired selection ABI")
+    require(len(statements) == 6, "unsupported paired selection body")
+    scores_decl, indices_decl, peak_decl, index_decl, load, loop = statements
+    scores = declaration(scores_decl, {"float[4]"})
+    indices = declaration(indices_decl, {"int[4]"})
+    peak = declaration(peak_decl, {"float[1]"})
+    chosen = declaration(index_decl, {"int[1]"})
+    require(all(not children(v) and not v.get("storageClass") for v in (scores, indices, peak, chosen)),
+            "selection state must be made of automatic private cells")
+    scores, indices, peak, chosen = (v["id"] for v in (scores, indices, peak, chosen))
+
+    fragment = 4
+    dest, value = overloaded_assignment(load)
+    dst_base, dst_idx = vector_pointer(dest, "float4")
+    src_base, src_idx = vector_pointer(value, "float4")
+    require(ref_is(dst_base, scores) and integral_literal(dst_idx) == 0
+            and src_base["kind"] == "DeclRefExpr", "expected contiguous score fragments")
+    logits = bindings.get(src_base["referencedDecl"]["id"])
+    require(logits is not None and logits["dtype"] == "f32" and logits["mode"] == "input"
+            and len(logits["shape"]) == 2, "selection must load its score matrix input")
+    rows, width = logits["shape"]
+    cohort = width // fragment
+    lanes = contract["block"][0]
+    require(width == cohort * fragment and cohort in {2, 4, 8, 16, 32}
+            and lanes == rows * cohort and lanes % 32 == 0 and lanes <= 1024
+            and contract["grid"] == [1, 1, 1] and contract["block"][1:] == [1, 1]
+            and contract["shared_mem"] == 0, "selection requires contiguous full shuffle groups")
+    require(index_values(src_idx, lanes) == tuple(lane * fragment for lane in range(lanes)),
+            "score fragment mapping is not row-major")
+
+    step, picks, rounds = ordered_body(loop)
+    require(len(rounds) == 11 and picks <= width, "unsupported selection recurrence")
+    reset, fill, peak_init, peak_local, peak_warp, match, index_init, index_local, index_warp, mask, stores = rounds
+    reset = declaration(reset, {"int"})
+    require(not reset.get("storageClass") and len(children(reset)) == 1, "invalid candidate index initializer")
+    empty = integral_literal(children(reset)[0])
+    require(-(1 << 31) < empty < 0, "unmatched candidate index must be negative")
+    dest, value = overloaded_assignment(fill)
+    base, offset = vector_pointer(dest, "int4")
+    function, values = callee(unwrapped_call(value))
+    require(ref_is(base, indices) and integral_literal(offset) == 0
+            and function["referencedDecl"]["name"] == "make_int4" and len(values) == fragment
+            and all(ref_is(unwrap(arg), reset["id"]) for arg in values), "invalid candidate initialization")
+
+    target, initial = assignment(peak_init)
+    require(private_at(target, peak), "unexpected score initializer")
+    negative_infinity(initial)
+    target, initial = assignment(index_init)
+    require(private_at(target, chosen) and integral_literal(initial) == -(1 << 31),
+            "invalid integer max initializer")
+
+    def local_max(phase, accumulator, source, dtype):
+        index, count, update = ordered_loop(phase)
+        function, args = callee(row_update(update, accumulator))
+        require(count == fragment and function["referencedDecl"]["name"] == "max"
+                and len(args) == 2 and qual_type(args[0]) == dtype
+                and private_at(args[0], accumulator) and private_at(args[1], source, index),
+                "unexpected fragment maximum")
+
+    local_max(peak_local, peak, scores, "float")
+    local_max(index_local, chosen, indices, "int")
+
+    original = Path(contract["source"]).read_bytes()
+
+    def warp_max(phase, accumulator, dtype):
+        function, args = callee(row_update(phase, accumulator))
+        expected = f"tl::AllReduce<tl::MaxOp,{cohort},1,0,tl::NamedBarrier<{lanes}>>::run"
+        begin, end = (function["range"][key] for key in ("begin", "end"))
+        # Clang exposes the enclosing template arguments in the qualified token
+        # range, rather than as children of the resolved DeclRefExpr.
+        spelling = original[begin.get("offset", 0):end.get("offset", 0) + end["tokLen"]]
+        require(b"".join(spelling.split()) == expected.encode()
+                and function["referencedDecl"]["kind"] == "CXXMethodDecl"
+                and len(args) == 2 and qual_type(args[0]) == dtype
+                and private_at(args[0], accumulator) and args[1]["kind"] == "CXXDefaultArgExpr",
+                "unexpected CUDA shuffle reduction declaration or group size")
+
+    warp_max(peak_warp, peak, "float")
+    warp_max(index_warp, chosen, "int")
+    candidate_iv, candidate = selection_phase(match, peak, scores, indices, "int", fragment)
+    for j in range(fragment):
+        require(index_values(candidate, lanes, (candidate_iv, j))
+                == tuple((lane % cohort) * fragment + j for lane in range(lanes)),
+                "selection candidate index does not correspond to its score")
+    _, masked = selection_phase(mask, peak, scores, scores, "float", fragment)
+    sentinel = scalar_literal(masked, "float")
+    active, stores = guard(stores, lanes)
+    require(active == tuple(range(0, lanes, cohort)) and len(stores) == 2,
+            "selection output guard must select one owner per row")
+    outputs = {}
+    for statement in stores:
+        dst, src = assignment(statement)
+        store, _ = parameter_access(dst, bindings, lanes, (step, 0))
+        dtype = store["dtype"]
+        require(store["mode"] == "output" and dtype in {"f32", "i32"} and dtype not in outputs
+                and store["shape"] == [rows, picks] and private_at(src, peak if dtype == "f32" else chosen),
+                "selection output type, shape or value mismatch")
+        outputs[dtype] = store["slot"]
+        for k in range(picks):
+            _, offsets = parameter_access(dst, bindings, lanes, (step, k))
+            require(all(offsets[lane] == row * picks + k for row, lane in enumerate(active)),
+                    "selection output coordinates do not cover the complete result")
+    return {"parameters": params, "shape": [rows, picks], "store": outputs["f32"],
+            "expression": {"op": "indexed_selection", "input": logits["slot"], "indices": outputs["i32"],
+                           "sentinel": sentinel, "empty_index": empty}}
+
+
 def split_body(statements):
     """Recognize a single store, optionally fed by a total local selection."""
     require(len(statements) in {1, 3}, "expected a total output assignment")
@@ -297,6 +694,8 @@ def split_body(statements):
 
 
 def capture(parsed, context, registry):
+    if "staged_attention" in parsed:
+        return parsed["staged_attention"]
     fn, contract = parsed["function"], parsed["contract"]
     parameters = [p for p in children(fn) if p["kind"] == "ParmVarDecl"]
     abi = contract["parameters"]
@@ -316,14 +715,21 @@ def capture(parsed, context, registry):
         require(info["dtype"] != "f16" or info["mode"] == "input", "binary16 support requires read-only views")
         bindings[p["id"]] = {**info, "slot": i}
     outputs = [i for i, p in enumerate(abi) if p["mode"] != "input"]
+    body = next(p for p in children(fn) if p["kind"] == "CompoundStmt")
+    statements = children(body)
+    if len(outputs) == 2:
+        return capture_indexed_selection(statements, bindings, contract)
     require(len(outputs) == 1, "pointwise capture requires one observable view")
     shape = tuple(abi[outputs[0]]["shape"])
+    if len(shape) == 1 and (
+        (len(statements) == 4 and statements[2]["kind"] == "ForStmt")
+        or (len(statements) == 7 and statements[3]["kind"] == statements[5]["kind"] == "ForStmt")
+    ):
+        return capture_row(statements, bindings, contract)
     n = math.prod(shape)
     require(0 < n <= 1024 and contract["grid"] == [1, 1, 1]
             and contract["block"] == [n, 1, 1] and contract["shared_mem"] == 0,
             "threadIdx.x member map requires one block covering the complete extent")
-    body = next(p for p in children(fn) if p["kind"] == "CompoundStmt")
-    statements = children(body)
     ordered_product = len(statements) == 4 and statements[2]["kind"] == "ForStmt"
     if ordered_product:
         destination, _ = assignment(statements[-1])
