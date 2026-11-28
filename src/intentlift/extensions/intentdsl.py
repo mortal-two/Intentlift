@@ -93,6 +93,21 @@ def emit(program, context, registry):
 
     lines = ["import intentdsl as I", "", '@I.kernel(fast_math=False, denormal_fp_math="ieee")',
              "def lifted(" + ", ".join(annotations) + "):"]
+    if expression["op"] == "row_rms":
+        source = f"arg{expression['source']}"
+        width = expression["width"]
+        epsilon = expression["epsilon"]
+        lines.extend([
+            f"    for row, col in I.parallel(({out}.dim(0), {out}.dim(1))):",
+            "        square_sum = I.cast(0.0, I.f32)",
+            f"        for k in I.static_range({width}):",
+            f"            value = {source}[row, k]",
+            "            square_sum = square_sum + (value * value)",
+            f"        mean_square = square_sum / I.cast({float(width)!r}, I.f32)",
+            f"        scale = I.rsqrt(mean_square + I.cast({epsilon!r}, I.f32))",
+            f"        {out}[row, col] = {source}[row, col] * scale",
+        ])
+        return "\n".join(lines) + "\n"
     for axis, index in enumerate(indices):
         indent = "    " * (axis + 1)
         lines.append(f"{indent}for {index} in I.parallel({out}.dim({axis})):")

@@ -278,6 +278,9 @@ class AgentHost:
                     result['next_step_required'] = 'Identical failure with unchanged code. Modify with new evidence or report no_progress.'
                     self.warned_states.add(signature)
             self.failed_states.add(signature)
+        if name == 'validate' and result.get('kind') == 'source_result_mismatch':
+            self.stopped = result
+            return result
         if not result.get('ok') and result.get('kind') not in REPAIR_KINDS | STOP_KINDS:
             raise LiftError(result.get('kind', 'infrastructure_failure'), result.get('message', 'execution infrastructure unavailable'))
         return result

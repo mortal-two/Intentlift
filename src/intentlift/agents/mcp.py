@@ -42,10 +42,12 @@ def standalone():
     parser.add_argument('--clang', default=shutil.which('clang++'))
     parser.add_argument('--cuda-path', default='/usr/local/cuda-12.8')
     parser.add_argument('--nvcc', default='/usr/local/cuda/bin/nvcc')
+    parser.add_argument('--dsl-backend', choices=('cuda', 'cpu'), default='cuda')
     args = parser.parse_args()
     try:
         with tempfile.TemporaryDirectory(prefix='intentlift-mcp-') as temporary:
-            bench = Bench(args.bench, args.bench_python, args.dataset, args.case, args.tilelang_root, args.nvcc)
+            bench = Bench(args.bench, args.bench_python, args.dataset, args.case,
+                          args.tilelang_root, args.nvcc, dsl_backend=args.dsl_backend)
             host = AgentHost(prepare_request(bench, args.clang, args.cuda_path), bench, Path(temporary), backend='mcp')
             initial = host.compile()
             if not initial.get('ok') and initial.get('kind') not in REPAIR_KINDS:

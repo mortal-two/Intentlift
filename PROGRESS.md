@@ -7,7 +7,7 @@
 - CUDA 是唯一前端，IntentDSL 源码是编译输出。Intentlift 独立运行编译器，不依赖或调用 CompilerInfra-lift；后者是独立可运行的结构与固定机制参考实现。
 - 正常编译先尝试，能力缺失或结果不一致后才调用具有受保护先验知识的 Agent，API 是默认入口。规则按功能和类型组织，不按 Kernel 信息编写个例分支。
 - Agent 只通过固定扩展接口修改编译组件，不能修改框架、权限、知识库、CompilerInfra-lift 或 Bench 的任何内容。
-- Bench 管理相同多组合法条件、实际执行和固定比较标准。按 ABI 类型分配并精确比较结果；NaN 位置一致、无穷符号一致、正负零数值相等。性能不作为通过条件。
+- Bench 管理合法输入、实际执行、独立高精度参考和固定通过阈值。原始 CUDA 和 DSL 分别对同一参考判定，两侧均达标才通过。浮点默认使用容差，整数和索引等明确要求精确的结果逐元素比较。性能不作为通过条件。
 - 默认只验证当前 Kernel；保护已有功能依靠源码分析，后续实际发现问题再修复。无固定修复次数上限，按成功、故障、越界、表达障碍及无进展结束或停止。
 - /home/wwq/Intent 与 /home/wwq/compilerinfra 只读。必要构建、测试和真实验证直接进行，无需重复询问。
 
@@ -156,10 +156,72 @@
 - FlashAttention、Top-K、扫描、GEMM、整数转换重新编译回归，各 6/6。卷积和倒平方根分别新增 6/6、5/5。连同此前覆盖盘点补测通过的 vector_square 和 vector_cube，Dataset 去重后的实测覆盖为 33/37。
 - RMSNorm 原始源码的 Clang 临时对象取地址诊断已通过受限兼容重试，后续仍缺向量化归约与写回捕获。剩余实测缺口为 rms_norm、softmax、vector_sin 和 vector_cos。
 
+## 2026-11-27：FP32 RMSNorm
+
+- 新增归一化捕获阶段，检查每个线程的行内平方和顺序、原始行宽除法和 epsilon，以及 256 位负载和写回中八个 f32 分量的映射。只有所有输出行完整且互不重叠才生成 DSL。
+- DSL 使用矩形并行域与静态有序循环表达归约，保留每次乘法和加法、倒平方根和逐元素缩放。Bench 独立支持元组并行坐标、静态循环和有类型的 f32 常量。
+- 真实 rms_norm 使用静态 16×32 f32 输入与输出，在 RTX 5090 D 上 5/5 精确一致。默认入口复验未调用 Agent。重新编译回归的 convolution 和 vector_rsqrt 分别为 6/6、5/5。临时产物均已清理。
+- Dataset 去重后的实测覆盖为 34/37，剩余 softmax、vector_sin 和 vector_cos。
+
+## 2026-11-27：剩余真实 Kernel 复跑
+
+| Kernel | 当前编译结果 |
+| --- | --- |
+| `vector_sin` | `cuda.pointwise` 报 `capability_missing`，缺少 `sinf` 的 f32 转换规则 |
+| `vector_cos` | `cuda.pointwise` 报 `capability_missing`，缺少 `cosf` 的 f32 转换规则 |
+| `softmax` | `cuda.pointwise` 报 `capability_missing`，当前通用入口只接受只读 f16 视图。此例为 4×32 f16 输入与输出，使用跨线程分组归约 |
+
+- 使用现有编译器复跑，禁用 Agent 以记录当前覆盖。三个样例均未生成 DSL，未进入 Bench 数值比较。实测覆盖仍为 34/37，临时产物已清理。
+
+## 2026-11-27：Bench 严格数学与边界输入
+
+- 标量 CUDA 执行器接受显式源数值语义、严格 FP32 除法和数学调用中的严格浮点选项。独立 Bench 用标注了显式选项的 DSL 对真实 vector_div、vector_log 各通过 5/5。显式近似对数返回 `bench_unsupported`。已重新编译复核 vector_div、vector_log、rms_norm，各 5/5 精确一致。
+- 二维 FP16 指数归一化的固定条件由 6 组增至 40 组。追加并列与近并列、有限尾部、大幅值及 32 组固定种子的多尺度输入。手写 softmax 候选保留分组归约的加法括号及 FP16 写回，使用自然对数换底。最初 8/8 通过，额外 256 组有 5 组不一致。最终固定矩阵在种子 27 检出 1 个 FP16 输出差异，候选被判定为 `result_mismatch`。
+- FP32 正弦和余弦的固定条件由 5 组增至 6 组。新增象限两侧的相邻可表示角度及大幅值有限输入，真实 vector_sin 和 vector_cos 的原始 CUDA 均执行通过。两者仍待可精确比较的 IntentDSL 表达。
+- 本轮扩充独立 Bench。Intentlift 正式编译通过覆盖为 34/37。比较全程使用 RTX 5090 D 和原有精确标准，临时产物已清理。
+- Bench 本地提交 `1b408d4` 后复跑。Intentlift 在禁用 Agent 时仍对 softmax、vector_sin、vector_cos 报 `capability_missing`。独立 Bench 再次检出 softmax 手写候选在种子 27 的 1 个输出差异，通过 39/40 组。正弦和余弦的原 CUDA 各执行 6/6 组。重新编译的 rms_norm、vector_div、vector_log 各通过 5/5 组精确比较，临时产物已清理。
+
+## 2026-11-27：通过正常入口复测自动修复
+
+- 真实 Kernel 测试统一使用 `intentlift run`。主入口移除了关闭 Agent 的参数。能力缺失、生成错误和结果不一致会自动触发所选 Agent，候选通过 Bench 后才接受。
+- 默认 Responses API 真实复跑，vector_sin、vector_cos、softmax 均自动进入 Agent。两个三角函数的候选编译后被独立 Bench 判为 `bench_unsupported`，执行器拒绝候选中的 DSL 调用。softmax 的 Agent 请求读取允许范围之外的文件，宿主以 `boundary_required` 停止。
+- 同一入口重新编译 rms_norm，Bench 5/5 精确一致，`agent_invoked=false`。
+- 三个样例均无通过验证并接受的候选，已验证覆盖仍为 34/37。Bench 使用本地提交 `1b408d4`，运行产物已清理。
+
+## 2026-11-27：独立高精度参考与误差阈值
+
+- Bench 为 Dataset 中 37 个已校验的 CUDA 快照绑定独立 CPU 参考。参考用 FP64 计算，保留算子显式中间转换并按输出 ABI 舍入。未登记参考的快照报告 `reference_unavailable`。RMSNorm 的有限极值条件取在源码 FP32 平方和范围内，继续保留 NaN、无穷与次正规数条件。
+- 原始 CUDA 和生成 DSL 各自与同一参考比较。两侧的所有输出和条件达标才整体通过。FP16 默认 `atol=1e-5`、`rtol=1e-3`，FP32 默认 `atol=1e-6`、`rtol=1e-5`。线性归约另用输入绝对贡献和舍入次数推导绝对误差界。整数、索引及取值重排等使用精确比较。报告包含分侧绝对误差、相对误差、ULP 中位数、P99、最大值和首个超差位置。
+- 正常入口重新编译的 vector_add、rms_norm、vector_cast、topk、chunk_cumsum、vector_dot、matrix_gemm、gemv、convolution、vector_log、vector_rsqrt 和 vector_div 均通过，合计 66/66 条件。FlashAttention 通过 5/6。种子 83 下 CUDA 与 DSL 在同一个输出均超差，判为 `source_result_mismatch`。诊断发现 FP32 分数后的一个 FP16 权重舍入到相邻值，对接近零的输出产生约 `2.6e-5` 的绝对误差。
+- 同一正常入口触发默认 Agent 复跑 softmax、vector_sin 和 vector_cos。softmax 以 `no_progress` 停止，正弦和余弦在候选执行前返回 `bench_unsupported`，三者均没有新增数值通过结果。37 个参考已完成 229 组条件的 CPU 计算检查，wheel 已检查包含参考计算及摘要绑定。数值与打包临时产物已清理。
+
+## 2026-11-27：Agent 扩充同类型加法
+
+- 用 TileLang 为原 Dataset 向量加法生成 f16、bf16 和有符号 i32 三种源码特化，固定为单块长度 128。外部输入和元数据位于 `/home/wwq/Dataset/TianchenIR-TypeSpecializations`。Bench 独立验证存储类型、浮点边界及整数合法取值。
+- 默认 API Agent 自动修改并通过 Bench 后保留三种加法规则。f16、bf16 各 6/6，i32 5/5。最终编译器复跑三者均无需调用 Agent。重新编译原 f32 加法、矩阵乘法和 f32 到 i32 转换分别通过 5/5、6/6、6/6。
+
+## 2026-11-27：Agent 扩充 INT64 加法和 8 位转置
+
+- 对原 Dataset 的向量加法和矩阵转置只特化存储类型，由 TileLang 生成 i64 加法和 i8、u8 转置三个 CUDA 输入，并记录来源、ABI、launch 和源码摘要。三者均从正常入口自动进入默认 Agent。
+- i64 加法通过 5/5 组精确比较，覆盖超过 FP64 整数精确范围的输入。Bench 对 i8、u8 转置各使用四组输入，其中一组遍历所有 256 种字节值。首轮候选成功编译，Bench 的输出缓冲区却沿用了转置参考的内存步幅。将缓冲区改为连续行主序后，两次 Agent 重跑均通过 4/4，候选已保留。
+- 最终编译器直接复跑 i64 加法、i8 转置、u8 转置，分别通过 5/5、4/4、4/4，均未调用 Agent。原 f32 转置以及 i32、f16、bf16 加法各通过 5/5、5/5、6/6、6/6。运行产物已清理，外部 Dataset 保留六个可重跑输入。
+
+## 2026-11-28：FlashAttention 校准、旧样例复验与 CPU 执行
+
+- 单 tile FlashAttention 由输入推导逐输出误差界。传播 FP32 点积、缩放、指数与归约区间，在权重端保留显式 FP16 舍入，再将分子、分母与最终写回的范围传到输出。种子 83 的已知差异落入该界，原有通用阈值照常适用。CUDA DSL 路径通过 6/6。
+- 原 Dataset 尚待按新合同验证的 20 个样例均从正常入口重新编译，合计 100/100 组通过，无需调用 Agent。包含 matrix_add、row_max、row_sum 以及其余 17 个逐元素向量样例。
+- Bench 增加原生 CPU 路径，使用 Clang 编译和执行生成 DSL，并实际执行原始 CUDA。两侧使用同一独立参考和阈值。初次系统默认 C++ 编译器不支持 `_Float16`，切换至 Clang 后复验。FP32 转置、FlashAttention、i64 加法、f16 加法和乘法、i8 及 u8 扩位乘法、尾部加法合计 43/43 组通过，无需调用 Agent。
+
+## 2026-11-28：Agent 扩充乘法与双块尾部
+
+- 外部 Dataset 新增五份 TileLang CUDA 输入。默认 Agent 保留 f16、bf16 乘法（各 6/6），i8、u8 扩至 i32 后的乘法（各 5/5），以及长度 130、两个 block 的带尾部 FP32 加法（5/5）。
+- 新尾部阶段一度截住现有多块扫描。对真实 chunk_cumsum 重走默认流程，Agent 将共享扫描路由回既有结构检查，通过 6/6 并保留修正。回归重新生成 DSL，尾部加法、i8 和 u8 转置及 bf16 乘法分别通过 5/5、4/4、4/4、6/6。
+- Bench 已登记 48 个输入快照。按新合同的 CUDA 执行记录已有 45 个不同样例通过。外部 Dataset 保留可重跑输入，实际执行的临时产物已清理。
+
 ## 当前能力与后续事项
 
 - 已验证的逐元素范围为单个完整 block、静态一维或二维 f32 视图及唯一输出。真实向量长度为 128，矩阵尺寸为 16×16。多组条件覆盖数值输入变化。
-- 混合精度覆盖 f16 数据的 f32 有序乘加，以及已验证注意力调度中的中途 f16 舍入和 f16 输出。通用 f16 算术、BF16、FP64 继续按真实样例扩充。
-- i32 已覆盖向零截断的 f32 到 i32 转换和配对选择中的整数索引输出。整数输入、整数算术、其他有符号与无符号位宽和布尔数据仍待扩充。
+- 混合精度覆盖 f16 数据的 f32 有序乘加，以及已验证注意力调度中的中途 f16 舍入和 f16 输出。同类型 f16、bf16 逐元素加法已实测，其他低精度运算和 FP64 仍待扩充。
+- i32 已覆盖同类型加法、向零截断的 f32 到 i32 转换和配对选择中的整数索引输出。i64 加法、i8 和 u8 转置及扩位乘法已实测。窄整数写回、其他位宽和布尔参数继续按真实输入扩充。
 - 多块扫描已覆盖独立扫描线和完整 32 lane 分段，卷积已覆盖所验证的多块静态 padding 和归约尾部。带尾部的扫描、跨块通信、多块注意力、因果遮罩、其他卷积调度、一般访存和动态形状仍待扩展。
 - 静态检查、文档、接口和构建成功不计作数值一致性通过。不创建模拟 Kernel 或测试目录替代真实验证。

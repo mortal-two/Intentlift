@@ -7,11 +7,12 @@ from .errors import LiftError
 
 
 class Bench:
-    def __init__(self, root, python, dataset, case, tilelang_root, nvcc):
+    def __init__(self, root, python, dataset, case, tilelang_root, nvcc, dsl_backend='cuda'):
         self.root = Path(root).resolve()
         self.python = python
         self.common = ['--dataset', dataset, '--case', case, '--tilelang-root', tilelang_root]
         self.nvcc = nvcc
+        self.dsl_backend = dsl_backend
 
     def invoke(self, action, *args):
         env = {k: v for k, v in os.environ.items() if 'KEY' not in k and 'TOKEN' not in k
@@ -31,4 +32,5 @@ class Bench:
         return self.invoke('describe')
 
     def validate(self, dsl, work):
-        return self.invoke('validate', '--dsl', dsl, '--work', work, '--nvcc', self.nvcc)
+        backend = ['--dsl-backend', self.dsl_backend] if self.dsl_backend != 'cuda' else []
+        return self.invoke('validate', '--dsl', dsl, '--work', work, '--nvcc', self.nvcc, *backend)

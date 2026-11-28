@@ -23,11 +23,11 @@ def main():
     parser.add_argument('--clang', default=shutil.which('clang++'))
     parser.add_argument('--cuda-path', default='/usr/local/cuda-12.8')
     parser.add_argument('--nvcc', default='/usr/local/cuda/bin/nvcc')
+    parser.add_argument('--dsl-backend', choices=('cuda', 'cpu'), default='cuda')
     parser.add_argument('--model', help='Model override; defaults to the selected backend provider variable')
     parser.add_argument('--agent-backend', choices=tuple(BACKENDS), default='api')
     parser.add_argument('--run-root', help='Optional parent for temporary work; each run is removed on completion')
     parser.add_argument('--output', help='Explicit destination for the validated IntentDSL deliverable')
-    parser.add_argument('--no-agent', action='store_true', help='Report missing capability without calling the API')
     args = parser.parse_args()
     work = None
     temporary = None
@@ -48,7 +48,8 @@ def main():
             run_root.mkdir(parents=True, exist_ok=True)
             temporary = tempfile.TemporaryDirectory(prefix='intentlift-', dir=run_root)
             work = Path(temporary.name)
-            bench = Bench(args.bench, args.bench_python, args.dataset, args.case, args.tilelang_root, args.nvcc)
+            bench = Bench(args.bench, args.bench_python, args.dataset, args.case,
+                          args.tilelang_root, args.nvcc, dsl_backend=args.dsl_backend)
             request = {**prepare_request(bench, args.clang, args.cuda_path), 'extension_root': str(EXTENSIONS)}
             result = compiler_worker(request)
             compiled_from = result['compiler_sha256']
@@ -56,7 +57,7 @@ def main():
                 dsl = work / 'generated.intent.py'
                 dsl.write_text(result['dsl'])
                 result = bench.validate(dsl, work / 'validation')
-            if not result.get('ok') and result.get('kind') in REPAIR_KINDS and not args.no_agent:
+            if not result.get('ok') and result.get('kind') in REPAIR_KINDS:
                 agent_invoked = True
                 result = AgentHost(request, bench, work, args.model, backend=args.agent_backend).run(result)
             if result.get('ok'):

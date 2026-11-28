@@ -18,4 +18,5 @@ def prepare_request(bench, clang, cuda_path):
         raise LiftError('environment_failure', 'GPU capability query failed')
     major, minor = json.loads(probe.stdout)
     return {**described['contract'], 'clang': str(Path(clang).resolve()), 'cuda_path': cuda_path,
+            'dsl_backend': bench.dsl_backend,
             'arch': f'sm_{major}{minor}'}

@@ -615,6 +615,8 @@ def capture(parsed, context, registry):
         return parsed["staged_attention"]
     if "staged_convolution" in parsed:
         return parsed["staged_convolution"]
+    if "staged_rms" in parsed:
+        return parsed["staged_rms"]
     fn, contract = parsed["function"], parsed["contract"]
     parameters = [p for p in children(fn) if p["kind"] == "ParmVarDecl"]
     abi = contract["parameters"]

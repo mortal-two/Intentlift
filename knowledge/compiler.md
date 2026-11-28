@@ -16,9 +16,9 @@ read_file 查询 src/intentlift 下的组件、固定机制和本知识。inspec
 
 ## 受保护边界
 
-固定框架、全部 Agent 调用适配和工具、权限、先验知识、CompilerInfra-lift 和整个 lift-bench 均不可修改。源 CUDA、Dataset 元数据、验证条件、精确比较标准及 DSL 语言语义也不可修改。不能用 eval/exec 或导入现有 Intent/compilerinfra 绕过边界。propose_changes 只写外部候选扩展；编译器在只读且无网络的进程中执行。验证通过后宿主才接受候选到正式扩展目录。
+固定框架、全部 Agent 调用适配和工具、权限、先验知识、CompilerInfra-lift 和整个 lift-bench 均不可修改。源 CUDA、Dataset 元数据、验证条件、参考计算、比较标准及 DSL 语言语义也不可修改。不能用 eval/exec 或导入现有 Intent/compilerinfra 绕过边界。propose_changes 只写外部候选扩展；编译器在只读且无网络的进程中执行。验证通过后宿主才接受候选到正式扩展目录。
 
-Bench 按 ABI 分配数据并精确比较输出。NaN 位置一致、无穷符号一致、正负零按数值相等，不允许容差或性能替代正确性。Bench 对含 f16 输入的合同另有有限次正规数条件。Bench 有自身的 DSL 子集；bench_unsupported 不证明 DSL 本身无法表达。
+Bench 按 ABI 分配数据，原始 CUDA 和生成 DSL 都与同一份独立高精度参考比较。浮点算术用 Bench 预设的误差阈值，整数和索引等精确合同逐元素精确比较。NaN 位置及无穷符号须符合参考，正负零按数值相等。两侧都通过才接受。DSL 超差返回 result_mismatch；source_result_mismatch 和 reference_unavailable 属于停止条件。Bench 有自身的 DSL 子集；bench_unsupported 不证明 DSL 本身无法表达。
 
 ## 当前表示与语义
 
@@ -27,6 +27,10 @@ CUDA 由 Clang 真实 AST 解析，不能以文本模式或 Dataset 标签猜测
 IntentDSL 使用 import intentdsl as I、@I.kernel(fast_math=False, denormal_fp_math="ieee")、I.In/I.Out/I.InOut[I.f32, shape]。为输出的每个轴嵌套一层 I.parallel(view.dim(axis))，声明完整逻辑成员域。成员读取产生 f32 值，I.f32 表达显式常量，条件表达式按 f32 比较选择成员值。保持源码的运算和求值顺序，不融合乘加、不开启 fast math、不冲掉次正规数。
 
 当前逐元素捕获检查固定单 block 的全部 threadIdx.x：输出索引必须逐元素覆盖静态一维或二维视图且没有重复。读索引必须相对于输出是同坐标访问，或是二维只读视图的转置访问。条件选择只支持纯逐元素比较与取值，两分支都需给出有效值。其他 grid、偏移、guard、别名、类型和控制流需要独立分析和能力扩充。
+
+Bench 的标量执行器支持同类型 f16、bf16、i32 和 i64 的成员加法与乘法、i8 和 u8 成员读写、i8/u8 到 i32 的显式转换，以及 f16/bf16 与 f32 间的显式转换。整数窄化或取值域由独立 ABI 合同约束。带尾部逐元素 CUDA 的等价证明应枚举实际网格中的活动线程，按 guard 排除无效 lane，再证明存储覆盖无遗漏且不重复、读取与输出成员一致。若写入域已经由 DSL 输出视图约束，调度上的尾部 guard 可以由完整的逻辑域替代。
+
+多 block f32 的启动特征也可能属于共享内存扫描。逐元素阶段接管前先确认本阶段所需的源码结构与访存合同，其余结构应继续交给已有捕获阶段。Bench 可选择原生 CPU 验证生成 DSL；会话请求的 dsl_backend 指明执行目标，原始 CUDA 始终实际执行。
 
 混合精度矩阵乘法使用 I.In[I.f16, shape]、I.cast(value, I.f32) 和 I.ordered(bound)，保留原始循环范围、每次浮点乘加的独立舍入点及累加顺序。编译时对所有输出坐标和归约位置证明实际读取符合矩阵行列关系。跨线程归约、其他低精度算术和输出类型需独立扩展。
 
@@ -41,6 +45,8 @@ IntentDSL 使用 import intentdsl as I、@I.kernel(fast_math=False, denormal_fp_
 逐元素 f32 数学调用保留已识别的 CUDA 运算和输入求值顺序。Bench 的标量 CUDA 路径提供 exp、exp2、log 和 maximum-number 计算。
 
 逐元素函数的类型与参数个数登记在 _cuda_math.py，辅助模块可相对导入 _cuda_ast.py。I.rsqrt 是 IntentDSL 的已存在语义，Bench 标量 CUDA 路径可独立验证 f32 倒平方根及特殊值。避免把它替换为两次各自舍入的 sqrt 和除法。卷积的条件暂存及读取来源分析位于 convolution.py，从编译管线单独注册。
+
+RMSNorm 的独立阶段验证同一行的顺序平方和，以及每组 256 位读写的八个 f32 分量。作者语言使用矩形 parallel 域和 I.static_range，保留行宽除法、原始 epsilon、I.rsqrt 与逐元素乘法。不能仅匹配 rsqrt 调用就假定归约域、向量分量或写回坐标等价。
 
 ## 迭代与停止
 
